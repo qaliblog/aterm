@@ -131,10 +131,16 @@ class GeminiClient(
             }
             
             // Emit collected events (chunks and tool calls) now that we're back in coroutine context
-            for (event in eventsToEmit) {
-                emit(event)
+            if (eventsToEmit.isNotEmpty()) {
+                android.util.Log.d("GeminiClient", "sendMessageStream: Emitting ${eventsToEmit.size} collected event(s)")
+                for (event in eventsToEmit) {
+                    android.util.Log.d("GeminiClient", "sendMessageStream: Emitting event: ${event.javaClass.simpleName}")
+                    emit(event)
+                }
+                eventsToEmit.clear()
+            } else {
+                android.util.Log.d("GeminiClient", "sendMessageStream: No events collected to emit")
             }
-            eventsToEmit.clear()
             
             if (result.isFailure) {
                 val error = result.exceptionOrNull()
@@ -204,9 +210,12 @@ class GeminiClient(
                 continue // Loop to make another API call
             } else {
                 // No more tool calls, check finish reason
+                android.util.Log.d("GeminiClient", "sendMessageStream: No tool calls, finishReason: $finishReason")
                 when (finishReason) {
                     "STOP" -> {
-                        android.util.Log.d("GeminiClient", "sendMessageStream: Stream completed (STOP)")
+                        android.util.Log.d("GeminiClient", "sendMessageStream: Stream completed (STOP) - model indicates task is complete")
+                        // Check if we should continue - if there are pending todos, the task might not be complete
+                        // But for now, trust the model's STOP signal
                         emit(GeminiStreamEvent.Done)
                         break
                     }
@@ -423,6 +432,7 @@ class GeminiClient(
                         // Check for text (non-thought)
                         if (part.has("text") && !part.optBoolean("thought", false)) {
                             val text = part.getString("text")
+                            android.util.Log.d("GeminiClient", "processResponse: Found text chunk (length: ${text.length}): ${text.take(100)}...")
                             onChunk(text)
                             
                             // Add to history
