@@ -658,7 +658,8 @@ class GeminiClient(
                 append("3. Mark a subtask as in_progress before you begin working on it. You should only have one subtask as in_progress at a time.\n")
                 append("4. Update the subtask list as you proceed in executing the task. The subtask list is not static and should reflect your progress and current plans.\n")
                 append("5. Mark a subtask as completed when you have completed it.\n")
-                append("6. Mark a subtask as cancelled if the subtask is no longer needed.\n\n")
+                append("6. Mark a subtask as cancelled if the subtask is no longer needed.\n")
+                append("7. **CRITICAL:** After creating a todo list, you MUST continue working on the todos. Creating the plan is NOT completing the task. You must execute each todo item until all are completed or cancelled. Do NOT stop after creating the todo list - continue implementing the tasks.\n\n")
             }
             
             append("# Operational Guidelines\n\n")
