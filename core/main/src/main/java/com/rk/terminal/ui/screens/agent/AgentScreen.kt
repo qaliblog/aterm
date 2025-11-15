@@ -37,7 +37,11 @@ import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import android.os.Build
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 data class AgentMessage(
     val text: String,
@@ -786,6 +790,81 @@ fun WelcomeMessage() {
     }
 }
 
+/**
+ * Read recent logcat entries filtered by relevant tags
+ */
+suspend fun readLogcatLogs(maxLines: Int = 200): String = withContext(Dispatchers.IO) {
+    try {
+        // Read more lines than needed, then filter
+        val process = Runtime.getRuntime().exec(
+            arrayOf(
+                "logcat",
+                "-d", // dump and exit
+                "-t", (maxLines * 3).toString(), // read more lines to filter from
+                "-v", "time" // time format
+            )
+        )
+        
+        val reader = BufferedReader(InputStreamReader(process.inputStream))
+        val logs = StringBuilder()
+        var line: String?
+        var lineCount = 0
+        
+        // Relevant tags to filter for
+        val relevantTags = listOf(
+            "GeminiClient", "OllamaClient", "AgentScreen", "ApiProviderManager",
+            "GeminiService", "OkHttp", "Okio", "AndroidRuntime"
+        )
+        
+        while (reader.readLine().also { line = it } != null && lineCount < maxLines) {
+            line?.let { logLine ->
+                // Check if line contains relevant tags or is an error/warning
+                val containsRelevantTag = relevantTags.any { tag ->
+                    logLine.contains(tag, ignoreCase = true)
+                }
+                
+                // Check for error/warning indicators
+                val isErrorOrWarning = logLine.matches(Regex(".*\\s+[EW]\\s+.*")) ||
+                        logLine.contains("Error", ignoreCase = true) ||
+                        logLine.contains("Exception", ignoreCase = true) ||
+                        logLine.contains("IOException", ignoreCase = true) ||
+                        logLine.contains("Network", ignoreCase = true) ||
+                        logLine.contains("HTTP", ignoreCase = true) ||
+                        logLine.contains("Failed", ignoreCase = true) ||
+                        logLine.contains("Timeout", ignoreCase = true)
+                
+                if (containsRelevantTag || isErrorOrWarning) {
+                    logs.appendLine(logLine)
+                    lineCount++
+                }
+            }
+        }
+        
+        process.waitFor()
+        reader.close()
+        
+        // Also read error stream in case of issues
+        val errorReader = BufferedReader(InputStreamReader(process.errorStream))
+        val errorOutput = StringBuilder()
+        while (errorReader.readLine().also { line = it } != null) {
+            errorOutput.appendLine(line)
+        }
+        errorReader.close()
+        
+        if (logs.isEmpty()) {
+            if (errorOutput.isNotEmpty()) {
+                "No relevant logcat entries found.\nLogcat error: ${errorOutput.toString().take(200)}"
+            } else {
+                "No relevant logcat entries found (checked last ${maxLines * 3} lines).\nTry increasing the filter or check if logcat is accessible."
+            }
+        } else {
+            logs.toString()
+        }
+    } catch (e: Exception) {
+        "Error reading logcat: ${e.message}\n${e.stackTraceToString().take(500)}"
+    }
+}
+
 @Composable
 fun DebugDialog(
     onDismiss: () -> Unit,
@@ -799,7 +878,18 @@ fun DebugDialog(
     messages: List<AgentMessage>,
     aiClient: Any
 ) {
-    val debugInfo = remember(useOllama, ollamaHost, ollamaPort, ollamaModel, ollamaUrl, workspaceRoot, messages) {
+    var logcatLogs by remember { mutableStateOf<String?>(null) }
+    var isLoadingLogs by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    
+    // Load logcat logs when dialog opens
+    LaunchedEffect(Unit) {
+        isLoadingLogs = true
+        logcatLogs = readLogcatLogs(200)
+        isLoadingLogs = false
+    }
+    
+    val debugInfo = remember(useOllama, ollamaHost, ollamaPort, ollamaModel, ollamaUrl, workspaceRoot, messages, logcatLogs) {
         buildString {
             appendLine("=== Agent Debug Information ===")
             appendLine()
@@ -909,6 +999,21 @@ fun DebugDialog(
                 appendLine("API Endpoint: https://generativelanguage.googleapis.com/v1beta/")
                 appendLine("Note: Check API key validity in settings")
             }
+            appendLine()
+            
+            // Logcat Logs
+            appendLine("--- Logcat Logs (Recent) ---")
+            if (isLoadingLogs) {
+                appendLine("Loading logcat logs...")
+            } else if (logcatLogs != null) {
+                if (logcatLogs!!.isNotEmpty()) {
+                    appendLine(logcatLogs!!)
+                } else {
+                    appendLine("No logcat logs available")
+                }
+            } else {
+                appendLine("Logcat logs not loaded")
+            }
         }
     }
     
@@ -952,6 +1057,31 @@ fun DebugDialog(
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            isLoadingLogs = true
+                            logcatLogs = readLogcatLogs(200)
+                            isLoadingLogs = false
+                        }
+                    },
+                    enabled = !isLoadingLogs
+                ) {
+                    if (isLoadingLogs) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Refresh Logs")
+                }
                 Button(
                     onClick = {
                         onCopy(debugInfo)
