@@ -543,13 +543,7 @@ fun AgentScreen(
             onDirectorySelected = { selectedDir: File ->
                 workspaceRoot = selectedDir.absolutePath
                 showWorkspacePicker = false
-                // Reinitialize client with new workspace
-                val currentUseOllama = Settings.use_ollama
-                val currentOllamaHost = Settings.ollama_host
-                val currentOllamaPort = Settings.ollama_port
-                val currentOllamaModel = Settings.ollama_model
-                val currentOllamaUrl = "http://$currentOllamaHost:$currentOllamaPort"
-                GeminiService.initialize(workspaceRoot, currentUseOllama, currentOllamaUrl, currentOllamaModel)
+                // Client will be recreated automatically by the remember block when workspaceRoot changes
             }
         )
     }
