@@ -153,11 +153,19 @@ class GeminiClient(
                 return@flow
             }
             
-            // Validate response: if no tool calls and no finish reason, it's an error
+            // Validate response: if no tool calls and no finish reason, check if we have text content
+            // If we have text content but no finish reason, assume STOP (model finished generating text)
             if (toolCallsToExecute.isEmpty() && finishReason == null) {
-                android.util.Log.w("GeminiClient", "sendMessageStream: No finish reason and no tool calls - invalid response")
-                emit(GeminiStreamEvent.Error("Model stream ended without a finish reason or tool calls"))
-                return@flow
+                // Check if we received any text chunks in this turn
+                val hasTextContent = eventsToEmit.any { it is GeminiStreamEvent.Chunk }
+                if (hasTextContent) {
+                    android.util.Log.d("GeminiClient", "sendMessageStream: No finish reason but has text content, assuming STOP")
+                    finishReason = "STOP"
+                } else {
+                    android.util.Log.w("GeminiClient", "sendMessageStream: No finish reason, no tool calls, and no text - invalid response")
+                    emit(GeminiStreamEvent.Error("Model stream ended without a finish reason or tool calls"))
+                    return@flow
+                }
             }
             
             // Execute any pending tool calls
@@ -307,6 +315,7 @@ class GeminiClient(
                             android.util.Log.d("GeminiClient", "makeApiCall: JSON array has ${jsonArray.length()} elements")
                             
                             var lastFinishReason: String? = null
+                            var hasContent = false
                             for (i in 0 until jsonArray.length()) {
                                 val json = jsonArray.getJSONObject(i)
                                 android.util.Log.d("GeminiClient", "makeApiCall: Processing array element $i")
@@ -314,6 +323,16 @@ class GeminiClient(
                                 if (finishReason != null) {
                                     lastFinishReason = finishReason
                                 }
+                                // Check if this element has content (text or function calls)
+                                val candidate = json.optJSONObject("candidates")?.optJSONObject(0)
+                                if (candidate != null && candidate.has("content")) {
+                                    hasContent = true
+                                }
+                            }
+                            // If we have content but no finish reason, assume STOP
+                            if (lastFinishReason == null && hasContent) {
+                                android.util.Log.d("GeminiClient", "makeApiCall: No finish reason in array but has content, assuming STOP")
+                                return "STOP"
                             }
                             return lastFinishReason
                         } else {
