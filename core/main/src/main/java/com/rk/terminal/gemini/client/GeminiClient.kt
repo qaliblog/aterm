@@ -1329,7 +1329,7 @@ class GeminiClient(
         onChunk("✅ Found ${filePaths.size} files to create\n")
         
         // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        var updatedTodos = currentTodos.map { todo ->
             when {
                 todo.description == "Phase 1: Get file list" -> todo.copy(status = TodoStatus.COMPLETED)
                 todo.description == "Phase 2: Get metadata for all files" -> todo.copy(status = TodoStatus.IN_PROGRESS)
@@ -1430,7 +1430,7 @@ class GeminiClient(
         onChunk("✅ Metadata generated for ${metadataJson.length()} files\n")
         
         // Update todos - preserve all existing todos (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        updatedTodos = currentTodos.map { todo ->
             when {
                 todo.description == "Phase 2: Get metadata for all files" -> todo.copy(status = TodoStatus.COMPLETED)
                 todo.description == "Phase 3: Generate code for each file" -> todo.copy(status = TodoStatus.IN_PROGRESS)
@@ -1602,7 +1602,7 @@ class GeminiClient(
         }
         
         // Mark Phase 3 as completed (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        updatedTodos = currentTodos.map { todo ->
             if (todo.description == "Phase 3: Generate code for each file") {
                 todo.copy(status = TodoStatus.COMPLETED)
             } else {
@@ -1945,7 +1945,7 @@ class GeminiClient(
         onChunk("✅ Analysis complete\n")
         
         // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        var updatedTodos = currentTodos.map { todo ->
             when {
                 todo.description == "Phase 1: Extract project structure" -> todo.copy(status = TodoStatus.COMPLETED)
                 todo.description == "Phase 2: Analyze what needs fixing" -> todo.copy(status = TodoStatus.COMPLETED)
@@ -2006,7 +2006,7 @@ class GeminiClient(
         }
         
         // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        updatedTodos = currentTodos.map { todo ->
             when {
                 todo.description == "Phase 3: Read specific lines/functions" -> todo.copy(status = TodoStatus.COMPLETED)
                 todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.IN_PROGRESS)
@@ -2117,7 +2117,7 @@ class GeminiClient(
         onChunk("✅ Generated ${fixesJson.length()} fixes\n")
         
         // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        updatedTodos = currentTodos.map { todo ->
             when {
                 todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.COMPLETED)
                 todo.description == "Phase 5: Apply fixes" -> todo.copy(status = TodoStatus.IN_PROGRESS)
@@ -2199,7 +2199,7 @@ class GeminiClient(
         }
         
         // Mark Phase 5 as completed - preserve documentation search todo if it exists (no withContext - emit must be in same context)
-        val updatedTodos = currentTodos.map { todo ->
+        updatedTodos = currentTodos.map { todo ->
             if (todo.description == "Phase 5: Apply fixes") {
                 todo.copy(status = TodoStatus.COMPLETED)
             } else {

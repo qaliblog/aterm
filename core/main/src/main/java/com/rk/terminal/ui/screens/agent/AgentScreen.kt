@@ -59,6 +59,18 @@ data class FileDiff(
     val isNewFile: Boolean = false
 )
 
+enum class DiffLineType {
+    ADDED,      // Green with +
+    REMOVED,    // Red with -
+    UNCHANGED   // Normal text
+}
+
+data class DiffLine(
+    val content: String,
+    val type: DiffLineType,
+    val lineNumber: Int
+)
+
 data class AgentMessage(
     val text: String,
     val isUser: Boolean,
@@ -1737,18 +1749,6 @@ fun calculateLineDiff(oldContent: String, newContent: String): List<DiffLine> {
     
     return diffLines
 }
-
-enum class DiffLineType {
-    ADDED,      // Green with +
-    REMOVED,    // Red with -
-    UNCHANGED   // Normal text
-}
-
-data class DiffLine(
-    val content: String,
-    val type: DiffLineType,
-    val lineNumber: Int
-)
 
 /**
  * Beautiful code diff card component similar to Cursor AI
