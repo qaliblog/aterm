@@ -494,11 +494,12 @@ fun AgentScreen(
             ) {
                 OutlinedTextField(
                     value = inputText,
-                    onValueChange = { inputText = it },
+                    onValueChange = { if (!isPaused) inputText = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Ask the agent...") },
+                    placeholder = { Text(if (isPaused) "Session paused - click resume to continue" else "Ask the agent...") },
                     maxLines = 5,
                     shape = RoundedCornerShape(24.dp),
+                    enabled = !isPaused,
                     trailingIcon = {
                         IconButton(
                             onClick = {
