@@ -1232,17 +1232,15 @@ class GeminiClient(
         emit(GeminiStreamEvent.Chunk("📋 Phase 1: Identifying files needed...\n"))
         onChunk("📋 Phase 1: Identifying files needed...\n")
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Mark Phase 1 as in progress
-            val todosWithProgress = initialTodos.map { todo ->
-                if (todo.description == "Phase 1: Get file list") {
-                    todo.copy(status = TodoStatus.IN_PROGRESS)
-                } else {
-                    todo
-                }
+        // Mark Phase 1 as in progress (no withContext - emit must be in same context as Flow)
+        val todosWithProgress = initialTodos.map { todo ->
+            if (todo.description == "Phase 1: Get file list") {
+                todo.copy(status = TodoStatus.IN_PROGRESS)
+            } else {
+                todo
             }
-            updateTodos(todosWithProgress)
         }
+        updateTodos(todosWithProgress)
         
         // Helper function to wrap emit as suspend function
         suspend fun emitEvent(event: GeminiStreamEvent) {
@@ -1330,17 +1328,15 @@ class GeminiClient(
         emit(GeminiStreamEvent.Chunk("✅ Found ${filePaths.size} files to create\n"))
         onChunk("✅ Found ${filePaths.size} files to create\n")
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Update todos - preserve documentation search todo if it exists
-            val updatedTodos = currentTodos.map { todo ->
-                when {
-                    todo.description == "Phase 1: Get file list" -> todo.copy(status = TodoStatus.COMPLETED)
-                    todo.description == "Phase 2: Get metadata for all files" -> todo.copy(status = TodoStatus.IN_PROGRESS)
-                    else -> todo
-                }
+        // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            when {
+                todo.description == "Phase 1: Get file list" -> todo.copy(status = TodoStatus.COMPLETED)
+                todo.description == "Phase 2: Get metadata for all files" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                else -> todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         // Phase 2: Get comprehensive metadata for all files
         emit(GeminiStreamEvent.Chunk("📊 Phase 2: Generating metadata for all files...\n"))
@@ -1433,17 +1429,15 @@ class GeminiClient(
         emit(GeminiStreamEvent.Chunk("✅ Metadata generated for ${metadataJson.length()} files\n"))
         onChunk("✅ Metadata generated for ${metadataJson.length()} files\n")
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Update todos - preserve all existing todos
-            val updatedTodos = currentTodos.map { todo ->
-                when {
-                    todo.description == "Phase 2: Get metadata for all files" -> todo.copy(status = TodoStatus.COMPLETED)
-                    todo.description == "Phase 3: Generate code for each file" -> todo.copy(status = TodoStatus.IN_PROGRESS)
-                    else -> todo
-                }
+        // Update todos - preserve all existing todos (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            when {
+                todo.description == "Phase 2: Get metadata for all files" -> todo.copy(status = TodoStatus.COMPLETED)
+                todo.description == "Phase 3: Generate code for each file" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                else -> todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         // Phase 3: Generate each file separately with full code
         emit(GeminiStreamEvent.Chunk("💻 Phase 3: Generating code for each file...\n"))
@@ -1607,17 +1601,15 @@ class GeminiClient(
             onToolResult(functionCall.name, functionCall.args)
         }
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Mark Phase 3 as completed
-            val updatedTodos = currentTodos.map { todo ->
-                if (todo.description == "Phase 3: Generate code for each file") {
-                    todo.copy(status = TodoStatus.COMPLETED)
-                } else {
-                    todo
-                }
+        // Mark Phase 3 as completed (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            if (todo.description == "Phase 3: Generate code for each file") {
+                todo.copy(status = TodoStatus.COMPLETED)
+            } else {
+                todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         emit(GeminiStreamEvent.Chunk("\n✨ Project generation complete!\n"))
         onChunk("\n✨ Project generation complete!\n")
@@ -1811,17 +1803,15 @@ class GeminiClient(
             Todo("Phase 5: Apply fixes", TodoStatus.PENDING)
         ))
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Mark Phase 1 as in progress
-            val todosWithProgress = initialTodos.map { todo ->
-                if (todo.description == "Phase 1: Extract project structure") {
-                    todo.copy(status = TodoStatus.IN_PROGRESS)
-                } else {
-                    todo
-                }
+        // Mark Phase 1 as in progress (no withContext - emit must be in same context)
+        val todosWithProgress = initialTodos.map { todo ->
+            if (todo.description == "Phase 1: Extract project structure") {
+                todo.copy(status = TodoStatus.IN_PROGRESS)
+            } else {
+                todo
             }
-            updateTodos(todosWithProgress)
         }
+        updateTodos(todosWithProgress)
         
         // Phase 1: Extract project structure
         emit(GeminiStreamEvent.Chunk("📊 Phase 1: Extracting project structure...\n"))
@@ -1843,15 +1833,26 @@ class GeminiClient(
         emit(GeminiStreamEvent.Chunk("✅ Extracted structure from $fileCount files\n"))
         onChunk("✅ Extracted structure from $fileCount files\n")
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            updateTodos(listOf(
-                Todo("Phase 1: Extract project structure", TodoStatus.COMPLETED),
-                Todo("Phase 2: Analyze what needs fixing", TodoStatus.IN_PROGRESS),
-                Todo("Phase 3: Read specific lines/functions", TodoStatus.PENDING),
-                Todo("Phase 4: Get fixes with assurance", TodoStatus.PENDING),
-                Todo("Phase 5: Apply fixes", TodoStatus.PENDING)
-            ))
+        // Update todos after Phase 1 (no withContext - emit must be in same context)
+        // Preserve documentation search todo if it exists
+        val phase1CompletedTodos = if (currentTodos.any { it.description == "Search for relevant documentation and examples" }) {
+            currentTodos.map { todo ->
+                when {
+                    todo.description == "Phase 1: Extract project structure" -> todo.copy(status = TodoStatus.COMPLETED)
+                    todo.description == "Phase 2: Analyze what needs fixing" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                    else -> todo
+                }
+            }
+        } else {
+            currentTodos.map { todo ->
+                when {
+                    todo.description == "Phase 1: Extract project structure" -> todo.copy(status = TodoStatus.COMPLETED)
+                    todo.description == "Phase 2: Analyze what needs fixing" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                    else -> todo
+                }
+            }
         }
+        updateTodos(phase1CompletedTodos)
         
         // Phase 2: Analyze what needs fixing
         emit(GeminiStreamEvent.Chunk("🔍 Phase 2: Analyzing what needs fixing...\n"))
@@ -1943,18 +1944,16 @@ class GeminiClient(
         emit(GeminiStreamEvent.Chunk("✅ Analysis complete\n"))
         onChunk("✅ Analysis complete\n")
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Update todos - preserve documentation search todo if it exists
-            val updatedTodos = currentTodos.map { todo ->
-                when {
-                    todo.description == "Phase 1: Extract project structure" -> todo.copy(status = TodoStatus.COMPLETED)
-                    todo.description == "Phase 2: Analyze what needs fixing" -> todo.copy(status = TodoStatus.COMPLETED)
-                    todo.description == "Phase 3: Read specific lines/functions" -> todo.copy(status = TodoStatus.IN_PROGRESS)
-                    else -> todo
-                }
+        // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            when {
+                todo.description == "Phase 1: Extract project structure" -> todo.copy(status = TodoStatus.COMPLETED)
+                todo.description == "Phase 2: Analyze what needs fixing" -> todo.copy(status = TodoStatus.COMPLETED)
+                todo.description == "Phase 3: Read specific lines/functions" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                else -> todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         // Phase 3: Read specific lines/functions
         emit(GeminiStreamEvent.Chunk("📖 Phase 3: Reading specific code sections...\n"))
@@ -2006,17 +2005,15 @@ class GeminiClient(
             }
         }
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Update todos - preserve documentation search todo if it exists
-            val updatedTodos = currentTodos.map { todo ->
-                when {
-                    todo.description == "Phase 3: Read specific lines/functions" -> todo.copy(status = TodoStatus.COMPLETED)
-                    todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.IN_PROGRESS)
-                    else -> todo
-                }
+        // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            when {
+                todo.description == "Phase 3: Read specific lines/functions" -> todo.copy(status = TodoStatus.COMPLETED)
+                todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                else -> todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         // Phase 4: Get fixes with assurance
         emit(GeminiStreamEvent.Chunk("🔧 Phase 4: Getting fixes with assurance...\n"))
@@ -2119,17 +2116,15 @@ class GeminiClient(
         emit(GeminiStreamEvent.Chunk("✅ Generated ${fixesJson.length()} fixes\n"))
         onChunk("✅ Generated ${fixesJson.length()} fixes\n")
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Update todos - preserve documentation search todo if it exists
-            val updatedTodos = currentTodos.map { todo ->
-                when {
-                    todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.COMPLETED)
-                    todo.description == "Phase 5: Apply fixes" -> todo.copy(status = TodoStatus.IN_PROGRESS)
-                    else -> todo
-                }
+        // Update todos - preserve documentation search todo if it exists (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            when {
+                todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.COMPLETED)
+                todo.description == "Phase 5: Apply fixes" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                else -> todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         // Phase 5: Apply fixes (group by file for efficiency)
         emit(GeminiStreamEvent.Chunk("✏️ Phase 5: Applying fixes...\n"))
@@ -2203,17 +2198,15 @@ class GeminiClient(
             }
         }
         
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            // Mark Phase 5 as completed - preserve documentation search todo if it exists
-            val updatedTodos = currentTodos.map { todo ->
-                if (todo.description == "Phase 5: Apply fixes") {
-                    todo.copy(status = TodoStatus.COMPLETED)
-                } else {
-                    todo
-                }
+        // Mark Phase 5 as completed - preserve documentation search todo if it exists (no withContext - emit must be in same context)
+        val updatedTodos = currentTodos.map { todo ->
+            if (todo.description == "Phase 5: Apply fixes") {
+                todo.copy(status = TodoStatus.COMPLETED)
+            } else {
+                todo
             }
-            updateTodos(updatedTodos)
         }
+        updateTodos(updatedTodos)
         
         emit(GeminiStreamEvent.Chunk("\n✨ Debug/upgrade complete!\n"))
         onChunk("\n✨ Debug/upgrade complete!\n")
