@@ -345,8 +345,6 @@ fun TerminalScreen(
 
                 PreferenceGroup {
                     val installedRootfs = remember { Rootfs.getInstalledRootfsList() }
-                    val hasAlpine = installedRootfs.contains("alpine.tar.gz")
-                    val hasUbuntu = installedRootfs.contains("ubuntu.tar.gz")
 
                     SettingsCard(
                         title = { Text("Android") },
@@ -356,24 +354,29 @@ fun TerminalScreen(
                             showAddDialog = false
                         })
 
-                    if (hasAlpine) {
-                        SettingsCard(
-                            title = { Text("Alpine") },
-                            description = {Text("Alpine Linux")},
-                            onClick = {
-                                createSession(workingMode = WorkingMode.ALPINE)
-                                showAddDialog = false
-                            })
-                    }
-                    
-                    if (hasUbuntu) {
-                        SettingsCard(
-                            title = { Text("Ubuntu") },
-                            description = {Text("Ubuntu Linux")},
-                            onClick = {
-                                createSession(workingMode = WorkingMode.UBUNTU)
-                                showAddDialog = false
-                            })
+                    // Show all installed rootfs dynamically
+                    installedRootfs.forEach { rootfsName ->
+                        val displayName = Rootfs.getRootfsDisplayName(rootfsName)
+                        val workingMode = Rootfs.getRootfsWorkingMode(rootfsName)
+                        
+                        if (workingMode != null) {
+                            SettingsCard(
+                                title = { Text(displayName) },
+                                description = { Text("Linux rootfs: $rootfsName") },
+                                onClick = {
+                                    createSession(workingMode = workingMode)
+                                    showAddDialog = false
+                                })
+                        } else {
+                            // For custom rootfs without known working mode, try to infer or use ALPINE as default
+                            SettingsCard(
+                                title = { Text(displayName) },
+                                description = { Text("Custom rootfs: $rootfsName") },
+                                onClick = {
+                                    createSession(workingMode = WorkingMode.ALPINE)
+                                    showAddDialog = false
+                                })
+                        }
                     }
                 }
             }

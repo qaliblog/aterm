@@ -38,12 +38,17 @@ object Rootfs {
         return reTerminal.child(rootfsName).exists()
     }
     
-    fun markRootfsInstalled(rootfsName: String) {
+    fun markRootfsInstalled(rootfsName: String, displayName: String? = null) {
         // Add to installed rootfs list in settings
         val installed = getInstalledRootfsList()
         if (!installed.contains(rootfsName)) {
             val updated = installed + rootfsName
             com.rk.settings.Preference.setString("installed_rootfs", updated.joinToString(","))
+        }
+        
+        // Store display name if provided
+        if (displayName != null && displayName.isNotBlank()) {
+            setRootfsDisplayName(rootfsName, displayName)
         }
     }
     
@@ -54,6 +59,44 @@ object Rootfs {
             getInstalledRootfs()
         } else {
             stored.split(",").filter { it.isNotBlank() }
+        }
+    }
+    
+    fun getRootfsDisplayName(rootfsName: String): String {
+        val nameKey = "rootfs_name_$rootfsName"
+        val storedName = com.rk.settings.Preference.getString(nameKey, "")
+        return if (storedName.isNotBlank()) {
+            storedName
+        } else {
+            // Default names for known rootfs
+            when (rootfsName) {
+                "alpine.tar.gz" -> "Alpine"
+                "ubuntu.tar.gz" -> "Ubuntu"
+                else -> rootfsName.substringBeforeLast(".").replace("_", " ").split(" ").joinToString(" ") { 
+                    it.replaceFirstChar { char -> char.uppercaseChar() }
+                }
+            }
+        }
+    }
+    
+    fun setRootfsDisplayName(rootfsName: String, displayName: String) {
+        val nameKey = "rootfs_name_$rootfsName"
+        com.rk.settings.Preference.setString(nameKey, displayName)
+    }
+    
+    fun getRootfsWorkingMode(rootfsName: String): Int? {
+        return when (rootfsName) {
+            "alpine.tar.gz" -> com.qali.aterm.ui.screens.settings.WorkingMode.ALPINE
+            "ubuntu.tar.gz" -> com.qali.aterm.ui.screens.settings.WorkingMode.UBUNTU
+            else -> {
+                // Try to infer from name or return null for custom rootfs
+                val name = rootfsName.lowercase()
+                when {
+                    name.contains("alpine") -> com.qali.aterm.ui.screens.settings.WorkingMode.ALPINE
+                    name.contains("ubuntu") -> com.qali.aterm.ui.screens.settings.WorkingMode.UBUNTU
+                    else -> null
+                }
+            }
         }
     }
     

@@ -114,14 +114,26 @@ fun KarbonTheme(
                 when {
                     darkTheme && highContrastDarkTheme ->
                         dynamicDarkColorScheme(context)
-                            .copy(background = Color.Black, surface = Color.Black)
+                            .copy(
+                                background = Color.Black, 
+                                surface = Color.Black,
+                                onBackground = Color.White,
+                                onSurface = Color.White,
+                                onSurfaceVariant = Color(0xFFE0E0E0)
+                            )
                     darkTheme -> dynamicDarkColorScheme(context)
                     else -> dynamicLightColorScheme(context)
                 }
             }
 
             darkTheme && highContrastDarkTheme ->
-                DarkColorScheme.copy(background = Color.Black, surface = Color.Black)
+                DarkColorScheme.copy(
+                    background = Color.Black, 
+                    surface = Color.Black,
+                    onBackground = Color.White,
+                    onSurface = Color.White,
+                    onSurfaceVariant = Color(0xFFE0E0E0)
+                )
             darkTheme -> DarkColorScheme
             else -> LightColorScheme
         }
