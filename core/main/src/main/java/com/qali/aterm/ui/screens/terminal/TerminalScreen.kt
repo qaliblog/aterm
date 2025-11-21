@@ -225,10 +225,12 @@ fun TerminalScreen(
         // Force update terminal colors immediately
         scope.launch(Dispatchers.Main) {
             terminalView.get()?.apply {
-                val color = if (isDarkMode) Color.WHITE else Color.BLACK
+                val foregroundColor = if (isDarkMode) Color.WHITE else Color.BLACK
+                val backgroundColor = if (isDarkMode) Color.BLACK else Color.WHITE
                 mEmulator?.mColors?.mCurrentColors?.apply {
-                    set(256, color) // Foreground color
-                    set(258, color) // Cursor color
+                    set(256, foregroundColor) // Foreground color (COLOR_INDEX_FOREGROUND)
+                    set(257, backgroundColor) // Background color (COLOR_INDEX_BACKGROUND)
+                    set(258, foregroundColor) // Cursor color (COLOR_INDEX_CURSOR)
                 }
                 onScreenUpdated()
             }
@@ -663,19 +665,12 @@ fun TerminalScreen(
 
                                                 // Set terminal colors based on current theme
                                                 darkText.value = !isDarkMode
-                                                val color = if (isDarkMode) Color.WHITE else Color.BLACK
+                                                val foregroundColor = if (isDarkMode) Color.WHITE else Color.BLACK
+                                                val backgroundColor = if (isDarkMode) Color.BLACK else Color.WHITE
                                                 mEmulator?.mColors?.mCurrentColors?.apply {
-                                                    set(256, color) // Foreground color
-                                                    set(258, color) // Cursor color
-                                                }
-                                                onScreenUpdated()
-                                                
-                                                // Force update terminal colors based on current theme
-                                                darkText.value = !isDarkMode
-                                                val updatedColor = getViewColor()
-                                                mEmulator?.mColors?.mCurrentColors?.apply {
-                                                    set(256, updatedColor)
-                                                    set(258, updatedColor)
+                                                    set(256, foregroundColor) // Foreground color (COLOR_INDEX_FOREGROUND)
+                                                    set(257, backgroundColor) // Background color (COLOR_INDEX_BACKGROUND)
+                                                    set(258, foregroundColor) // Cursor color (COLOR_INDEX_CURSOR)
                                                 }
                                                 onScreenUpdated()
 
@@ -695,12 +690,17 @@ fun TerminalScreen(
                                         .weight(1f),
                                     update = { terminalView ->
                                         terminalView.onScreenUpdated()
-                                       val color = getViewColor()
-
+                                        // Update terminal colors based on current theme
+                                        val isDark = isSystemInDarkTheme()
+                                        darkText.value = !isDark
+                                        val foregroundColor = if (isDark) Color.WHITE else Color.BLACK
+                                        val backgroundColor = if (isDark) Color.BLACK else Color.WHITE
                                         terminalView.mEmulator?.mColors?.mCurrentColors?.apply {
-                                            set(256, color)
-                                            set(258, color)
+                                            set(256, foregroundColor) // Foreground color
+                                            set(257, backgroundColor) // Background color
+                                            set(258, foregroundColor) // Cursor color
                                         }
+                                        terminalView.onScreenUpdated()
                                     },
                                 )
                                     }

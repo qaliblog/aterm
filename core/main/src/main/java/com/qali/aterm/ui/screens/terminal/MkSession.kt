@@ -58,11 +58,10 @@ object MkSession {
                 WorkingMode.UBUNTU -> "init-ubuntu.sh"
                 else -> "init.sh"
             }
+            // Always update init script to ensure correct one is used
             localBinDir().child("init").apply {
-                if (exists().not()){
-                    createFileIfNot()
-                    writeText(assets.open(initScriptName).bufferedReader().use { it.readText() })
-                }
+                createFileIfNot()
+                writeText(assets.open(initScriptName).bufferedReader().use { it.readText() })
             }
 
 

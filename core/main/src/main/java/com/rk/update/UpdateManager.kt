@@ -18,14 +18,8 @@ class UpdateManager {
             initFile.writeText(application!!.assets.open("init-host.sh").bufferedReader().use { it.readText() })
         }
 
-        val initFilex: File = localBinDir().child("init")
-        if(initFilex.exists()){
-            initFilex.delete()
-        }
-
-        if (initFilex.exists().not()){
-            initFilex.createFileIfNot()
-            initFilex.writeText(application!!.assets.open("init.sh").bufferedReader().use { it.readText() })
-        }
+        // Note: init script is now created dynamically in MkSession based on working mode
+        // This ensures Ubuntu uses init-ubuntu.sh and Alpine uses init.sh
+        // We don't need to create it here anymore as it's handled per-session
     }
 }
