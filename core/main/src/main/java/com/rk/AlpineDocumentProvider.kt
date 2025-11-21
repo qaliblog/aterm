@@ -22,7 +22,7 @@ import java.io.IOException
 import java.util.Collections
 import java.util.LinkedList
 import java.util.Locale
-import com.rk.terminal.R
+import com.qali.aterm.R
 
 class AlpineDocumentProvider : DocumentsProvider() {
     override fun queryRoots(projection: Array<String>?): Cursor {

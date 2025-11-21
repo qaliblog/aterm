@@ -202,14 +202,15 @@ fun RootfsSetupScreen(
                             null -> throw RuntimeException("No rootfs selected")
                         }
 
-                        val rootfsUrl = when (selectedType) {
+                        val currentType = selectedType
+                        val rootfsUrl = when (currentType) {
                             RootfsType.ALPINE -> abiMap[abi]!!.alpine
                             RootfsType.UBUNTU -> abiMap[abi]!!.ubuntu
                             RootfsType.CUSTOM -> customUrl
                             null -> throw RuntimeException("No rootfs selected")
                         }
 
-                        downloadText = "Downloading ${selectedType.name.lowercase()} rootfs..."
+                        downloadText = "Downloading ${currentType?.name?.lowercase() ?: "rootfs"} rootfs..."
                         
                         // Download proot and libtalloc if needed
                         val abiUrls = abiMap[abi]!!

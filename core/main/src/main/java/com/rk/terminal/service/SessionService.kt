@@ -13,9 +13,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
 import com.rk.resources.drawables
 import com.rk.resources.strings
-import com.rk.terminal.ui.activities.terminal.MainActivity
-import com.rk.terminal.ui.screens.settings.Settings
-import com.rk.terminal.ui.screens.terminal.MkSession
+import com.qali.aterm.ui.activities.terminal.MainActivity
+import com.qali.aterm.ui.screens.settings.Settings
+import com.qali.aterm.ui.screens.terminal.MkSession
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import okhttp3.internal.wait

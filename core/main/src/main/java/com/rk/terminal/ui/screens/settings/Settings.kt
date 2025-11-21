@@ -7,9 +7,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.*
@@ -24,9 +29,9 @@ import com.rk.components.compose.preferences.base.PreferenceLayout
 import com.rk.components.compose.preferences.base.PreferenceTemplate
 import com.rk.resources.strings
 import com.rk.settings.Settings
-import com.rk.terminal.ui.activities.terminal.MainActivity
-import com.rk.terminal.ui.components.SettingsToggle
-import com.rk.terminal.ui.routes.MainActivityRoutes
+import com.qali.aterm.ui.activities.terminal.MainActivity
+import com.qali.aterm.ui.components.SettingsToggle
+import com.qali.aterm.ui.routes.MainActivityRoutes
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -66,6 +71,7 @@ fun SettingsCard(
 object WorkingMode{
     const val ALPINE = 0
     const val ANDROID = 1
+    const val UBUNTU = 2
 }
 
 
@@ -130,12 +136,12 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
         }
         
         // API Provider Settings
-        ApiProviderSettings()
+        com.qali.aterm.ui.screens.settings.ApiProviderSettings()
         
         // Ollama Settings
-        OllamaSettings()
+        com.qali.aterm.ui.screens.settings.OllamaSettings()
         
         // Agent Settings
-        AgentSettings()
+        com.qali.aterm.ui.screens.settings.AgentSettings()
     }
 }
