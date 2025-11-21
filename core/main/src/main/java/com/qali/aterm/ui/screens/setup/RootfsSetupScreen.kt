@@ -26,6 +26,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import android.os.Environment
+import android.os.Build
+import android.content.Context
 
 enum class RootfsType {
     ALPINE,
@@ -410,7 +413,8 @@ fun RootfsSetupScreen(
         // File picker dialog
         if (showFilePicker) {
             FilePickerDialog(
-                initialPath = android.os.Environment.getExternalStorageDirectory().absolutePath,
+                context = context,
+                initialPath = getInitialStoragePath(context),
                 onDismiss = { showFilePicker = false },
                 onFileSelected = { file ->
                     if (file.name.endsWith(".tar.gz") || file.name.endsWith(".tar")) {
@@ -428,8 +432,44 @@ fun RootfsSetupScreen(
     }
 }
 
+fun getInitialStoragePath(context: Context): String {
+    // Try to get external storage directory
+    val externalStorage = Environment.getExternalStorageDirectory()
+    if (externalStorage != null && externalStorage.exists()) {
+        return externalStorage.absolutePath
+    }
+    
+    // Try to get external files directory
+    val externalFilesDir = context.getExternalFilesDir(null)
+    if (externalFilesDir != null && externalFilesDir.exists()) {
+        val parent = externalFilesDir.parentFile
+        if (parent != null && parent.exists()) {
+            return parent.absolutePath
+        }
+    }
+    
+    // Try common storage paths
+    val commonPaths = listOf(
+        "/storage/emulated/0",
+        "/storage/sdcard0",
+        "/sdcard",
+        "/mnt/sdcard"
+    )
+    
+    for (path in commonPaths) {
+        val dir = File(path)
+        if (dir.exists() && dir.isDirectory) {
+            return path
+        }
+    }
+    
+    // Fallback to external storage directory
+    return Environment.getExternalStorageDirectory().absolutePath
+}
+
 @Composable
 fun FilePickerDialog(
+    context: Context,
     initialPath: String,
     onDismiss: () -> Unit,
     onFileSelected: (File) -> Unit
@@ -457,6 +497,31 @@ fun FilePickerDialog(
                     .fillMaxWidth()
                     .heightIn(max = 400.dp)
             ) {
+                // Storage shortcuts
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val storagePaths = listOf(
+                        "Internal" to getInitialStoragePath(context),
+                        "Download" to File(getInitialStoragePath(context), "Download").absolutePath,
+                        "/storage" to "/storage"
+                    )
+                    
+                    storagePaths.forEach { (label, path) ->
+                        val dir = File(path)
+                        if (dir.exists() && dir.isDirectory) {
+                            FilterChip(
+                                selected = currentPath == path,
+                                onClick = { currentPath = path },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+                
+                Divider()
+                
                 // Path bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),

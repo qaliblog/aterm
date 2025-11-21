@@ -216,6 +216,29 @@ fun TerminalScreen(
     }
 
 
+    // Update terminal text color based on theme
+    LaunchedEffect(isDarkMode) {
+        darkText.value = !isDarkMode
+        terminalView.get()?.apply {
+            val color = getViewColor()
+            mEmulator?.mColors?.mCurrentColors?.apply {
+                set(256, color) // Foreground color
+                set(258, color) // Cursor color
+            }
+            onScreenUpdated()
+        }
+        virtualKeysView.get()?.apply {
+            buttonTextColor = getViewColor()
+            reload(
+                VirtualKeysInfo(
+                    VIRTUAL_KEYS,
+                    "",
+                    VirtualKeysConstants.CONTROL_CHARS_ALIASES
+                )
+            )
+        }
+    }
+    
     LaunchedEffect(Unit){
         withContext(Dispatchers.IO){
             if (context.filesDir.child("background").exists().not()){
@@ -630,9 +653,18 @@ fun TerminalScreen(
                                                 isFocusableInTouchMode = true
 
                                                 mEmulator?.mColors?.mCurrentColors?.apply {
-                                                    set(256, color)
-                                                    set(258, color)
+                                                    set(256, color) // Foreground color
+                                                    set(258, color) // Cursor color
                                                 }
+                                                
+                                                // Force update terminal colors based on current theme
+                                                darkText.value = !isDarkMode
+                                                val updatedColor = getViewColor()
+                                                mEmulator?.mColors?.mCurrentColors?.apply {
+                                                    set(256, updatedColor)
+                                                    set(258, updatedColor)
+                                                }
+                                                onScreenUpdated()
 
                                                 val colorsFile = localDir().child("colors.properties")
                                                 if (colorsFile.exists() && colorsFile.isFile){

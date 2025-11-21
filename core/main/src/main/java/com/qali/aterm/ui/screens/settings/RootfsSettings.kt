@@ -22,6 +22,7 @@ import com.qali.aterm.ui.screens.downloader.downloadRootfs
 import com.qali.aterm.ui.screens.downloader.abiMap
 import com.qali.aterm.ui.screens.setup.RootfsType
 import com.qali.aterm.ui.screens.setup.FilePickerDialog
+import com.qali.aterm.ui.screens.setup.getInitialStoragePath
 import com.qali.aterm.ui.screens.terminal.Rootfs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -461,9 +462,11 @@ fun RootfsSettings(
     }
     
     // File picker dialog
+    val context = LocalContext.current
     if (showFilePicker) {
         FilePickerDialog(
-            initialPath = android.os.Environment.getExternalStorageDirectory().absolutePath,
+            context = context,
+            initialPath = getInitialStoragePath(context),
             onDismiss = { showFilePicker = false },
             onFileSelected = { file ->
                 if (file.name.endsWith(".tar.gz") || file.name.endsWith(".tar")) {
