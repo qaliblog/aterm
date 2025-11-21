@@ -438,6 +438,177 @@ fun WelcomeMessage() {
 }
 
 /**
+ * Summary card showing all new and changed files
+ */
+@Composable
+fun FileChangesSummaryCard(
+    messages: List<AgentMessage>,
+    modifier: Modifier = Modifier
+) {
+    val fileDiffs = remember(messages) {
+        messages.mapNotNull { it.fileDiff }
+    }
+    
+    val newFiles = remember(fileDiffs) {
+        fileDiffs.filter { it.isNewFile }.map { it.filePath }.distinct()
+    }
+    
+    val changedFiles = remember(fileDiffs) {
+        fileDiffs.filter { !it.isNewFile }.map { it.filePath }.distinct()
+    }
+    
+    if (newFiles.isEmpty() && changedFiles.isEmpty()) {
+        return
+    }
+    
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 600.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.InsertDriveFile,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "File Changes Summary",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            
+            Divider()
+            
+            // New files section
+            if (newFiles.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Add,
+                            contentDescription = null,
+                            tint = Color(0xFF4CAF50),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "New Files (${newFiles.size})",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF4CAF50)
+                        )
+                    }
+                    newFiles.forEach { filePath ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    Color(0xFF4CAF50).copy(alpha = 0.1f),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Add,
+                                contentDescription = null,
+                                tint = Color(0xFF4CAF50),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = filePath,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+            
+            // Changed files section
+            if (changedFiles.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (newFiles.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Changed Files (${changedFiles.size})",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    changedFiles.forEach { filePath ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = filePath,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * Beautiful code diff card component similar to Cursor AI
  */
 @Composable
@@ -551,7 +722,6 @@ fun CodeDiffCard(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
                         .heightIn(max = 400.dp)
                 ) {
                     diffLines.forEach { diffLine ->
@@ -1203,6 +1373,17 @@ fun AgentScreen(
                     WelcomeMessage()
                 }
             } else {
+                // Show file changes summary at the top if there are any file changes
+                val hasFileChanges = messages.any { it.fileDiff != null }
+                if (hasFileChanges) {
+                    item {
+                        FileChangesSummaryCard(
+                            messages = messages,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+                }
+                
                 items(messages) { message ->
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1272,7 +1453,7 @@ fun AgentScreen(
                                                     userMessage = prompt,
                                                     onChunk = { chunk ->
                                                         currentResponseText += chunk
-                                                        val currentMessages = messages.dropLast(1)
+                                                        val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
                                                         messages = currentMessages + AgentMessage(
                                                             text = currentResponseText,
                                                             isUser = false,
@@ -1301,7 +1482,7 @@ fun AgentScreen(
                                                     userMessage = prompt,
                                                     onChunk = { chunk ->
                                                         currentResponseText += chunk
-                                                        val currentMessages = messages.dropLast(1)
+                                                        val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
                                                         messages = currentMessages + AgentMessage(
                                                             text = currentResponseText,
                                                             isUser = false,
@@ -1329,11 +1510,115 @@ fun AgentScreen(
                                             
                                             // Collect stream events
                                             android.util.Log.d("AgentScreen", "Starting to collect stream events")
-                                            stream.collect { event ->
-                                                android.util.Log.d("AgentScreen", "Received stream event: ${event.javaClass.simpleName}")
-                                                when (event) {
-                                                    is GeminiStreamEvent.Chunk -> {
-                                                        currentResponseText += event.text
+                                            try {
+                                                stream.collect { event ->
+                                                    try {
+                                                        android.util.Log.d("AgentScreen", "Received stream event: ${event.javaClass.simpleName}")
+                                                        when (event) {
+                                                            is GeminiStreamEvent.Chunk -> {
+                                                                currentResponseText += event.text
+                                                                val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                                                messages = currentMessages + AgentMessage(
+                                                                    text = currentResponseText,
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                            }
+                                                            is GeminiStreamEvent.ToolCall -> {
+                                                                // Store tool call args in queue for file diff extraction
+                                                                if (event.functionCall.name == "edit_file" || event.functionCall.name == "write_file") {
+                                                                    toolCallQueue.add(Pair(event.functionCall.name, event.functionCall.args))
+                                                                }
+                                                                val toolMessage = AgentMessage(
+                                                                    text = "🔧 Calling tool: ${event.functionCall.name}",
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                                messages = messages + toolMessage
+                                                            }
+                                                            is GeminiStreamEvent.ToolResult -> {
+                                                                // Try to extract file diff from tool result
+                                                                // Find matching tool call from queue
+                                                                val toolCallIndex = toolCallQueue.indexOfFirst { it.first == event.toolName }
+                                                                val toolArgs = if (toolCallIndex >= 0) {
+                                                                    val args = toolCallQueue[toolCallIndex].second
+                                                                    toolCallQueue.removeAt(toolCallIndex) // Remove after use
+                                                                    args
+                                                                } else null
+                                                                
+                                                                val fileDiff = parseFileDiffFromToolResult(event.toolName, event.result, toolArgs)
+                                                                
+                                                                val resultMessage = AgentMessage(
+                                                                    text = "✅ Tool '${event.toolName}' completed: ${event.result.returnDisplay}",
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis(),
+                                                                    fileDiff = fileDiff
+                                                                )
+                                                                messages = messages + resultMessage
+                                                            }
+                                                            is GeminiStreamEvent.Error -> {
+                                                                val errorMessage = AgentMessage(
+                                                                    text = "❌ Error: ${event.message}",
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                                messages = if (messages.isNotEmpty()) messages.dropLast(1) + errorMessage else messages + errorMessage
+                                                            }
+                                                            is GeminiStreamEvent.KeysExhausted -> {
+                                                                lastFailedPrompt = prompt
+                                                                showKeysExhaustedDialog = true
+                                                                val exhaustedMessage = AgentMessage(
+                                                                    text = "⚠️ Keys are exhausted\n\nAll API keys are rate limited. Use 'Wait and Retry' to retry after a delay.",
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                                messages = if (messages.isNotEmpty()) messages.dropLast(1) + exhaustedMessage else messages + exhaustedMessage
+                                                            }
+                                                            is GeminiStreamEvent.Done -> {
+                                                                android.util.Log.d("AgentScreen", "Stream completed (Done event)")
+                                                                // Final cleanup: ensure loading message is replaced with final response if there's any text
+                                                                if (currentResponseText.isNotEmpty() && messages.isNotEmpty()) {
+                                                                    try {
+                                                                        val lastMessage = messages.last()
+                                                                        // Only replace if it's still the loading message or empty
+                                                                        if (lastMessage.text == "Thinking..." || lastMessage.text.isEmpty()) {
+                                                                            val currentMessages = messages.dropLast(1)
+                                                                            messages = currentMessages + AgentMessage(
+                                                                                text = currentResponseText,
+                                                                                isUser = false,
+                                                                                timestamp = System.currentTimeMillis()
+                                                                            )
+                                                                        }
+                                                                    } catch (e: Exception) {
+                                                                        android.util.Log.e("AgentScreen", "Error in Done event cleanup", e)
+                                                                    }
+                                                                }
+                                                                // Reset currentResponseText for next message
+                                                                currentResponseText = ""
+                                                            }
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        android.util.Log.e("AgentScreen", "Error processing stream event", e)
+                                                        // Emit error message but don't crash
+                                                        val errorMessage = AgentMessage(
+                                                            text = "❌ Error processing event: ${e.message ?: "Unknown error"}",
+                                                            isUser = false,
+                                                            timestamp = System.currentTimeMillis()
+                                                        )
+                                                        messages = if (messages.isNotEmpty()) messages.dropLast(1) + errorMessage else messages + errorMessage
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                android.util.Log.e("AgentScreen", "Error in stream collection", e)
+                                                // Fall through to outer catch block
+                                                throw e
+                                            }
+                                            android.util.Log.d("AgentScreen", "Finished collecting stream events")
+                                            // Final safety check: ensure loading message is cleaned up
+                                            try {
+                                                if (currentResponseText.isNotEmpty() && messages.isNotEmpty()) {
+                                                    val lastMessage = messages.last()
+                                                    if (lastMessage.text == "Thinking..." || lastMessage.text.isEmpty()) {
                                                         val currentMessages = messages.dropLast(1)
                                                         messages = currentMessages + AgentMessage(
                                                             text = currentResponseText,
@@ -1341,62 +1626,11 @@ fun AgentScreen(
                                                             timestamp = System.currentTimeMillis()
                                                         )
                                                     }
-                                                    is GeminiStreamEvent.ToolCall -> {
-                                                        // Store tool call args in queue for file diff extraction
-                                                        if (event.functionCall.name == "edit_file" || event.functionCall.name == "write_file") {
-                                                            toolCallQueue.add(Pair(event.functionCall.name, event.functionCall.args))
-                                                        }
-                                                        val toolMessage = AgentMessage(
-                                                            text = "🔧 Calling tool: ${event.functionCall.name}",
-                                                            isUser = false,
-                                                            timestamp = System.currentTimeMillis()
-                                                        )
-                                                        messages = messages + toolMessage
-                                                    }
-                                                    is GeminiStreamEvent.ToolResult -> {
-                                                        // Try to extract file diff from tool result
-                                                        // Find matching tool call from queue
-                                                        val toolCallIndex = toolCallQueue.indexOfFirst { it.first == event.toolName }
-                                                        val toolArgs = if (toolCallIndex >= 0) {
-                                                            val args = toolCallQueue[toolCallIndex].second
-                                                            toolCallQueue.removeAt(toolCallIndex) // Remove after use
-                                                            args
-                                                        } else null
-                                                        
-                                                        val fileDiff = parseFileDiffFromToolResult(event.toolName, event.result, toolArgs)
-                                                        
-                                                        val resultMessage = AgentMessage(
-                                                            text = "✅ Tool '${event.toolName}' completed: ${event.result.returnDisplay}",
-                                                            isUser = false,
-                                                            timestamp = System.currentTimeMillis(),
-                                                            fileDiff = fileDiff
-                                                        )
-                                                        messages = messages + resultMessage
-                                                    }
-                                                    is GeminiStreamEvent.Error -> {
-                                                        val errorMessage = AgentMessage(
-                                                            text = "❌ Error: ${event.message}",
-                                                            isUser = false,
-                                                            timestamp = System.currentTimeMillis()
-                                                        )
-                                                        messages = messages.dropLast(1) + errorMessage
-                                                    }
-                                                    is GeminiStreamEvent.KeysExhausted -> {
-                                                        lastFailedPrompt = prompt
-                                                        showKeysExhaustedDialog = true
-                                                        val exhaustedMessage = AgentMessage(
-                                                            text = "⚠️ Keys are exhausted\n\nAll API keys are rate limited. Use 'Wait and Retry' to retry after a delay.",
-                                                            isUser = false,
-                                                            timestamp = System.currentTimeMillis()
-                                                        )
-                                                        messages = messages.dropLast(1) + exhaustedMessage
-                                                    }
-                                                    is GeminiStreamEvent.Done -> {
-                                                        android.util.Log.d("AgentScreen", "Stream completed (Done event)")
-                                                    }
                                                 }
+                                                currentResponseText = ""
+                                            } catch (e: Exception) {
+                                                android.util.Log.e("AgentScreen", "Error in final cleanup after stream", e)
                                             }
-                                            android.util.Log.d("AgentScreen", "Finished collecting stream events")
                                         } catch (e: KeysExhaustedException) {
                                             android.util.Log.e("AgentScreen", "KeysExhaustedException caught", e)
                                             lastFailedPrompt = prompt
