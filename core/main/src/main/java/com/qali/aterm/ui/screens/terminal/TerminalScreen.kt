@@ -691,10 +691,9 @@ fun TerminalScreen(
                                     update = { terminalView ->
                                         terminalView.onScreenUpdated()
                                         // Update terminal colors based on current theme
-                                        val isDark = isSystemInDarkTheme()
-                                        darkText.value = !isDark
-                                        val foregroundColor = if (isDark) Color.WHITE else Color.BLACK
-                                        val backgroundColor = if (isDark) Color.BLACK else Color.WHITE
+                                        darkText.value = !isDarkMode
+                                        val foregroundColor = if (isDarkMode) Color.WHITE else Color.BLACK
+                                        val backgroundColor = if (isDarkMode) Color.BLACK else Color.WHITE
                                         terminalView.mEmulator?.mColors?.mCurrentColors?.apply {
                                             set(256, foregroundColor) // Foreground color
                                             set(257, backgroundColor) // Background color
