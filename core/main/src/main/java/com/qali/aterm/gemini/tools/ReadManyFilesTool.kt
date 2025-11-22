@@ -13,7 +13,9 @@ data class ReadManyFilesParams(
     val include: List<String>,
     val exclude: List<String>? = null,
     val recursive: Boolean? = null,
-    val useDefaultExcludes: Boolean? = true
+    val useDefaultExcludes: Boolean? = true,
+    val max_files: Int? = null, // AI can specify how many files to read (replaces hardcoded 4)
+    val priority_patterns: List<String>? = null // Patterns to prioritize when selecting files
 )
 
 class ReadManyFilesToolInvocation(
@@ -71,12 +73,45 @@ class ReadManyFilesToolInvocation(
             )
         }
         
+        // Apply max_files limit and priority if specified
+        val filesToProcess = if (params.max_files != null && filesToRead.size > params.max_files) {
+            // Prioritize files matching priority_patterns
+            val priorityPatterns = params.priority_patterns?.map { pattern ->
+                convertGlobToRegex(pattern)
+            } ?: emptyList()
+            
+            if (priorityPatterns.isNotEmpty()) {
+                val priorityFiles = mutableListOf<File>()
+                val otherFiles = mutableListOf<File>()
+                
+                filesToRead.forEach { file ->
+                    val relativePath = file.relativeTo(File(workspaceRoot)).path
+                    val matchesPriority = priorityPatterns.any { pattern ->
+                        pattern.matches(relativePath)
+                    }
+                    
+                    if (matchesPriority) {
+                        priorityFiles.add(file)
+                    } else {
+                        otherFiles.add(file)
+                    }
+                }
+                
+                // Take priority files first, then fill remaining slots with other files
+                (priorityFiles.take(params.max_files) + otherFiles.take(params.max_files - priorityFiles.size)).take(params.max_files)
+            } else {
+                filesToRead.take(params.max_files)
+            }
+        } else {
+            filesToRead
+        }
+        
         // Read and concatenate files
         val contentParts = mutableListOf<String>()
         var successCount = 0
         var errorCount = 0
         
-        for (file in filesToRead) {
+        for (file in filesToProcess) {
             if (signal?.isAborted() == true) break
             
             try {
@@ -93,8 +128,15 @@ class ReadManyFilesToolInvocation(
         }
         
         val result = contentParts.joinToString("\n\n")
-        val summary = "Read $successCount file(s)." + 
+        val totalFound = filesToRead.size
+        val totalRead = filesToProcess.size
+        val summary = if (params.max_files != null && totalFound > totalRead) {
+            "Read $successCount of $totalRead selected file(s) (from $totalFound total matches)." + 
             if (errorCount > 0) " $errorCount file(s) had errors." else ""
+        } else {
+            "Read $successCount file(s)." + 
+            if (errorCount > 0) " $errorCount file(s) had errors." else ""
+        }
         
         updateOutput?.invoke(summary)
         
@@ -167,7 +209,7 @@ class ReadManyFilesTool(
     
     override val name = "read_many_files"
     override val displayName = "ReadManyFiles"
-    override val description = "Reads and concatenates multiple files matching glob patterns. Useful for reading multiple related files at once."
+    override val description = "Reads and concatenates multiple files matching glob patterns. Useful for reading multiple related files at once. You can specify max_files to limit how many files to read (replaces the old hardcoded limit of 4). Use priority_patterns to prioritize certain files when max_files is set."
     
     override val parameterSchema = FunctionParameters(
         type = "object",
@@ -195,6 +237,18 @@ class ReadManyFilesTool(
             "useDefaultExcludes" to PropertySchema(
                 type = "boolean",
                 description = "Optional. Apply default exclusion patterns. Defaults to true."
+            ),
+            "max_files" to PropertySchema(
+                type = "number",
+                description = "Optional. Maximum number of files to read. If more files match, priority_patterns will be used to select which ones. If not specified, all matching files will be read."
+            ),
+            "priority_patterns" to PropertySchema(
+                type = "array",
+                description = "Optional. Glob patterns for files to prioritize when max_files is specified. Example: [\"*.kt\", \"src/**/*.java\"]",
+                items = PropertySchema(
+                    type = "string",
+                    description = "A glob pattern for priority files"
+                )
             )
         ),
         required = listOf("include")
@@ -227,12 +281,16 @@ class ReadManyFilesTool(
         val exclude = (params["exclude"] as? List<*>)?.mapNotNull { it as? String }
         val recursive = params["recursive"] as? Boolean
         val useDefaultExcludes = params["useDefaultExcludes"] as? Boolean ?: true
+        val maxFiles = (params["max_files"] as? Number)?.toInt()
+        val priorityPatterns = (params["priority_patterns"] as? List<*>)?.mapNotNull { it as? String }
         
         return ReadManyFilesParams(
             include = include,
             exclude = exclude,
             recursive = recursive,
-            useDefaultExcludes = useDefaultExcludes
+            useDefaultExcludes = useDefaultExcludes,
+            max_files = maxFiles,
+            priority_patterns = priorityPatterns
         )
     }
 }

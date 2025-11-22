@@ -71,6 +71,11 @@ object GeminiService {
         toolRegistry.registerTool(WriteTodosTool())
         toolRegistry.registerTool(WebFetchTool())
         toolRegistry.registerTool(MemoryTool(workspaceRoot))
+        // New enhanced tools for better file structure and syntax handling
+        toolRegistry.registerTool(FileStructureTool(workspaceRoot))
+        toolRegistry.registerTool(SedTool(workspaceRoot))
+        toolRegistry.registerTool(SyntaxErrorDetectionTool(workspaceRoot))
+        toolRegistry.registerTool(SyntaxFixTool(workspaceRoot))
     }
     
     fun getClient(): GeminiClient? = client

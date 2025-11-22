@@ -53,15 +53,51 @@ object MkSession {
             }
 
 
-            // Use Ubuntu-specific init script for Ubuntu, Alpine init for others
-            val initScriptName = when (workingMode) {
-                WorkingMode.UBUNTU -> "init-ubuntu.sh"
-                else -> "init.sh"
+            // Get rootfs filename for current working mode
+            val rootfsFileName = com.qali.aterm.ui.screens.terminal.Rootfs.getRootfsFileName(workingMode)
+            
+            // Check if there's a custom init script stored for this rootfs
+            val customInitScript = com.qali.aterm.ui.screens.terminal.Rootfs.getRootfsInitScript(rootfsFileName)
+            val distroType = com.qali.aterm.ui.screens.terminal.Rootfs.getRootfsDistroType(rootfsFileName)
+            
+            // Determine which init script to use
+            val initScriptContent = if (customInitScript != null && customInitScript.isNotBlank()) {
+                // Use custom init script if provided
+                customInitScript
+            } else {
+                // Use predefined init script based on distro type or working mode
+                val initScriptName = when (distroType) {
+                    com.qali.aterm.ui.screens.setup.DistroType.UBUNTU -> "init-ubuntu.sh"
+                    com.qali.aterm.ui.screens.setup.DistroType.DEBIAN -> "init-debian.sh"
+                    com.qali.aterm.ui.screens.setup.DistroType.KALI -> "init-kali.sh"
+                    com.qali.aterm.ui.screens.setup.DistroType.ARCH -> "init-arch.sh"
+                    com.qali.aterm.ui.screens.setup.DistroType.ALPINE -> "init.sh"
+                    com.qali.aterm.ui.screens.setup.DistroType.CUSTOM -> {
+                        // For custom distro without init script, fall back to Alpine
+                        "init.sh"
+                    }
+                    null -> {
+                        // Fallback to working mode if distro type not set
+                        when (workingMode) {
+                            WorkingMode.UBUNTU -> "init-ubuntu.sh"
+                            else -> "init.sh"
+                        }
+                    }
+                }
+                // Read from assets
+                try {
+                    assets.open(initScriptName).bufferedReader().use { it.readText() }
+                } catch (e: Exception) {
+                    // If asset doesn't exist, fall back to Alpine init
+                    android.util.Log.w("MkSession", "Init script $initScriptName not found in assets, using Alpine init")
+                    assets.open("init.sh").bufferedReader().use { it.readText() }
+                }
             }
-            // Always update init script to ensure correct one is used
+            
+            // Write the init script
             localBinDir().child("init").apply {
                 createFileIfNot()
-                writeText(assets.open(initScriptName).bufferedReader().use { it.readText() })
+                writeText(initScriptContent)
             }
 
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,6 +52,9 @@ fun RootfsSetupScreen(
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var downloadText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var selectedDistro by remember { mutableStateOf<DistroType?>(null) }
+    var customInitScript by remember { mutableStateOf("") }
+    var showInitScriptInfo by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -167,8 +171,122 @@ fun RootfsSetupScreen(
             }
         }
 
+        // Distro type selector (shown for all types)
+        if (selectedType != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Select Distribution Type:",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DistroType.values().forEach { distro ->
+                    FilterChip(
+                        selected = selectedDistro == distro,
+                        onClick = { 
+                            selectedDistro = distro
+                            // Clear custom init script if selecting a predefined distro
+                            if (distro.hasPredefinedInit) {
+                                customInitScript = ""
+                            }
+                        },
+                        label = { Text(distro.displayName) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        // Custom init script input (required for CUSTOM distro, optional for others)
+        if (selectedType != null && selectedDistro == DistroType.CUSTOM) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Custom Init Script (Required):",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { showInitScriptInfo = true },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = "Init script help",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = customInitScript,
+                onValueChange = { customInitScript = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 400.dp),
+                label = { Text("Init Script") },
+                placeholder = { Text("#!/bin/sh\nset -e\nexport PATH=...") },
+                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                minLines = 10,
+                maxLines = 20
+            )
+            if (customInitScript.isBlank()) {
+                Text(
+                    text = "⚠ Custom distro requires an init script",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                )
+            }
+        } else if (selectedType != null && selectedDistro != null && selectedDistro != DistroType.CUSTOM && selectedDistro.hasPredefinedInit) {
+            // Optional custom init script override for predefined distros
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Custom Init Script (Optional - overrides default):",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { showInitScriptInfo = true },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = "Init script help",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = customInitScript,
+                onValueChange = { customInitScript = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 150.dp, max = 300.dp),
+                label = { Text("Custom Init Script (optional)") },
+                placeholder = { Text("Leave empty to use default ${selectedDistro?.displayName} init script") },
+                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                minLines = 6,
+                maxLines = 15
+            )
+        }
+
         // Name input (for all types except predefined)
         if (selectedType != null && selectedType != RootfsType.ALPINE && selectedType != RootfsType.UBUNTU) {
+            Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = rootfsName,
                 onValueChange = { rootfsName = it },
@@ -243,6 +361,14 @@ fun RootfsSetupScreen(
             onClick = {
                 if (selectedType == null) {
                     errorMessage = "Please select a rootfs option"
+                    return@Button
+                }
+                if (selectedDistro == null) {
+                    errorMessage = "Please select a distribution type"
+                    return@Button
+                }
+                if (selectedDistro == DistroType.CUSTOM && customInitScript.isBlank()) {
+                    errorMessage = "Custom distro requires an init script"
                     return@Button
                 }
                 if (selectedType == RootfsType.CUSTOM && customUrl.isBlank()) {
@@ -383,6 +509,19 @@ fun RootfsSetupScreen(
                         // Mark rootfs as installed with display name
                         Rootfs.markRootfsInstalled(finalRootfsName, displayName)
                         
+                        // Store distro type
+                        if (selectedDistro != null) {
+                            Rootfs.setRootfsDistroType(finalRootfsName, selectedDistro!!)
+                        }
+                        
+                        // Store custom init script if provided
+                        if (customInitScript.isNotBlank()) {
+                            Rootfs.setRootfsInitScript(finalRootfsName, customInitScript)
+                        } else if (selectedDistro != null && selectedDistro != DistroType.CUSTOM) {
+                            // Clear any existing custom init script for predefined distros
+                            Rootfs.clearRootfsInitScript(finalRootfsName)
+                        }
+                        
                         // Set as default working mode if none is set
                         if (com.rk.settings.Settings.working_Mode == com.qali.aterm.ui.screens.settings.WorkingMode.ALPINE && selectedType != RootfsType.ALPINE) {
                             when (selectedType) {
@@ -406,9 +545,68 @@ fun RootfsSetupScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 32.dp), // Add padding to escape navigation menu
-            enabled = !isDownloading && selectedType != null && (selectedType != RootfsType.FILE_PICKER || selectedFile != null)
+            enabled = !isDownloading && selectedType != null && selectedDistro != null && 
+                     (selectedType != RootfsType.FILE_PICKER || selectedFile != null) &&
+                     !(selectedDistro == DistroType.CUSTOM && customInitScript.isBlank())
         ) {
             Text(if (isDownloading) "Installing..." else "Install")
+        }
+        
+        // Init script info dialog
+        if (showInitScriptInfo) {
+            AlertDialog(
+                onDismissRequest = { showInitScriptInfo = false },
+                title = { Text("Custom Init Script Guide") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "The init script runs when the rootfs starts. It should:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "1. Set up environment variables (PATH, HOME, etc.)",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "2. Configure DNS (nameserver 8.8.8.8)",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "3. Install essential packages if needed",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "4. Set up shell prompt and configuration",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "5. Start the shell or execute commands",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Example structure:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "#!/bin/sh\nset -e\nexport PATH=...\nexport HOME=/root\necho 'nameserver 8.8.8.8' > /etc/resolv.conf\n# Install packages\n# Configure shell\n/bin/bash",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showInitScriptInfo = false }) {
+                        Text("Got it")
+                    }
+                }
+            )
         }
         
         // File picker dialog

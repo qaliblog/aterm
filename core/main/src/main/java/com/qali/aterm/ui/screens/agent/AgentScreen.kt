@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.Button
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +43,7 @@ import com.qali.aterm.gemini.client.GeminiStreamEvent
 import com.qali.aterm.gemini.client.OllamaClient
 import com.qali.aterm.gemini.tools.ToolResult
 import com.qali.aterm.ui.activities.terminal.MainActivity
+import com.qali.aterm.ui.screens.terminal.changeSession
 import com.rk.settings.Settings
 import java.io.File
 import kotlinx.coroutines.delay
@@ -93,7 +95,20 @@ fun DirectoryPickerDialog(
 ) {
     var currentPath by remember { mutableStateOf(initialPath) }
     var directories by remember { mutableStateOf<List<File>>(emptyList()) }
-    val initialDir = com.rk.libcommons.alpineDir().absolutePath
+    // Start at a better OS-relative directory: prefer home directory, then rootfs, then alpine
+    val initialDir = remember {
+        val homeDir = com.rk.libcommons.getRootfsHomeDir()
+        if (homeDir.exists() && homeDir.isDirectory) {
+            homeDir.absolutePath
+        } else {
+            val rootfsDir = com.rk.libcommons.getRootfsDir()
+            if (rootfsDir.exists() && rootfsDir.isDirectory) {
+                rootfsDir.absolutePath
+            } else {
+                com.rk.libcommons.alpineDir().absolutePath
+            }
+        }
+    }
     
     LaunchedEffect(currentPath) {
         val dir = File(currentPath)
@@ -1138,6 +1153,7 @@ fun AgentScreen(
     var showSessionMenu by remember { mutableStateOf(false) }
     var showTerminateDialog by remember { mutableStateOf(false) }
     var showNewSessionDialog by remember { mutableStateOf(false) }
+    var showSessionSwitcher by remember { mutableStateOf(false) }
     // Track tool calls to extract file diffs (queue-based to handle multiple calls)
     val toolCallQueue = remember { mutableListOf<Pair<String, Map<String, Any>>>() }
     val listState = rememberLazyListState()
@@ -1402,6 +1418,18 @@ fun AgentScreen(
                     Icon(
                         Icons.Default.Edit, 
                         contentDescription = "History", 
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                // Session switcher button - to reopen saved chat sessions
+                IconButton(
+                    onClick = { showSessionSwitcher = true },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.History, 
+                        contentDescription = "Switch Session", 
                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(18.dp)
                     )
@@ -2107,6 +2135,149 @@ fun AgentScreen(
         LaunchedEffect(retryCountdown) {
             // Countdown is handled in the coroutine above
         }
+    }
+    
+    // Session Switcher Dialog - to reopen saved chat sessions
+    if (showSessionSwitcher) {
+        var allSessionIds by remember { mutableStateOf<List<String>>(emptyList()) }
+        var sessionMetadataMap by remember { mutableStateOf<Map<String, SessionMetadata>>(emptyMap()) }
+        
+        LaunchedEffect(Unit) {
+            allSessionIds = HistoryPersistenceService.getAllSessionIds()
+            sessionMetadataMap = allSessionIds.associateWith { sessionId ->
+                HistoryPersistenceService.loadSessionMetadata(sessionId) ?: SessionMetadata(
+                    workspaceRoot = com.rk.libcommons.alpineDir().absolutePath,
+                    isPaused = false
+                )
+            }
+        }
+        
+        AlertDialog(
+            onDismissRequest = { showSessionSwitcher = false },
+            title = { 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.History,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Switch Chat Session")
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                ) {
+                    if (allSessionIds.isEmpty()) {
+                        Text(
+                            "No saved chat sessions found.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            "Select a saved chat session to reopen:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        LazyColumn {
+                            items(allSessionIds) { savedSessionId ->
+                                val metadata = sessionMetadataMap[savedSessionId]
+                                val sessionHistory = HistoryPersistenceService.loadHistory(savedSessionId)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    onClick = {
+                                        showSessionSwitcher = false
+                                        // Switch to this terminal session to load its chat history
+                                        // If the session doesn't exist, it will be created when accessed
+                                        scope.launch {
+                                            try {
+                                                // Switch to this terminal session - changeSession will create it if it doesn't exist
+                                                // The chat history for this sessionId will automatically load when AgentScreen recomposes
+                                                changeSession(mainActivity, savedSessionId)
+                                                android.util.Log.d("AgentScreen", "Switched to terminal session: $savedSessionId (chat history will load automatically)")
+                                            } catch (e: Exception) {
+                                                android.util.Log.e("AgentScreen", "Error switching session", e)
+                                            }
+                                        }
+                                    },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (savedSessionId == sessionId) {
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceContainerHigh
+                                        }
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = savedSessionId,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (savedSessionId == sessionId) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "CURRENT",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onPrimary,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Messages: ${sessionHistory.size}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        metadata?.workspaceRoot?.let {
+                                            Text(
+                                                text = "Workspace: $it",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        metadata?.lastPrompt?.let {
+                                            Text(
+                                                text = "Last: ${it.take(50)}${if (it.length > 50) "..." else ""}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSessionSwitcher = false }) {
+                    Text("Close")
+                }
+            }
+        )
     }
     
     // Debug Dialog

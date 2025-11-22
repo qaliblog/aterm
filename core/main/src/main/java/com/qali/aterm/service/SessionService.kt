@@ -62,14 +62,13 @@ class SessionService : Service() {
             // Create the main visible session
             val mainSession = createSession(id, client, activity, workingMode)
             
-            // Create 3 hidden sessions for file explorer, text editor, and agent
+            // Only create agent hidden session - file explorer and text editor don't use terminal sessions
+            // They just use the sessionId for identification but don't need actual terminal sessions
             val hiddenSessionIds = listOf(
-                "${id}_file_explorer",
-                "${id}_text_editor",
                 "${id}_agent"
             )
             
-            // Create hidden sessions with a dummy client (they won't be displayed)
+            // Create hidden session with a dummy client (it won't be displayed)
             hiddenSessionIds.forEach { hiddenId ->
                 val hiddenClient = object : TerminalSessionClient {
                     override fun onTextChanged(changedSession: TerminalSession) {}
@@ -261,16 +260,14 @@ class SessionService : Service() {
     fun getSessionIdForTab(mainSessionId: String, tabType: TabType): String {
         return when (tabType) {
             TabType.TERMINAL -> mainSessionId
-            TabType.FILE_EXPLORER -> "${mainSessionId}_file_explorer"
-            TabType.TEXT_EDITOR -> "${mainSessionId}_text_editor"
-            TabType.AGENT -> "${mainSessionId}_agent"
+            TabType.FILE_EXPLORER -> mainSessionId // File explorer doesn't need separate terminal session
+            TabType.TEXT_EDITOR -> mainSessionId // Text editor doesn't need separate terminal session
+            TabType.AGENT -> "${mainSessionId}_agent" // Only agent needs a separate terminal session
         }
     }
     
     fun getMainSessionIdFromTabId(tabSessionId: String): String? {
         return when {
-            tabSessionId.endsWith("_file_explorer") -> tabSessionId.removeSuffix("_file_explorer")
-            tabSessionId.endsWith("_text_editor") -> tabSessionId.removeSuffix("_text_editor")
             tabSessionId.endsWith("_agent") -> tabSessionId.removeSuffix("_agent")
             else -> if (!isHiddenSession(tabSessionId)) tabSessionId else null
         }

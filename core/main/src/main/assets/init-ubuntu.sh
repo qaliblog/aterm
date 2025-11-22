@@ -171,7 +171,22 @@ fi
 
 # Start cron daemon if not running
 if ! pgrep -x cron >/dev/null 2>&1; then
-    service cron start 2>/dev/null || /usr/sbin/cron 2>/dev/null || true
+    # Try multiple methods to start cron
+    if command -v service >/dev/null 2>&1; then
+        service cron start 2>/dev/null || true
+    elif [ -f /etc/init.d/cron ]; then
+        /etc/init.d/cron start 2>/dev/null || true
+    elif [ -f /usr/sbin/cron ]; then
+        /usr/sbin/cron 2>/dev/null || true
+    fi
+    # Wait a moment to ensure it started
+    sleep 1
+    # Verify it's running
+    if pgrep -x cron >/dev/null 2>&1; then
+        echo -e "\e[32;1m[+] \e[0mCron daemon started\e[0m"
+    else
+        echo -e "\e[33;1m[!] \e[0mWarning: Failed to start cron daemon (this is normal in some environments)\e[0m"
+    fi
 fi
 
 #fix linker warning

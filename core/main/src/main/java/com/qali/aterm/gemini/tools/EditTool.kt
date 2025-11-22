@@ -7,6 +7,7 @@ import com.qali.aterm.gemini.core.PropertySchema
 import com.qali.aterm.gemini.utils.safeLiteralReplace
 import com.qali.aterm.gemini.utils.createPatch
 import com.qali.aterm.gemini.utils.getDiffStat
+import com.qali.aterm.gemini.utils.FileCoherenceManager
 import java.io.File
 
 data class EditToolParams(
@@ -176,11 +177,23 @@ class EditToolInvocation(
             )
         }
         
-        // Write file
+        // Write file with coherence guarantees
         return try {
             // Create parent directories
             file.parentFile?.mkdirs()
-            file.writeText(newContent)
+            
+            // Use FileCoherenceManager for atomic write in streaming mode
+            val writeSuccess = FileCoherenceManager.writeFileWithCoherence(file, newContent)
+            if (!writeSuccess) {
+                return ToolResult(
+                    llmContent = "File was modified by another operation. Please retry the edit.",
+                    returnDisplay = "Error: Write conflict",
+                    error = ToolError(
+                        message = "File was modified concurrently",
+                        type = ToolErrorType.EXECUTION_ERROR
+                    )
+                )
+            }
             
             val fileName = file.name
             val originallyProposedContent = params.ai_proposed_content ?: newContent

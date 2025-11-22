@@ -93,8 +93,14 @@ public final class TerminalRenderer {
             final int cursorX = (row == cursorRow && cursorVisible) ? cursorCol : -1;
             int selx1 = -1, selx2 = -1;
             if (row >= selectionY1 && row <= selectionY2) {
-                if (row == selectionY1) selx1 = selectionX1;
-                selx2 = (row == selectionY2) ? selectionX2 : mEmulator.mColumns;
+                // For intermediate lines (between y1 and y2), select full width
+                if (row == selectionY1) {
+                    selx1 = selectionX1;
+                } else {
+                    selx1 = 0; // Start from beginning for intermediate lines
+                }
+                // For last line, use selectionX2, otherwise full width
+                selx2 = (row == selectionY2) ? selectionX2 : (mEmulator.mColumns - 1);
             }
 
             TerminalRow lineObject = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
@@ -177,8 +183,19 @@ public final class TerminalRenderer {
             // Calculate selection rectangle coordinates based on row positions
             float selectionTop = (selectionY1 - topRow + 1) * mFontLineSpacing + mFontLineSpacingAndAscent - mFontLineSpacing;
             float selectionBottom = (selectionY2 - topRow + 2) * mFontLineSpacing + mFontLineSpacingAndAscent - mFontLineSpacing;
+            
+            // For multi-line selections, draw full width for intermediate lines
+            // First line: from selectionX1 to end of line (or selectionX2 if single line)
             float selectionLeft = selectionX1 * mFontWidth;
-            float selectionRight = (selectionX2 + 1) * mFontWidth;
+            float selectionRight;
+            if (selectionY1 == selectionY2) {
+                // Single line selection
+                selectionRight = (selectionX2 + 1) * mFontWidth;
+            } else {
+                // Multi-line selection: first line from selectionX1 to end, intermediate lines full width, last line from start to selectionX2
+                // We'll draw the selection per-line in the loop above, but also draw a background rectangle
+                selectionRight = mEmulator.mColumns * mFontWidth;
+            }
             
             // Adjust for last row
             if (selectionY2 >= endRow - 1) {
@@ -188,9 +205,33 @@ public final class TerminalRenderer {
             float topY = selectionTop - mFontLineSpacingAndAscent + mFontAscent;
             float bottomY = selectionBottom - mFontLineSpacingAndAscent + mFontAscent;
             
-            // Only draw if coordinates are valid
-            if (topY < bottomY && selectionLeft < selectionRight) {
-                canvas.drawRect(selectionLeft, topY, selectionRight, bottomY, mSelectionPaint);
+            // Draw selection rectangles per line for proper full-width intermediate lines
+            for (int selRow = selectionY1; selRow <= selectionY2 && selRow < endRow; selRow++) {
+                float rowTop = (selRow - topRow + 1) * mFontLineSpacing + mFontLineSpacingAndAscent - mFontLineSpacing - mFontLineSpacingAndAscent + mFontAscent;
+                float rowBottom = rowTop + mFontLineSpacing;
+                
+                float rowLeft, rowRight;
+                if (selRow == selectionY1 && selRow == selectionY2) {
+                    // Single line
+                    rowLeft = selectionX1 * mFontWidth;
+                    rowRight = (selectionX2 + 1) * mFontWidth;
+                } else if (selRow == selectionY1) {
+                    // First line: from selectionX1 to end
+                    rowLeft = selectionX1 * mFontWidth;
+                    rowRight = mEmulator.mColumns * mFontWidth;
+                } else if (selRow == selectionY2) {
+                    // Last line: from start to selectionX2
+                    rowLeft = 0;
+                    rowRight = (selectionX2 + 1) * mFontWidth;
+                } else {
+                    // Intermediate lines: full width
+                    rowLeft = 0;
+                    rowRight = mEmulator.mColumns * mFontWidth;
+                }
+                
+                if (rowTop < rowBottom && rowLeft < rowRight) {
+                    canvas.drawRect(rowLeft, rowTop, rowRight, rowBottom, mSelectionPaint);
+                }
             }
         }
     }

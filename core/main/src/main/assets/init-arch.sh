@@ -7,87 +7,80 @@ if [ ! -s /etc/resolv.conf ]; then
     echo "nameserver 8.8.8.8" > /etc/resolv.conf
 fi
 
-
 export PS1="\[\e[38;5;46m\]\u\[\033[39m\]@reterm \[\033[39m\]\w \[\033[0m\]\\$ "
 # shellcheck disable=SC2034
 export PIP_BREAK_SYSTEM_PACKAGES=1
-required_packages="bash gcompat glib nano"
+
+# Initialize pacman keyring if needed
+if [ ! -d /etc/pacman.d/gnupg ]; then
+    echo -e "\e[34;1m[*] \e[0mInitializing pacman keyring\e[0m"
+    pacman-key --init 2>/dev/null || true
+    pacman-key --populate archlinux 2>/dev/null || true
+fi
+
+# Update package database
+if [ -f /usr/bin/pacman ]; then
+    echo -e "\e[34;1m[*] \e[0mUpdating package database\e[0m"
+    pacman -Sy --noconfirm 2>/dev/null || true
+fi
+
+# Check and install essential packages
+required_packages="bash nano curl wget"
 missing_packages=""
 for pkg in $required_packages; do
-    if ! apk info -e $pkg >/dev/null 2>&1; then
+    if ! pacman -Q $pkg >/dev/null 2>&1; then
         missing_packages="$missing_packages $pkg"
     fi
 done
+
 if [ -n "$missing_packages" ]; then
     echo -e "\e[34;1m[*] \e[0mInstalling Important packages\e[0m"
-    apk update && apk upgrade
-    apk add $missing_packages
+    pacman -Sy --noconfirm
+    pacman -S --noconfirm $missing_packages 2>/dev/null || true
     if [ $? -eq 0 ]; then
         echo -e "\e[32;1m[+] \e[0mSuccessfully Installed\e[0m"
     fi
-    echo -e "\e[34m[*] \e[0mUse \e[32mapk\e[0m to install new packages\e[0m"
+    echo -e "\e[34m[*] \e[0mUse \e[32mpacman\e[0m to install new packages\e[0m"
 fi
 
 # Install fish shell if not already installed
 if ! command -v fish >/dev/null 2>&1; then
     echo -e "\e[34;1m[*] \e[0mInstalling fish shell\e[0m"
-    apk add fish 2>/dev/null || true
+    pacman -Sy --noconfirm
+    pacman -S --noconfirm fish 2>/dev/null || true
     if command -v fish >/dev/null 2>&1; then
         echo -e "\e[32;1m[+] \e[0mFish shell installed\e[0m"
     fi
 fi
 
-# Install cron if not already installed
+# Install cronie for cron support
 if ! command -v crond >/dev/null 2>&1; then
-    apk add dcron 2>/dev/null || true
+    pacman -S --noconfirm cronie 2>/dev/null || true
 fi
 
 # Copy fish color update script
 if [ -f "$PREFIX/local/bin/update-fish-colors.sh" ]; then
-    # Script already exists, just make it executable
     chmod +x "$PREFIX/local/bin/update-fish-colors.sh" 2>/dev/null || true
 else
-    # Create the script
     mkdir -p "$PREFIX/local/bin" 2>/dev/null || true
     cat > "$PREFIX/local/bin/update-fish-colors.sh" << 'SCRIPTEOF'
 #!/bin/sh
-# Script to update fish shell colors based on app theme
-# This script reads the Android app's SharedPreferences to detect theme
-
-# Paths to check for SharedPreferences
 PREF_PATHS="/data/data/com.qali.aterm/shared_prefs/Settings.xml /data/data/com.qali.aterm.debug/shared_prefs/Settings.xml"
-
-# Default to dark theme if we can't detect
 IS_DARK_MODE=1
-
-# Try to read the theme setting from SharedPreferences
 for PREF_PATH in $PREF_PATHS; do
     if [ -f "$PREF_PATH" ]; then
-        # Read default_night_mode value (MODE_NIGHT_YES=2, MODE_NIGHT_NO=1, MODE_NIGHT_FOLLOW_SYSTEM=0)
         NIGHT_MODE=$(grep -o 'name="default_night_mode"[^>]*>\([0-9]*\)</int>' "$PREF_PATH" 2>/dev/null | grep -o '[0-9]*' | tail -1)
         if [ -n "$NIGHT_MODE" ]; then
-            # MODE_NIGHT_YES = 2 (dark), MODE_NIGHT_NO = 1 (light), MODE_NIGHT_FOLLOW_SYSTEM = 0
-            if [ "$NIGHT_MODE" = "2" ]; then
-                IS_DARK_MODE=1
-            elif [ "$NIGHT_MODE" = "1" ]; then
-                IS_DARK_MODE=0
-            else
-                # MODE_NIGHT_FOLLOW_SYSTEM - try to detect system theme
-                IS_DARK_MODE=1  # Default to dark
-            fi
+            if [ "$NIGHT_MODE" = "2" ]; then IS_DARK_MODE=1
+            elif [ "$NIGHT_MODE" = "1" ]; then IS_DARK_MODE=0
+            else IS_DARK_MODE=1; fi
             break
         fi
     fi
 done
-
-# Create fish config directory if it doesn't exist
 mkdir -p ~/.config/fish 2>/dev/null || true
-
-# Update fish colors based on theme
 if [ "$IS_DARK_MODE" = "1" ]; then
-    # Dark theme: Use light colors
     cat > ~/.config/fish/config.fish << 'FISHDARK'
-# Fish shell configuration for dark theme (light colors)
 set -g fish_color_normal white
 set -g fish_color_command cyan
 set -g fish_color_quote yellow
@@ -115,9 +108,7 @@ set -g fish_pager_color_prefix white --bold --underline
 set -g fish_pager_color_progress brwhite --background=cyan
 FISHDARK
 else
-    # Light theme: Use dark colors
     cat > ~/.config/fish/config.fish << 'FISHLIGHT'
-# Fish shell configuration for light theme (dark colors)
 set -g fish_color_normal black
 set -g fish_color_command blue
 set -g fish_color_quote yellow
@@ -145,60 +136,34 @@ set -g fish_pager_color_prefix black --bold --underline
 set -g fish_pager_color_progress brblack --background=cyan
 FISHLIGHT
 fi
-
-# Make script executable
 chmod +x ~/.config/fish/config.fish 2>/dev/null || true
 SCRIPTEOF
     chmod +x "$PREFIX/local/bin/update-fish-colors.sh" 2>/dev/null || true
 fi
 
-# Run the script once to set initial colors
 "$PREFIX/local/bin/update-fish-colors.sh" 2>/dev/null || true
-
-# Add to crontab to run every minute (checks for theme changes)
 (crontab -l 2>/dev/null | grep -v "update-fish-colors.sh"; echo "* * * * * $PREFIX/local/bin/update-fish-colors.sh >/dev/null 2>&1") | crontab - 2>/dev/null || true
 
-# Start cron daemon if not running
 if ! pgrep -x crond >/dev/null 2>&1; then
-    # Try to start crond with proper flags
-    # -b: run in background
-    # -S: send output to syslog (if available)
-    # -l 0: log level 0 (minimal logging)
     crond -b -S -l 0 >/dev/null 2>&1 &
     sleep 1
     if pgrep -x crond >/dev/null 2>&1; then
         echo -e "\e[32;1m[+] \e[0mCron daemon started\e[0m"
     else
-        # Try alternative method: run in foreground in background using nohup
-        nohup crond -f -l 0 >/dev/null 2>&1 &
-        sleep 1
-        if pgrep -x crond >/dev/null 2>&1; then
-            echo -e "\e[32;1m[+] \e[0mCron daemon started (alternative method)\e[0m"
-        else
-            # Final fallback: try simple background start without flags
-            crond >/dev/null 2>&1 &
-            sleep 1
-            if pgrep -x crond >/dev/null 2>&1; then
-                echo -e "\e[32;1m[+] \e[0mCron daemon started (fallback method)\e[0m"
-            else
-                echo -e "\e[33;1m[!] \e[0mWarning: Failed to start cron daemon (fish theme updates may not work automatically)\e[0m"
-                echo -e "\e[33;1m[!] \e[0mYou can manually run: $PREFIX/local/bin/update-fish-colors.sh\e[0m"
-            fi
-        fi
+        echo -e "\e[33;1m[!] \e[0mWarning: Failed to start cron daemon\e[0m"
     fi
 fi
 
-#fix linker warning
 if [[ ! -f /linkerconfig/ld.config.txt ]];then
     mkdir -p /linkerconfig
     touch /linkerconfig/ld.config.txt
 fi
 
 if [ "$#" -eq 0 ]; then
-    source /etc/profile
+    source /etc/profile 2>/dev/null || true
     export PS1="\[\e[38;5;46m\]\u\[\033[39m\]@reterm \[\033[39m\]\w \[\033[0m\]\\$ "
     cd $HOME
-    /bin/ash
+    /bin/bash
 else
     exec "$@"
 fi

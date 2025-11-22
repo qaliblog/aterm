@@ -111,4 +111,59 @@ object Rootfs {
             }
         }
     }
+    
+    /**
+     * Get the distro type for a rootfs
+     */
+    fun getRootfsDistroType(rootfsName: String): com.qali.aterm.ui.screens.setup.DistroType? {
+        val distroKey = "rootfs_distro_$rootfsName"
+        val storedDistro = com.rk.settings.Preference.getString(distroKey, "")
+        return if (storedDistro.isNotBlank()) {
+            com.qali.aterm.ui.screens.setup.DistroType.fromString(storedDistro)
+        } else {
+            // Try to infer from filename
+            val name = rootfsName.lowercase()
+            when {
+                name.contains("alpine") -> com.qali.aterm.ui.screens.setup.DistroType.ALPINE
+                name.contains("ubuntu") -> com.qali.aterm.ui.screens.setup.DistroType.UBUNTU
+                name.contains("debian") -> com.qali.aterm.ui.screens.setup.DistroType.DEBIAN
+                name.contains("kali") -> com.qali.aterm.ui.screens.setup.DistroType.KALI
+                name.contains("arch") -> com.qali.aterm.ui.screens.setup.DistroType.ARCH
+                else -> null
+            }
+        }
+    }
+    
+    /**
+     * Set the distro type for a rootfs
+     */
+    fun setRootfsDistroType(rootfsName: String, distroType: com.qali.aterm.ui.screens.setup.DistroType) {
+        val distroKey = "rootfs_distro_$rootfsName"
+        com.rk.settings.Preference.setString(distroKey, distroType.name)
+    }
+    
+    /**
+     * Get the custom init script for a rootfs
+     */
+    fun getRootfsInitScript(rootfsName: String): String? {
+        val initKey = "rootfs_init_$rootfsName"
+        val storedInit = com.rk.settings.Preference.getString(initKey, "")
+        return if (storedInit.isNotBlank()) storedInit else null
+    }
+    
+    /**
+     * Set the custom init script for a rootfs
+     */
+    fun setRootfsInitScript(rootfsName: String, initScript: String) {
+        val initKey = "rootfs_init_$rootfsName"
+        com.rk.settings.Preference.setString(initKey, initScript)
+    }
+    
+    /**
+     * Clear the custom init script for a rootfs (use predefined)
+     */
+    fun clearRootfsInitScript(rootfsName: String) {
+        val initKey = "rootfs_init_$rootfsName"
+        com.rk.settings.Preference.setString(initKey, "")
+    }
 }

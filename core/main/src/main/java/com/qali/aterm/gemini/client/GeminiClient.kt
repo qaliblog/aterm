@@ -611,14 +611,36 @@ class GeminiClient(
             
             @Suppress("UNCHECKED_CAST")
             val invocation = (tool as DeclarativeTool<Any, ToolResult>).createInvocation(params as Any)
-            // Execute synchronously for now (in production, use coroutines properly)
-            kotlinx.coroutines.runBlocking {
-                invocation.execute(null, null)
+            
+            // Execute tool with proper coroutine context
+            // Use a new coroutine scope with Default dispatcher to avoid blocking IO dispatcher
+            // This prevents deadlocks when called from within withContext(Dispatchers.IO)
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Default) {
+                try {
+                    invocation.execute(null, null)
+                } catch (e: Exception) {
+                    android.util.Log.e("GeminiClient", "Error executing tool $name in runBlocking", e)
+                    throw e
+                }
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Handle cancellation gracefully
             ToolResult(
-                llmContent = "Error executing tool: ${e.message}",
-                returnDisplay = "Error: ${e.message}",
+                llmContent = "Tool execution was cancelled: $name",
+                returnDisplay = "Cancelled",
+                error = ToolError(
+                    message = "Tool execution cancelled",
+                    type = ToolErrorType.EXECUTION_ERROR
+                )
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("GeminiClient", "Error executing tool: $name", e)
+            android.util.Log.e("GeminiClient", "Exception type: ${e.javaClass.simpleName}")
+            android.util.Log.e("GeminiClient", "Exception message: ${e.message}")
+            e.printStackTrace()
+            ToolResult(
+                llmContent = "Error executing tool '$name': ${e.message ?: e.javaClass.simpleName}",
+                returnDisplay = "Error: ${e.message ?: "Unknown error"}",
                 error = ToolError(
                     message = e.message ?: "Unknown error",
                     type = ToolErrorType.EXECUTION_ERROR
