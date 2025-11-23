@@ -17,6 +17,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.libcommons.*
 import com.qali.aterm.ui.activities.terminal.MainActivity
@@ -51,6 +56,50 @@ fun RootfsSettings(
     var customInitScript by remember { mutableStateOf("") }
     var showInitScriptInfo by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    
+    // Storage permission launcher
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val hasStoragePermission = permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && 
+                 permissions[Manifest.permission.READ_MEDIA_IMAGES] == true)
+        
+        if (hasStoragePermission && showFilePicker) {
+            // Permission granted, file picker will show files
+        } else if (!hasStoragePermission && showFilePicker) {
+            errorMessage = "Storage permission is required to pick files"
+            showFilePicker = false
+        }
+    }
+    
+    // Check storage permission
+    fun checkStoragePermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ uses granular media permissions
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED ||
+            // Fallback to READ_EXTERNAL_STORAGE for broader access
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+    
+    // Request storage permission
+    fun requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            storagePermissionLauncher.launch(arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO
+            ))
+        } else {
+            storagePermissionLauncher.launch(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE))
+        }
+    }
 
     LaunchedEffect(Unit) {
         installedRootfs.value = Rootfs.getInstalledRootfsList()
@@ -164,8 +213,13 @@ fun RootfsSettings(
                             selected = selectedType == RootfsType.FILE_PICKER,
                             onClick = { 
                                 selectedType = RootfsType.FILE_PICKER
-                                // Show file picker immediately
-                                showFilePicker = true
+                                if (checkStoragePermission()) {
+                                    showFilePicker = true
+                                } else {
+                                    requestStoragePermission()
+                                    // showFilePicker will be set to true after permission is granted
+                                    showFilePicker = true
+                                }
                             },
                             label = { Text("📁 Pick File") }
                         )
@@ -638,8 +692,7 @@ fun RootfsSettings(
     }
     
     // File picker dialog - shows on top of install dialog
-    val context = LocalContext.current
-    if (showFilePicker) {
+    if (showFilePicker && checkStoragePermission()) {
         FilePickerDialog(
             context = context,
             initialPath = getInitialStoragePath(context),
@@ -657,6 +710,25 @@ fun RootfsSettings(
                 } else {
                     errorMessage = "Please select a .tar.gz or .tar file"
                     showFilePicker = false
+                }
+            }
+        )
+    } else if (showFilePicker && !checkStoragePermission()) {
+        // Show permission request dialog
+        AlertDialog(
+            onDismissRequest = { showFilePicker = false },
+            title = { Text("Storage Permission Required") },
+            text = {
+                Text("Storage permission is required to pick files from your device. Please grant the permission.")
+            },
+            confirmButton = {
+                Button(onClick = { requestStoragePermission() }) {
+                    Text("Grant Permission")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFilePicker = false }) {
+                    Text("Cancel")
                 }
             }
         )
