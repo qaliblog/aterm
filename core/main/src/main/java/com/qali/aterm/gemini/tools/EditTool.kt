@@ -172,8 +172,8 @@ class EditToolInvocation(
         if (currentContent == newContent && !isNewFile) {
             // Check if the fix was already applied (maybe by a previous attempt)
             // Or if old_string doesn't match but new_string is already in the file
-            val newStringInFile = currentContent?.contains(newString) == true
-            val oldStringInFile = currentContent?.contains(oldString) == true
+            val newStringInFile = currentContent?.contains(params.new_string) == true
+            val oldStringInFile = currentContent?.contains(params.old_string) == true
             
             if (newStringInFile && !oldStringInFile) {
                 // The new content is already in the file, fix was likely already applied
