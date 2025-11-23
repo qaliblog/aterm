@@ -48,13 +48,14 @@ class ShellToolInvocation(
         }
         
         return try {
-            val workingDir = if (params.dir_path != null) {
+            val workingDir: File = if (params.dir_path != null) {
                 val dir = File(workspaceRoot, params.dir_path)
                 // Try to create directory if it doesn't exist
                 if (!dir.exists()) {
                     try {
                         dir.mkdirs()
                         android.util.Log.d("ShellTool", "Created working directory: ${dir.absolutePath}")
+                        dir
                     } catch (e: Exception) {
                         android.util.Log.w("ShellTool", "Failed to create directory, using workspace root: ${e.message}")
                         // Fallback to workspace root if directory creation fails
