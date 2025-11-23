@@ -4538,11 +4538,60 @@ exports.$functionName = (req, res, next) => {
                         emit(GeminiStreamEvent.Chunk("🔧 Applying code fix...\n"))
                         onChunk("🔧 Applying code fix...\n")
                         
+                        // Read current file content to verify old_string matches
+                        val currentFileContent = try {
+                            fixFile.readText()
+                        } catch (e: Exception) {
+                            null
+                        }
+                        
+                        // If old_string doesn't match exactly, try to normalize and find a match
+                        var actualOldString = oldString
+                        if (currentFileContent != null && !currentFileContent.contains(oldString)) {
+                            // Normalize line endings
+                            val normalizedOld = oldString.replace("\r\n", "\n")
+                            val normalizedCurrent = currentFileContent.replace("\r\n", "\n")
+                            
+                            // Try normalized version
+                            if (normalizedCurrent.contains(normalizedOld)) {
+                                actualOldString = normalizedOld
+                            } else {
+                                // Try to find by first line (more flexible matching)
+                                val oldLines = normalizedOld.lines().filter { it.trim().isNotEmpty() }
+                                if (oldLines.isNotEmpty()) {
+                                    val firstLine = oldLines.first().trim()
+                                    val firstLineIndex = normalizedCurrent.indexOf(firstLine)
+                                    if (firstLineIndex >= 0) {
+                                        // Found first line, try to extract matching section
+                                        val contextLines = 5 // Get a few lines around
+                                        val currentLines = normalizedCurrent.lines()
+                                        val lineIndex = normalizedCurrent.substring(0, firstLineIndex).split('\n').size - 1
+                                        
+                                        if (lineIndex >= 0 && lineIndex < currentLines.size) {
+                                            val startLine = maxOf(0, lineIndex - 2)
+                                            val endLine = minOf(currentLines.size, lineIndex + oldLines.size + 2)
+                                            val extractedSection = currentLines.subList(startLine, endLine).joinToString("\n")
+                                            
+                                            // If extracted section contains the key lines, use it
+                                            if (oldLines.all { extractedSection.contains(it.trim()) }) {
+                                                actualOldString = extractedSection
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Last resort: for very small files, use full content
+                                if (!normalizedCurrent.contains(actualOldString) && normalizedCurrent.length < 3000) {
+                                    actualOldString = normalizedCurrent
+                                }
+                            }
+                        }
+                        
                         val editCall = FunctionCall(
                             name = "edit",
                             args = mapOf(
                                 "file_path" to fixFilePath,
-                                "old_string" to oldString,
+                                "old_string" to actualOldString,
                                 "new_string" to newString
                             )
                         )
@@ -4558,8 +4607,38 @@ exports.$functionName = (req, res, next) => {
                             onChunk("✅ Code fix applied successfully\n")
                             return true
                         } else {
-                            emit(GeminiStreamEvent.Chunk("⚠️ Failed to apply code fix: ${editResult.error?.message}\n"))
-                            onChunk("⚠️ Failed to apply code fix: ${editResult.error?.message}\n")
+                            val errorMsg = editResult.error?.message ?: "Unknown error"
+                            emit(GeminiStreamEvent.Chunk("⚠️ Failed to apply code fix: $errorMsg\n"))
+                            onChunk("⚠️ Failed to apply code fix: $errorMsg\n")
+                            
+                            // If it's a "String not found" error, try using write tool as fallback for small changes
+                            if (errorMsg.contains("String not found") || errorMsg.contains("not found")) {
+                                emit(GeminiStreamEvent.Chunk("🔄 Trying alternative fix method...\n"))
+                                onChunk("🔄 Trying alternative fix method...\n")
+                                
+                                // For small files, try writing the entire new content
+                                if (currentFileContent != null && currentFileContent.length < 10000) {
+                                    val writeCall = FunctionCall(
+                                        name = "write",
+                                        args = mapOf(
+                                            "file_path" to fixFilePath,
+                                            "contents" to newString
+                                        )
+                                    )
+                                    emit(GeminiStreamEvent.ToolCall(writeCall))
+                                    onToolCall(writeCall)
+                                    
+                                    val writeResult = executeToolSync("write", writeCall.args)
+                                    emit(GeminiStreamEvent.ToolResult("write", writeResult))
+                                    onToolResult("write", writeCall.args)
+                                    
+                                    if (writeResult.error == null) {
+                                        emit(GeminiStreamEvent.Chunk("✅ Code fix applied using write tool\n"))
+                                        onChunk("✅ Code fix applied using write tool\n")
+                                        return true
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -8974,6 +9053,10 @@ exports.$functionName = (req, res, next) => {
                     }
                 }
                 
+                commands
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Screen was disposed, gracefully cancel
+                android.util.Log.d("GeminiClient", "Test command detection cancelled (screen disposed)")
                 commands
             } catch (e: Exception) {
                 android.util.Log.w("GeminiClient", "AI test command detection failed: ${e.message}")
