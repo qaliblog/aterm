@@ -4256,15 +4256,43 @@ exports.$functionName = (req, res, next) => {
         val workspaceDir = File(workspaceRoot)
         if (!workspaceDir.exists()) return false
         
-        // Extract file path and line number from error output
-        val filePathRegex = Regex("""(?:File|file|at)\s+["']?([^"'\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php))["']?""")
-        val lineNumberRegex = Regex("""(?:line|Line|:)\s*(\d+)""")
+        // Extract file path and line number from error output with comprehensive patterns
+        val filePathPatterns = listOf(
+            Regex("""(?:File|file|at)\s+["']?([^"'\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php|kt))["']?"""),
+            Regex("""at\s+([^:\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php)):(\d+):(\d+)"""),
+            Regex("""\s+File\s+"([^"]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php))",\s+line\s+(\d+)"""),
+            Regex("""\s+File\s+'([^']+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php))',\s+line\s+(\d+)"""),
+            Regex("""([^:\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php)):(\d+)"""),
+            Regex("""([^:\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php))\((\d+)\)"""),
+            Regex("""Traceback.*?File\s+["']([^"']+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php))["'],\s+line\s+(\d+)""", RegexOption.DOT_MATCHES_ALL)
+        )
         
-        val fileMatch = filePathRegex.find(output)
-        val lineMatch = lineNumberRegex.find(output)
+        var errorFile: String? = null
+        var errorLine: Int? = null
         
-        val errorFile = fileMatch?.groupValues?.get(1)
-        val errorLine = lineMatch?.groupValues?.get(1)?.toIntOrNull()
+        for (pattern in filePathPatterns) {
+            val match = pattern.find(output)
+            if (match != null) {
+                errorFile = match.groupValues.getOrNull(1)
+                errorLine = match.groupValues.getOrNull(2)?.toIntOrNull() ?: match.groupValues.getOrNull(3)?.toIntOrNull()
+                if (errorFile != null) break
+            }
+        }
+        
+        // Fallback: try to find any source file mentioned in error
+        if (errorFile == null) {
+            val workspaceDir = File(workspaceRoot)
+            val sourceFilePattern = Regex("""([^/\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|rb|php))""")
+            val sourceMatches = sourceFilePattern.findAll(output)
+            for (match in sourceMatches) {
+                val fileName = match.groupValues[1]
+                val potentialFile = workspaceDir.walkTopDown().firstOrNull { it.name == fileName }
+                if (potentialFile != null) {
+                    errorFile = potentialFile.relativeTo(workspaceDir).path
+                    break
+                }
+            }
+        }
         
         if (errorFile == null) {
             android.util.Log.d("GeminiClient", "Could not extract file path from error")
@@ -4410,6 +4438,114 @@ exports.$functionName = (req, res, next) => {
     }
     
     /**
+     * Detect language/framework version from project files
+     */
+    private fun detectLanguageVersion(workspaceRoot: String): Map<String, String> {
+        val versions = mutableMapOf<String, String>()
+        val workspaceDir = File(workspaceRoot)
+        
+        // Node.js version from package.json engines or .nvmrc
+        val packageJson = File(workspaceDir, "package.json")
+        if (packageJson.exists()) {
+            try {
+                val content = packageJson.readText()
+                val enginesMatch = Regex(""""engines"\s*:\s*\{[^}]*"node"\s*:\s*"([^"]+)""").find(content)
+                enginesMatch?.groupValues?.get(1)?.let { versions["node"] = it }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        val nvmrc = File(workspaceDir, ".nvmrc")
+        if (nvmrc.exists()) {
+            try {
+                versions["node"] = nvmrc.readText().trim()
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        // Python version from .python-version or runtime.txt
+        val pythonVersion = File(workspaceDir, ".python-version")
+        if (pythonVersion.exists()) {
+            try {
+                versions["python"] = pythonVersion.readText().trim()
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        val runtimeTxt = File(workspaceDir, "runtime.txt")
+        if (runtimeTxt.exists()) {
+            try {
+                val content = runtimeTxt.readText()
+                val pythonMatch = Regex("python-([\\d.]+)").find(content)
+                pythonMatch?.groupValues?.get(1)?.let { versions["python"] = it }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        // Go version from go.mod
+        val goMod = File(workspaceDir, "go.mod")
+        if (goMod.exists()) {
+            try {
+                val content = goMod.readText()
+                val goMatch = Regex("go\\s+([\\d.]+)").find(content)
+                goMatch?.groupValues?.get(1)?.let { versions["go"] = it }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        // Rust version from rust-toolchain or rust-toolchain.toml
+        val rustToolchain = File(workspaceDir, "rust-toolchain")
+        if (rustToolchain.exists()) {
+            try {
+                versions["rust"] = rustToolchain.readText().trim()
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        val rustToolchainToml = File(workspaceDir, "rust-toolchain.toml")
+        if (rustToolchainToml.exists()) {
+            try {
+                val content = rustToolchainToml.readText()
+                val channelMatch = Regex("channel\\s*=\\s*\"([^\"]+)\"").find(content)
+                channelMatch?.groupValues?.get(1)?.let { versions["rust"] = it }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        // Java version from pom.xml or build.gradle
+        val pomXml = File(workspaceDir, "pom.xml")
+        if (pomXml.exists()) {
+            try {
+                val content = pomXml.readText()
+                val javaMatch = Regex("<java\\.version>([\\d.]+)</java\\.version>").find(content)
+                javaMatch?.groupValues?.get(1)?.let { versions["java"] = it }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        val buildGradle = File(workspaceDir, "build.gradle") ?: File(workspaceDir, "build.gradle.kts")
+        if (buildGradle.exists()) {
+            try {
+                val content = buildGradle.readText()
+                val javaMatch = Regex("java\\.toolchain\\.languageVersion\\s*=\\s*JavaLanguageVersion\\.of\\(([\\d]+)\\)").find(content)
+                javaMatch?.groupValues?.get(1)?.let { versions["java"] = it }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        return versions
+    }
+    
+    /**
      * Get hardcoded fallback commands based on error type and system info
      * This reduces API calls by using pre-defined fallbacks
      */
@@ -4426,6 +4562,14 @@ exports.$functionName = (req, res, next) => {
         val updateCmd = systemInfo.packageManagerCommands["update"] ?: "update"
         val commandLower = command.lowercase()
         val outputLower = output.lowercase()
+        
+        // Detect language versions
+        val versions = detectLanguageVersion(workspaceRoot)
+        
+        // Get OS version for version-specific commands
+        val osVersion = systemInfo.osVersion
+        val osVersionMajor = osVersion?.split(".")?.firstOrNull()?.toIntOrNull()
+        val osVersionMinor = osVersion?.split(".")?.getOrNull(1)?.toIntOrNull()
         
         // Detect project type
         val hasPackageJson = File(workspaceDir, "package.json").exists()
@@ -4444,28 +4588,58 @@ exports.$functionName = (req, res, next) => {
             ErrorType.COMMAND_NOT_FOUND -> {
                 // Node.js/npm not found
                 if (commandLower.contains("node") || commandLower.contains("npm")) {
+                    val nodeVersion = versions["node"]
                     when (systemInfo.packageManager) {
                         "apk" -> {
+                            if (nodeVersion != null && nodeVersion.startsWith("20")) {
+                                fallbacks.add(FallbackPlan("apk add nodejs20 npm", "Install Node.js 20 via apk", true))
+                            } else if (nodeVersion != null && nodeVersion.startsWith("18")) {
+                                fallbacks.add(FallbackPlan("apk add nodejs18 npm", "Install Node.js 18 via apk", true))
+                            }
                             fallbacks.add(FallbackPlan("apk add nodejs npm", "Install Node.js and npm via apk", true))
                             fallbacks.add(FallbackPlan("apk update && apk add nodejs npm", "Update apk and install Node.js/npm", true))
                             fallbacks.add(FallbackPlan("apk add nodejs-current npm", "Install current Node.js version", true))
                         }
                         "apt", "apt-get" -> {
-                            fallbacks.add(FallbackPlan("apt-get update && apt-get install -y nodejs npm", "Update apt and install Node.js/npm", true))
-                            fallbacks.add(FallbackPlan("curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt-get install -y nodejs", "Install Node.js from NodeSource", true))
+                            if (nodeVersion != null) {
+                                val majorVersion = nodeVersion.split(".").firstOrNull() ?: "lts"
+                                fallbacks.add(FallbackPlan("curl -fsSL https://deb.nodesource.com/setup_${majorVersion}.x | bash - && apt-get install -y nodejs", "Install Node.js $nodeVersion from NodeSource", true))
+                            }
+                            // OS version-specific: Ubuntu 22.04+ has newer Node.js in repos
+                            if (systemInfo.os.contains("Ubuntu") && osVersionMajor != null && osVersionMajor >= 22) {
+                                fallbacks.add(FallbackPlan("apt-get update && apt-get install -y nodejs npm", "Install Node.js via apt (Ubuntu 22.04+)", true))
+                            } else {
+                                fallbacks.add(FallbackPlan("apt-get update && apt-get install -y nodejs npm", "Update apt and install Node.js/npm", true))
+                            }
+                            fallbacks.add(FallbackPlan("curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt-get install -y nodejs", "Install Node.js LTS from NodeSource", true))
+                            // For older Debian/Ubuntu versions
+                            if (osVersionMajor != null && osVersionMajor < 20) {
+                                fallbacks.add(FallbackPlan("curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && apt-get install -y nodejs", "Install Node.js 16 for older systems", true))
+                            }
                         }
                         "yum" -> {
+                            if (nodeVersion != null) {
+                                val majorVersion = nodeVersion.split(".").firstOrNull() ?: "lts"
+                                fallbacks.add(FallbackPlan("curl -fsSL https://rpm.nodesource.com/setup_${majorVersion}.x | bash - && yum install -y nodejs", "Install Node.js $nodeVersion from NodeSource", true))
+                            }
                             fallbacks.add(FallbackPlan("yum install -y nodejs npm", "Install Node.js and npm via yum", true))
-                            fallbacks.add(FallbackPlan("curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && yum install -y nodejs", "Install Node.js from NodeSource", true))
+                            fallbacks.add(FallbackPlan("curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && yum install -y nodejs", "Install Node.js LTS from NodeSource", true))
                         }
                         "dnf" -> {
+                            if (nodeVersion != null) {
+                                val majorVersion = nodeVersion.split(".").firstOrNull() ?: "lts"
+                                fallbacks.add(FallbackPlan("curl -fsSL https://rpm.nodesource.com/setup_${majorVersion}.x | bash - && dnf install -y nodejs", "Install Node.js $nodeVersion from NodeSource", true))
+                            }
                             fallbacks.add(FallbackPlan("dnf install -y nodejs npm", "Install Node.js and npm via dnf", true))
-                            fallbacks.add(FallbackPlan("curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && dnf install -y nodejs", "Install Node.js from NodeSource", true))
+                            fallbacks.add(FallbackPlan("curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && dnf install -y nodejs", "Install Node.js LTS from NodeSource", true))
                         }
                         "pacman" -> {
                             fallbacks.add(FallbackPlan("pacman -S --noconfirm nodejs npm", "Install Node.js and npm via pacman", true))
                         }
                         "brew" -> {
+                            if (nodeVersion != null) {
+                                fallbacks.add(FallbackPlan("brew install node@$nodeVersion", "Install Node.js $nodeVersion via Homebrew", true))
+                            }
                             fallbacks.add(FallbackPlan("brew install node", "Install Node.js via Homebrew", true))
                         }
                     }
@@ -4473,29 +4647,57 @@ exports.$functionName = (req, res, next) => {
                 
                 // Python/pip not found
                 if (commandLower.contains("python") || commandLower.contains("pip")) {
+                    val pythonVersion = versions["python"]
                     val pythonPkg = when (systemInfo.os) {
                         "Windows" -> "python"
                         else -> "python3"
                     }
                     when (systemInfo.packageManager) {
                         "apk" -> {
+                            if (pythonVersion != null) {
+                                val majorMinor = pythonVersion.split(".").take(2).joinToString(".")
+                                if (majorMinor == "3.12") fallbacks.add(FallbackPlan("apk add python3.12 py3.12-pip", "Install Python 3.12 via apk", true))
+                                if (majorMinor == "3.11") fallbacks.add(FallbackPlan("apk add python3.11 py3.11-pip", "Install Python 3.11 via apk", true))
+                                if (majorMinor == "3.10") fallbacks.add(FallbackPlan("apk add python3.10 py3.10-pip", "Install Python 3.10 via apk", true))
+                                if (majorMinor == "3.9") fallbacks.add(FallbackPlan("apk add python3.9 py3.9-pip", "Install Python 3.9 via apk", true))
+                            }
+                            // Alpine version-specific: newer Alpine has python3.11+
+                            if (osVersionMajor != null && osVersionMajor >= 3 && osVersionMinor != null && osVersionMinor >= 18) {
+                                fallbacks.add(FallbackPlan("apk add python3.11 py3.11-pip", "Install Python 3.11 via apk (Alpine 3.18+)", true))
+                            }
                             fallbacks.add(FallbackPlan("apk add $pythonPkg py3-pip", "Install Python and pip via apk", true))
                             fallbacks.add(FallbackPlan("apk update && apk add $pythonPkg py3-pip", "Update apk and install Python/pip", true))
                         }
                         "apt", "apt-get" -> {
+                            if (pythonVersion != null) {
+                                val majorMinor = pythonVersion.split(".").take(2).joinToString(".")
+                                fallbacks.add(FallbackPlan("apt-get update && apt-get install -y python$majorMinor python$majorMinor-pip", "Install Python $pythonVersion via apt", true))
+                            }
                             fallbacks.add(FallbackPlan("apt-get update && apt-get install -y $pythonPkg $pythonPkg-pip", "Update apt and install Python/pip", true))
                             fallbacks.add(FallbackPlan("apt-get install -y $pythonPkg $pythonPkg-venv $pythonPkg-pip", "Install Python with venv and pip", true))
                         }
                         "yum" -> {
+                            if (pythonVersion != null) {
+                                val majorMinor = pythonVersion.split(".").take(2).joinToString(".")
+                                fallbacks.add(FallbackPlan("yum install -y python$majorMinor python$majorMinor-pip", "Install Python $pythonVersion via yum", true))
+                            }
                             fallbacks.add(FallbackPlan("yum install -y $pythonPkg $pythonPkg-pip", "Install Python and pip via yum", true))
                         }
                         "dnf" -> {
+                            if (pythonVersion != null) {
+                                val majorMinor = pythonVersion.split(".").take(2).joinToString(".")
+                                fallbacks.add(FallbackPlan("dnf install -y python$majorMinor python$majorMinor-pip", "Install Python $pythonVersion via dnf", true))
+                            }
                             fallbacks.add(FallbackPlan("dnf install -y $pythonPkg $pythonPkg-pip", "Install Python and pip via dnf", true))
                         }
                         "pacman" -> {
                             fallbacks.add(FallbackPlan("pacman -S --noconfirm $pythonPkg python-pip", "Install Python and pip via pacman", true))
                         }
                         "brew" -> {
+                            if (pythonVersion != null) {
+                                val majorMinor = pythonVersion.split(".").take(2).joinToString(".")
+                                fallbacks.add(FallbackPlan("brew install python@$majorMinor", "Install Python $pythonVersion via Homebrew", true))
+                            }
                             fallbacks.add(FallbackPlan("brew install python3", "Install Python via Homebrew", true))
                         }
                     }
@@ -4669,21 +4871,50 @@ exports.$functionName = (req, res, next) => {
                 
                 // Java not found
                 if (commandLower.contains("java") || commandLower.contains("javac") || commandLower.contains("mvn") || commandLower.contains("gradle")) {
+                    val javaVersion = versions["java"]
                     when (systemInfo.packageManager) {
                         "apk" -> {
+                            if (javaVersion != null) {
+                                val majorVersion = javaVersion.split(".").firstOrNull() ?: "17"
+                                fallbacks.add(FallbackPlan("apk add openjdk${majorVersion}-jdk", "Install Java $javaVersion via apk", true))
+                            }
                             fallbacks.add(FallbackPlan("apk add openjdk17-jdk", "Install Java 17 via apk", true))
+                            fallbacks.add(FallbackPlan("apk add openjdk21-jdk", "Install Java 21 via apk", true))
                             fallbacks.add(FallbackPlan("apk add openjdk11-jdk", "Install Java 11 via apk", true))
                         }
                         "apt", "apt-get" -> {
+                            if (javaVersion != null) {
+                                val majorVersion = javaVersion.split(".").firstOrNull() ?: "17"
+                                fallbacks.add(FallbackPlan("apt-get update && apt-get install -y openjdk-${majorVersion}-jdk", "Install Java $javaVersion via apt", true))
+                            }
                             fallbacks.add(FallbackPlan("apt-get update && apt-get install -y openjdk-17-jdk", "Install Java 17 via apt", true))
+                            fallbacks.add(FallbackPlan("apt-get install -y openjdk-21-jdk", "Install Java 21 via apt", true))
                             fallbacks.add(FallbackPlan("apt-get install -y default-jdk", "Install default JDK via apt", true))
                         }
                         "yum", "dnf" -> {
+                            if (javaVersion != null) {
+                                val majorVersion = javaVersion.split(".").firstOrNull() ?: "17"
+                                fallbacks.add(FallbackPlan("$installCmd java-${majorVersion}-openjdk-devel", "Install Java $javaVersion via yum/dnf", true))
+                            }
                             fallbacks.add(FallbackPlan("$installCmd java-17-openjdk-devel", "Install Java 17 via yum/dnf", true))
+                            fallbacks.add(FallbackPlan("$installCmd java-21-openjdk-devel", "Install Java 21 via yum/dnf", true))
                             fallbacks.add(FallbackPlan("$installCmd java-11-openjdk-devel", "Install Java 11 via yum/dnf", true))
                         }
-                        "pacman" -> fallbacks.add(FallbackPlan("pacman -S --noconfirm jdk-openjdk", "Install OpenJDK via pacman", true))
-                        "brew" -> fallbacks.add(FallbackPlan("brew install openjdk@17", "Install OpenJDK 17 via Homebrew", true))
+                        "pacman" -> {
+                            if (javaVersion != null) {
+                                val majorVersion = javaVersion.split(".").firstOrNull() ?: "17"
+                                fallbacks.add(FallbackPlan("pacman -S --noconfirm jdk${majorVersion}-openjdk", "Install OpenJDK $javaVersion via pacman", true))
+                            }
+                            fallbacks.add(FallbackPlan("pacman -S --noconfirm jdk-openjdk", "Install OpenJDK via pacman", true))
+                        }
+                        "brew" -> {
+                            if (javaVersion != null) {
+                                val majorVersion = javaVersion.split(".").firstOrNull() ?: "17"
+                                fallbacks.add(FallbackPlan("brew install openjdk@$majorVersion", "Install OpenJDK $javaVersion via Homebrew", true))
+                            }
+                            fallbacks.add(FallbackPlan("brew install openjdk@17", "Install OpenJDK 17 via Homebrew", true))
+                            fallbacks.add(FallbackPlan("brew install openjdk@21", "Install OpenJDK 21 via Homebrew", true))
+                        }
                     }
                     
                     // Maven not found
