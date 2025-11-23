@@ -3296,17 +3296,99 @@ exports.$functionName = (req, res, next) => {
             emit(GeminiStreamEvent.ToolResult("shell", result))
             onToolResult("shell", primaryCall.args)
             
-            if (result.error == null) {
+            // Check for failure keywords in output
+            val outputText = result.llmContent ?: ""
+            val hasFailure = result.error != null || detectFailureKeywords(outputText)
+            
+            if (!hasFailure) {
                 val successMsg = "✅ Command executed successfully\n"
                 emit(GeminiStreamEvent.Chunk(successMsg))
                 onChunk(successMsg)
                 return true
             } else {
-                // If command failed, try with venv activation if it's Python
+                // Analyze failure and generate fallback plans
+                val failureAnalysis = analyzeCommandFailure(
+                    command.primaryCommand,
+                    outputText,
+                    result.error?.message ?: "",
+                    workspaceRoot,
+                    systemInfo
+                )
+                
+                emit(GeminiStreamEvent.Chunk("🔍 Failure Analysis: ${failureAnalysis.reason}\n"))
+                onChunk("🔍 Failure Analysis: ${failureAnalysis.reason}\n")
+                
+                // Try fallback plans in order
+                var fallbackAttempted = false
+                for ((index, fallbackPlan) in failureAnalysis.fallbackPlans.withIndex()) {
+                    if (fallbackAttempted && index >= 2) break // Limit to 2 fallback attempts
+                    
+                    val fallbackMsg = "🔄 Fallback Plan ${index + 1}: ${fallbackPlan.description}\n"
+                    emit(GeminiStreamEvent.Chunk(fallbackMsg))
+                    onChunk(fallbackMsg)
+                    
+                    val fallbackCall = FunctionCall(
+                        name = "shell",
+                        args = mapOf(
+                            "command" to fallbackPlan.command,
+                            "description" to fallbackPlan.description,
+                            "dir_path" to workspaceRoot
+                        )
+                    )
+                    emit(GeminiStreamEvent.ToolCall(fallbackCall))
+                    onToolCall(fallbackCall)
+                    
+                    try {
+                        val fallbackResult = executeToolSync("shell", fallbackCall.args)
+                        emit(GeminiStreamEvent.ToolResult("shell", fallbackResult))
+                        onToolResult("shell", fallbackCall.args)
+                        
+                        val fallbackOutput = fallbackResult.llmContent ?: ""
+                        val fallbackHasFailure = fallbackResult.error != null || detectFailureKeywords(fallbackOutput)
+                        
+                        if (!fallbackHasFailure) {
+                            emit(GeminiStreamEvent.Chunk("✅ Fallback plan succeeded!\n"))
+                            onChunk("✅ Fallback plan succeeded!\n")
+                            
+                            // Retry original command if fallback was setup
+                            if (fallbackPlan.shouldRetryOriginal) {
+                                emit(GeminiStreamEvent.Chunk("🔄 Retrying original command...\n"))
+                                onChunk("🔄 Retrying original command...\n")
+                                
+                                val retryResult = executeToolSync("shell", primaryCall.args)
+                                emit(GeminiStreamEvent.ToolResult("shell", retryResult))
+                                onToolResult("shell", primaryCall.args)
+                                
+                                val retryOutput = retryResult.llmContent ?: ""
+                                val retryHasFailure = retryResult.error != null || detectFailureKeywords(retryOutput)
+                                
+                                if (!retryHasFailure) {
+                                    emit(GeminiStreamEvent.Chunk("✅ Original command succeeded after fallback!\n"))
+                                    onChunk("✅ Original command succeeded after fallback!\n")
+                                    return true
+                                }
+                            } else {
+                                return true
+                            }
+                        } else {
+                            emit(GeminiStreamEvent.Chunk("⚠️ Fallback plan also failed\n"))
+                            onChunk("⚠️ Fallback plan also failed\n")
+                        }
+                        fallbackAttempted = true
+                    } catch (e: Exception) {
+                        android.util.Log.w("GeminiClient", "Fallback plan failed: ${e.message}")
+                        emit(GeminiStreamEvent.Chunk("⚠️ Fallback plan error: ${e.message}\n"))
+                        onChunk("⚠️ Fallback plan error: ${e.message}\n")
+                        fallbackAttempted = true
+                    }
+                }
+                
+                // If command failed, try with venv activation if it's Python (legacy fallback)
                 if (command.primaryCommand.contains("python") && 
                     !primaryCommand.contains("venv") &&
-                    File(workspaceRoot, "venv").exists()) {
-                    val venvMsg = "⚠️ Command failed, trying with venv activation...\n"
+                    File(workspaceRoot, "venv").exists() &&
+                    !fallbackAttempted) {
+                    val venvMsg = "⚠️ Trying with venv activation...\n"
                     emit(GeminiStreamEvent.Chunk(venvMsg))
                     onChunk(venvMsg)
                     
@@ -3327,7 +3409,10 @@ exports.$functionName = (req, res, next) => {
                         emit(GeminiStreamEvent.ToolResult("shell", venvResult))
                         onToolResult("shell", venvCall.args)
                         
-                        if (venvResult.error == null) {
+                        val venvOutput = venvResult.llmContent ?: ""
+                        val venvHasFailure = venvResult.error != null || detectFailureKeywords(venvOutput)
+                        
+                        if (!venvHasFailure) {
                             emit(GeminiStreamEvent.Chunk("✅ Command executed successfully with venv\n"))
                             onChunk("✅ Command executed successfully with venv\n")
                             return true
@@ -3337,14 +3422,193 @@ exports.$functionName = (req, res, next) => {
                     }
                 }
                 
-                emit(GeminiStreamEvent.Chunk("❌ Command failed: ${result.error?.message}\n"))
-                onChunk("❌ Command failed: ${result.error?.message}\n")
+                emit(GeminiStreamEvent.Chunk("❌ Command failed: ${result.error?.message ?: "See output above"}\n"))
+                onChunk("❌ Command failed: ${result.error?.message ?: "See output above"}\n")
                 return false
             }
         } catch (e: Exception) {
             emit(GeminiStreamEvent.Chunk("❌ Error executing command: ${e.message}\n"))
             onChunk("❌ Error executing command: ${e.message}\n")
             return false
+        }
+    }
+    
+    /**
+     * Detect failure keywords in command output
+     */
+    private fun detectFailureKeywords(output: String): Boolean {
+        if (output.isEmpty()) return false
+        
+        val failureKeywords = listOf(
+            "error", "failed", "failure", "fatal", "exception",
+            "cannot", "can't", "unable", "not found", "missing",
+            "command not found", "permission denied", "access denied",
+            "syntax error", "parse error", "type error", "reference error",
+            "module not found", "package not found", "dependency",
+            "exit code", "exit status", "non-zero", "returned 1",
+            "failed to", "unexpected", "invalid", "bad", "wrong"
+        )
+        
+        val outputLower = output.lowercase()
+        return failureKeywords.any { keyword ->
+            outputLower.contains(keyword, ignoreCase = true)
+        }
+    }
+    
+    /**
+     * Data class for failure analysis
+     */
+    private data class FailureAnalysis(
+        val reason: String,
+        val fallbackPlans: List<FallbackPlan>
+    )
+    
+    /**
+     * Data class for fallback plan
+     */
+    private data class FallbackPlan(
+        val command: String,
+        val description: String,
+        val shouldRetryOriginal: Boolean = false
+    )
+    
+    /**
+     * Analyze command failure and generate fallback plans using AI
+     */
+    private suspend fun analyzeCommandFailure(
+        command: String,
+        output: String,
+        errorMessage: String,
+        workspaceRoot: String,
+        systemInfo: SystemInfoService.SystemInfo
+    ): FailureAnalysis {
+        val systemContext = SystemInfoService.generateSystemContext()
+        val model = ApiProviderManager.getCurrentModel()
+        
+        // Get project context
+        val workspaceDir = File(workspaceRoot)
+        val packageJson = File(workspaceDir, "package.json")
+        val requirementsTxt = File(workspaceDir, "requirements.txt")
+        val hasPackageJson = packageJson.exists()
+        val hasRequirements = requirementsTxt.exists()
+        
+        val analysisPrompt = """
+            $systemContext
+            
+            **Failed Command:** $command
+            **Error Message:** $errorMessage
+            **Command Output:** ${output.take(2000)}
+            **Project Context:**
+            - Has package.json: $hasPackageJson
+            - Has requirements.txt: $hasRequirements
+            - Package Manager: ${systemInfo.packageManager}
+            
+            Analyze the command failure and provide:
+            1. **Reason**: Brief explanation of why the command failed
+            2. **Fallback Plans**: List of alternative commands/approaches to try (max 3)
+            
+            For each fallback plan, provide:
+            - command: The actual command to run
+            - description: What this fallback does
+            - should_retry_original: Whether to retry the original command after this fallback (true/false)
+            
+            Common fallback scenarios:
+            - Missing dependencies: Install them first
+            - Missing tools: Install via package manager
+            - Python venv: Activate virtual environment
+            - Node modules: Run npm install
+            - Path issues: Use absolute paths or cd to correct directory
+            - Permission issues: Check file permissions
+            - Wrong command syntax: Try alternative syntax
+            
+            Format as JSON:
+            {
+              "reason": "Brief explanation of failure",
+              "fallback_plans": [
+                {
+                  "command": "npm install",
+                  "description": "Install missing dependencies",
+                  "should_retry_original": true
+                },
+                {
+                  "command": "python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt",
+                  "description": "Create venv and install dependencies",
+                  "should_retry_original": true
+                }
+              ]
+            }
+            
+            Only include fallback plans that are likely to help. If no good fallbacks exist, return empty array.
+        """.trimIndent()
+        
+        val request = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("text", analysisPrompt)
+                        })
+                    })
+                })
+            })
+            put("systemInstruction", JSONObject().apply {
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("text", systemContext)
+                    })
+                })
+            })
+        }
+        
+        return try {
+            val apiKey = ApiProviderManager.getNextApiKey() ?: return FailureAnalysis(
+                "Unable to analyze failure (no API key)",
+                emptyList()
+            )
+            val response = makeApiCallSimple(
+                apiKey,
+                model,
+                request,
+                useLongTimeout = false
+            )
+            
+            if (response != null) {
+                val jsonStart = response.indexOf('{')
+                val jsonEnd = response.lastIndexOf('}') + 1
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    val json = JSONObject(response.substring(jsonStart, jsonEnd))
+                    val reason = json.optString("reason", "Unknown failure")
+                    val fallbackPlansArray = json.optJSONArray("fallback_plans")
+                    
+                    val fallbackPlans = if (fallbackPlansArray != null) {
+                        (0 until fallbackPlansArray.length()).mapNotNull { i ->
+                            try {
+                                val planObj = fallbackPlansArray.getJSONObject(i)
+                                FallbackPlan(
+                                    command = planObj.getString("command"),
+                                    description = planObj.optString("description", "Fallback plan"),
+                                    shouldRetryOriginal = planObj.optBoolean("should_retry_original", false)
+                                )
+                            } catch (e: Exception) {
+                                android.util.Log.w("GeminiClient", "Failed to parse fallback plan: ${e.message}")
+                                null
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    
+                    FailureAnalysis(reason, fallbackPlans)
+                } else {
+                    FailureAnalysis("Failed to parse analysis response", emptyList())
+                }
+            } else {
+                FailureAnalysis("No response from AI analysis", emptyList())
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("GeminiClient", "Failed to analyze command failure: ${e.message}", e)
+            FailureAnalysis("Analysis failed: ${e.message}", emptyList())
         }
     }
     
