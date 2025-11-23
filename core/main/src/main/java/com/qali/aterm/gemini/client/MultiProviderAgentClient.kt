@@ -1830,12 +1830,47 @@ class GeminiClient(
         val wantsLint = messageLower.contains("lint") || messageLower.contains("check")
         val wantsFormat = messageLower.contains("format") || messageLower.contains("fmt")
         
-        // Detect Python projects
-        val hasPythonFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".py") || it.name == "requirements.txt" || 
-                it.name == "setup.py" || it.name == "pyproject.toml" || it.name == "Pipfile" || 
-                it.name == "poetry.lock" || it.name == "environment.yml") }
+        // Detect primary language by checking for strong indicators first
+        // Priority: package.json (Node.js) > go.mod (Go) > Cargo.toml (Rust) > build.gradle/pom.xml (Java) > Python files
         
+        // Check for Node.js first (package.json is a strong indicator)
+        val hasPackageJson = File(workspaceDir, "package.json").exists()
+        val hasNodeLockFiles = File(workspaceDir, "package-lock.json").exists() || 
+                               File(workspaceDir, "yarn.lock").exists() || 
+                               File(workspaceDir, "pnpm-lock.yaml").exists()
+        val hasNodeSourceFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".js") || it.name.endsWith(".ts") || 
+                it.name.endsWith(".jsx") || it.name.endsWith(".tsx")) }
+        val isNodeProject = hasPackageJson || (hasNodeLockFiles && hasNodeSourceFiles)
+        
+        // Check for Go (go.mod is a strong indicator)
+        val hasGoMod = File(workspaceDir, "go.mod").exists()
+        val hasGoFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && it.name.endsWith(".go") }
+        val isGoProject = hasGoMod || (hasGoFiles && !isNodeProject)
+        
+        // Check for Rust (Cargo.toml is a strong indicator)
+        val hasCargoToml = File(workspaceDir, "Cargo.toml").exists()
+        val hasRustFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && it.name.endsWith(".rs") }
+        val isRustProject = hasCargoToml || (hasRustFiles && !isNodeProject && !isGoProject)
+        
+        // Check for Java/Kotlin (build files are strong indicators)
+        val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
+        val hasMaven = File(workspaceDir, "pom.xml").exists()
+        val hasSbt = File(workspaceDir, "build.sbt").exists()
+        val hasJavaFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".java") || it.name.endsWith(".kt")) }
+        val isJavaProject = hasGradle || hasMaven || hasSbt || (hasJavaFiles && !isNodeProject && !isGoProject && !isRustProject)
+        
+        // Check for Python (only if no other primary language detected)
+        val hasPythonFiles = !isNodeProject && !isGoProject && !isRustProject && !isJavaProject &&
+            workspaceDir.walkTopDown()
+                .any { it.isFile && (it.name.endsWith(".py") || it.name == "requirements.txt" || 
+                    it.name == "setup.py" || it.name == "pyproject.toml" || it.name == "Pipfile" || 
+                    it.name == "poetry.lock" || it.name == "environment.yml") }
+        
+        // Detect Python projects (only if Python is the primary language)
         if (hasPythonFiles) {
             val venvExists = File(workspaceDir, "venv").exists() || 
                            File(workspaceDir, ".venv").exists() ||
@@ -1956,13 +1991,8 @@ class GeminiClient(
             }
         }
         
-        // Detect Node.js/JavaScript/TypeScript projects
-        val hasNodeFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name == "package.json" || it.name == "package-lock.json" || 
-                it.name == "yarn.lock" || it.name == "pnpm-lock.yaml" || it.name.endsWith(".js") || 
-                it.name.endsWith(".ts") || it.name.endsWith(".jsx") || it.name.endsWith(".tsx")) }
-        
-        if (hasNodeFiles) {
+        // Detect Node.js/JavaScript/TypeScript projects (prioritize Node.js if package.json exists)
+        if (isNodeProject) {
             val packageJson = File(workspaceDir, "package.json")
             val hasYarn = File(workspaceDir, "yarn.lock").exists()
             val hasPnpm = File(workspaceDir, "pnpm-lock.yaml").exists()
@@ -2101,10 +2131,7 @@ class GeminiClient(
         }
         
         // Detect Go projects
-        val hasGoFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".go") || it.name == "go.mod" || it.name == "go.sum" || it.name == "Gopkg.toml") }
-        
-        if (hasGoFiles) {
+        if (isGoProject) {
             val hasGoMod = File(workspaceDir, "go.mod").exists()
             val mainGo = workspaceDir.walkTopDown()
                 .firstOrNull { file ->
@@ -2171,10 +2198,7 @@ class GeminiClient(
         }
         
         // Detect Rust projects
-        val hasRustFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".rs") || it.name == "Cargo.toml" || it.name == "Cargo.lock") }
-        
-        if (hasRustFiles) {
+        if (isRustProject) {
             val hasCargo = File(workspaceDir, "Cargo.toml").exists()
             
             if (wantsInstall || wantsRun || wantsTest || wantsBuild) {
@@ -2221,12 +2245,7 @@ class GeminiClient(
         }
         
         // Detect Java/Kotlin projects (Gradle, Maven, SBT)
-        val hasJavaFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".java") || it.name.endsWith(".kt") || 
-                it.name == "build.gradle" || it.name == "build.gradle.kts" || 
-                it.name == "pom.xml" || it.name == "build.sbt") }
-        
-        if (hasJavaFiles) {
+        if (isJavaProject) {
             val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
             val hasMaven = File(workspaceDir, "pom.xml").exists()
             val hasSbt = File(workspaceDir, "build.sbt").exists()
@@ -7429,12 +7448,47 @@ exports.$functionName = (req, res, next) => {
         // First, try hardcoded test command detection (no API calls)
         val messageLower = userMessage.lowercase()
         
-        // Detect Python test commands
-        val hasPythonFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".py") || it.name == "requirements.txt" || 
-                it.name == "setup.py" || it.name == "pyproject.toml" || it.name == "Pipfile" || 
-                it.name == "poetry.lock") }
+        // Detect primary language by checking for strong indicators first
+        // Priority: package.json (Node.js) > go.mod (Go) > Cargo.toml (Rust) > build.gradle/pom.xml (Java) > Python files
         
+        // Check for Node.js first (package.json is a strong indicator)
+        val hasPackageJson = File(workspaceDir, "package.json").exists()
+        val hasNodeLockFiles = File(workspaceDir, "package-lock.json").exists() || 
+                               File(workspaceDir, "yarn.lock").exists() || 
+                               File(workspaceDir, "pnpm-lock.yaml").exists()
+        val hasNodeSourceFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".js") || it.name.endsWith(".ts") || 
+                it.name.endsWith(".jsx") || it.name.endsWith(".tsx")) }
+        val isNodeProject = hasPackageJson || (hasNodeLockFiles && hasNodeSourceFiles)
+        
+        // Check for Go (go.mod is a strong indicator)
+        val hasGoMod = File(workspaceDir, "go.mod").exists()
+        val hasGoFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && it.name.endsWith(".go") }
+        val isGoProject = hasGoMod || (hasGoFiles && !isNodeProject)
+        
+        // Check for Rust (Cargo.toml is a strong indicator)
+        val hasCargoToml = File(workspaceDir, "Cargo.toml").exists()
+        val hasRustFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && it.name.endsWith(".rs") }
+        val isRustProject = hasCargoToml || (hasRustFiles && !isNodeProject && !isGoProject)
+        
+        // Check for Java/Kotlin (build files are strong indicators)
+        val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
+        val hasMaven = File(workspaceDir, "pom.xml").exists()
+        val hasSbt = File(workspaceDir, "build.sbt").exists()
+        val hasJavaFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".java") || it.name.endsWith(".kt")) }
+        val isJavaProject = hasGradle || hasMaven || hasSbt || (hasJavaFiles && !isNodeProject && !isGoProject && !isRustProject)
+        
+        // Check for Python (only if no other primary language detected)
+        val hasPythonFiles = !isNodeProject && !isGoProject && !isRustProject && !isJavaProject &&
+            workspaceDir.walkTopDown()
+                .any { it.isFile && (it.name.endsWith(".py") || it.name == "requirements.txt" || 
+                    it.name == "setup.py" || it.name == "pyproject.toml" || it.name == "Pipfile" || 
+                    it.name == "poetry.lock") }
+        
+        // Detect Python test commands (only if Python is the primary language)
         if (hasPythonFiles) {
             val venvExists = File(workspaceDir, "venv").exists() || 
                            File(workspaceDir, ".venv").exists() ||
@@ -7467,13 +7521,8 @@ exports.$functionName = (req, res, next) => {
             ))
         }
         
-        // Detect Node.js test commands
-        val hasNodeFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name == "package.json" || it.name == "package-lock.json" || 
-                it.name == "yarn.lock" || it.name == "pnpm-lock.yaml" || it.name.endsWith(".js") || 
-                it.name.endsWith(".ts") || it.name.endsWith(".jsx") || it.name.endsWith(".tsx")) }
-        
-        if (hasNodeFiles) {
+        // Detect Node.js test commands (prioritize Node.js if package.json exists)
+        if (isNodeProject) {
             val packageJson = File(workspaceDir, "package.json")
             if (packageJson.exists()) {
                 try {
@@ -7511,10 +7560,7 @@ exports.$functionName = (req, res, next) => {
         }
         
         // Detect Go test commands
-        val hasGoFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".go") || it.name == "go.mod" || it.name == "go.sum") }
-        
-        if (hasGoFiles) {
+        if (isGoProject) {
             commands.add(CommandWithFallbacks(
                 primaryCommand = "go test ./...",
                 description = "Run Go tests",
@@ -7528,10 +7574,7 @@ exports.$functionName = (req, res, next) => {
         }
         
         // Detect Rust test commands
-        val hasRustFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".rs") || it.name == "Cargo.toml" || it.name == "Cargo.lock") }
-        
-        if (hasRustFiles && File(workspaceDir, "Cargo.toml").exists()) {
+        if (isRustProject) {
             commands.add(CommandWithFallbacks(
                 primaryCommand = "cargo test",
                 description = "Run Rust tests",
@@ -7545,12 +7588,7 @@ exports.$functionName = (req, res, next) => {
         }
         
         // Detect Java/Kotlin test commands
-        val hasJavaFiles = workspaceDir.walkTopDown()
-            .any { it.isFile && (it.name.endsWith(".java") || it.name.endsWith(".kt") || 
-                it.name == "build.gradle" || it.name == "build.gradle.kts" || 
-                it.name == "pom.xml" || it.name == "build.sbt") }
-        
-        if (hasJavaFiles) {
+        if (isJavaProject) {
             val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
             val hasMaven = File(workspaceDir, "pom.xml").exists()
             val hasSbt = File(workspaceDir, "build.sbt").exists()
