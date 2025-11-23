@@ -1028,16 +1028,157 @@ fun DebugDialog(
 ) {
     var logcatLogs by remember { mutableStateOf<String?>(null) }
     var isLoadingLogs by remember { mutableStateOf(false) }
+    var systemInfo by remember { mutableStateOf<String?>(null) }
+    var testInfo by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     
-    // Load logcat logs when dialog opens
+    // Load all debug information when dialog opens
     LaunchedEffect(Unit) {
         isLoadingLogs = true
-        logcatLogs = readLogcatLogs(200)
-        isLoadingLogs = false
+        scope.launch {
+            logcatLogs = readLogcatLogs(300)
+            
+            // Get system information
+            try {
+                val workspaceDir = File(workspaceRoot)
+                val systemInfoBuilder = StringBuilder()
+                
+                // Detect project type
+                val hasPackageJson = File(workspaceDir, "package.json").exists()
+                val hasGoMod = File(workspaceDir, "go.mod").exists()
+                val hasCargoToml = File(workspaceDir, "Cargo.toml").exists()
+                val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
+                val hasMaven = File(workspaceDir, "pom.xml").exists()
+                val hasRequirements = File(workspaceDir, "requirements.txt").exists()
+                val hasPipfile = File(workspaceDir, "Pipfile").exists()
+                
+                systemInfoBuilder.appendLine("Project Type: ")
+                when {
+                    hasPackageJson -> systemInfoBuilder.appendLine("  - Node.js (package.json found)")
+                    hasGoMod -> systemInfoBuilder.appendLine("  - Go (go.mod found)")
+                    hasCargoToml -> systemInfoBuilder.appendLine("  - Rust (Cargo.toml found)")
+                    hasGradle -> systemInfoBuilder.appendLine("  - Java/Kotlin (Gradle)")
+                    hasMaven -> systemInfoBuilder.appendLine("  - Java (Maven)")
+                    hasPipfile -> systemInfoBuilder.appendLine("  - Python (Pipfile)")
+                    hasRequirements -> systemInfoBuilder.appendLine("  - Python (requirements.txt)")
+                    else -> systemInfoBuilder.appendLine("  - Unknown/Generic")
+                }
+                
+                // Count files
+                val fileCount = workspaceDir.walkTopDown().count { it.isFile }
+                val dirCount = workspaceDir.walkTopDown().count { it.isDirectory }
+                systemInfoBuilder.appendLine("Files: $fileCount files, $dirCount directories")
+                
+                // Get system info from SystemInfoService
+                try {
+                    val systemInfo = com.qali.aterm.gemini.SystemInfoService.detectSystemInfo()
+                    systemInfoBuilder.appendLine()
+                    systemInfoBuilder.appendLine("OS: ${systemInfo.os}")
+                    systemInfoBuilder.appendLine("OS Version: ${systemInfo.osVersion ?: "Unknown"}")
+                    systemInfoBuilder.appendLine("Package Manager: ${systemInfo.packageManager}")
+                    systemInfoBuilder.appendLine("Architecture: ${systemInfo.architecture}")
+                    systemInfoBuilder.appendLine("Shell: ${systemInfo.shell}")
+                    
+                    if (systemInfo.packageManagerCommands.isNotEmpty()) {
+                        systemInfoBuilder.appendLine("Package Manager Commands:")
+                        systemInfo.packageManagerCommands.forEach { (key, value) ->
+                            systemInfoBuilder.appendLine("  - $key: $value")
+                        }
+                    }
+                } catch (e: Exception) {
+                    systemInfoBuilder.appendLine()
+                    systemInfoBuilder.appendLine("System Info: Error - ${e.message}")
+                }
+                
+                systemInfo = systemInfoBuilder.toString()
+            } catch (e: Exception) {
+                systemInfo = "Error getting system info: ${e.message}"
+            }
+            
+            // Get testing information from messages
+            try {
+                val testInfoBuilder = StringBuilder()
+                val toolCalls = messages.filter { !it.isUser && it.text.contains("Tool") }
+                val toolResults = messages.filter { !it.isUser && (it.text.contains("completed") || it.text.contains("Error")) }
+                val testCommands = messages.filter { !it.isUser && (it.text.contains("test") || it.text.contains("npm test") || it.text.contains("pytest") || it.text.contains("cargo test") || it.text.contains("go test") || it.text.contains("mvn test") || it.text.contains("gradle test")) }
+                
+                testInfoBuilder.appendLine("Tool Calls: ${toolCalls.size}")
+                testInfoBuilder.appendLine("Tool Results: ${toolResults.size}")
+                testInfoBuilder.appendLine("Test Commands Detected: ${testCommands.size}")
+                
+                // Count by tool type
+                val shellCalls = toolCalls.count { it.text.contains("shell") }
+                val editCalls = toolCalls.count { it.text.contains("edit") }
+                val readCalls = toolCalls.count { it.text.contains("read") }
+                val writeCalls = toolCalls.count { it.text.contains("write") }
+                val todosCalls = toolCalls.count { it.text.contains("write_todos") || it.text.contains("todo") }
+                
+                testInfoBuilder.appendLine()
+                testInfoBuilder.appendLine("Tool Usage:")
+                testInfoBuilder.appendLine("  - shell: $shellCalls")
+                testInfoBuilder.appendLine("  - edit: $editCalls")
+                testInfoBuilder.appendLine("  - read: $readCalls")
+                testInfoBuilder.appendLine("  - write: $writeCalls")
+                testInfoBuilder.appendLine("  - todos: $todosCalls")
+                
+                // Code debugging statistics
+                val codeDebugAttempts = messages.count { !it.isUser && (it.text.contains("Code error detected") || it.text.contains("debugging code")) }
+                val codeFixes = messages.count { !it.isUser && (it.text.contains("Code fix applied") || it.text.contains("Fixed __dirname")) }
+                val fallbackAttempts = messages.count { !it.isUser && (it.text.contains("Fallback") || it.text.contains("fallback")) }
+                val esModuleFixes = messages.count { !it.isUser && (it.text.contains("ES Module") || it.text.contains("type: \"module\"")) }
+                
+                testInfoBuilder.appendLine()
+                testInfoBuilder.appendLine("Code Debugging:")
+                testInfoBuilder.appendLine("  - Debug Attempts: $codeDebugAttempts")
+                testInfoBuilder.appendLine("  - Successful Fixes: $codeFixes")
+                testInfoBuilder.appendLine("  - ES Module Fixes: $esModuleFixes")
+                testInfoBuilder.appendLine("  - Fallback Attempts: $fallbackAttempts")
+                
+                // Error analysis
+                val errors = messages.filter { !it.isUser && (it.text.contains("Error") || it.text.contains("error") || it.text.contains("failed") || it.text.contains("Failed")) }
+                val codeErrors = errors.count { it.text.contains("SyntaxError") || it.text.contains("TypeError") || it.text.contains("ReferenceError") || it.text.contains("ImportError") }
+                val commandErrors = errors.count { it.text.contains("command not found") || it.text.contains("Exit code") || it.text.contains("127") }
+                val dependencyErrors = errors.count { it.text.contains("module not found") || it.text.contains("package not found") || it.text.contains("Cannot find module") }
+                val editErrors = errors.count { it.text.contains("String not found") || it.text.contains("edit") && it.text.contains("Error") }
+                
+                testInfoBuilder.appendLine()
+                testInfoBuilder.appendLine("Error Analysis:")
+                testInfoBuilder.appendLine("  - Total Errors: ${errors.size}")
+                testInfoBuilder.appendLine("  - Code Errors: $codeErrors")
+                testInfoBuilder.appendLine("  - Command Errors: $commandErrors")
+                testInfoBuilder.appendLine("  - Dependency Errors: $dependencyErrors")
+                testInfoBuilder.appendLine("  - Edit Tool Errors: $editErrors")
+                
+                // Success rate
+                val successfulTools = toolResults.count { it.text.contains("✅") || (it.text.contains("completed") && !it.text.contains("Error")) }
+                val totalTools = toolCalls.size
+                if (totalTools > 0) {
+                    val successRate = (successfulTools * 100.0 / totalTools).toInt()
+                    testInfoBuilder.appendLine()
+                    testInfoBuilder.appendLine("Success Rate: $successRate% ($successfulTools/$totalTools)")
+                }
+                
+                // API call statistics (from logcat)
+                val apiCalls = logcatLogs?.split("\n")?.count { it.contains("makeApiCall") } ?: 0
+                val apiSuccess = logcatLogs?.split("\n")?.count { it.contains("makeApiCall") && it.contains("Response code: 200") } ?: 0
+                if (apiCalls > 0) {
+                    val apiSuccessRate = (apiSuccess * 100.0 / apiCalls).toInt()
+                    testInfoBuilder.appendLine()
+                    testInfoBuilder.appendLine("API Calls:")
+                    testInfoBuilder.appendLine("  - Total: $apiCalls")
+                    testInfoBuilder.appendLine("  - Successful: $apiSuccess ($apiSuccessRate%)")
+                }
+                
+                testInfo = testInfoBuilder.toString()
+            } catch (e: Exception) {
+                testInfo = "Error getting test info: ${e.message}"
+            }
+            
+            isLoadingLogs = false
+        }
     }
     
-    val debugInfo = remember(useOllama, ollamaHost, ollamaPort, ollamaModel, ollamaUrl, workspaceRoot, messages, logcatLogs) {
+    val debugInfo = remember(useOllama, ollamaHost, ollamaPort, ollamaModel, ollamaUrl, workspaceRoot, messages, logcatLogs, systemInfo, testInfo) {
         buildString {
             appendLine("=== Agent Debug Information ===")
             appendLine()
@@ -1050,16 +1191,41 @@ fun DebugDialog(
                 appendLine("Port: $ollamaPort")
                 appendLine("Model: $ollamaModel")
                 appendLine("URL: $ollamaUrl")
+            } else {
+                val model = com.qali.aterm.api.ApiProviderManager.getCurrentModel()
+                appendLine("Model: $model")
             }
             appendLine("Workspace Root: $workspaceRoot")
             appendLine()
             
+            // System Information
+            appendLine("--- System Information ---")
+            appendLine(systemInfo ?: "Loading...")
+            appendLine()
+            
+            // Testing Information
+            appendLine("--- Testing & Analytics ---")
+            appendLine(testInfo ?: "Loading...")
+            appendLine()
+            
             // Messages
             appendLine("--- Messages (${messages.size}) ---")
-            messages.takeLast(10).forEachIndexed { index, msg ->
-                appendLine("${index + 1}. [${if (msg.isUser) "User" else "AI"}] ${msg.text.take(100)}")
+            messages.takeLast(20).forEachIndexed { index, msg ->
+                val prefix = if (msg.isUser) "User" else "AI"
+                val preview = msg.text.take(150)
+                appendLine("${index + 1}. [$prefix] $preview${if (msg.text.length > 150) "..." else ""}")
             }
             appendLine()
+            
+            // Recent Tool Activity
+            val recentToolActivity = messages.filter { !it.isUser && (it.text.contains("Tool") || it.text.contains("✅") || it.text.contains("❌")) }
+            if (recentToolActivity.isNotEmpty()) {
+                appendLine("--- Recent Tool Activity (last 10) ---")
+                recentToolActivity.takeLast(10).forEachIndexed { index, msg ->
+                    appendLine("${index + 1}. ${msg.text.take(200)}")
+                }
+                appendLine()
+            }
             
             // Logcat
             appendLine("--- Recent Logcat (filtered) ---")
@@ -1097,16 +1263,139 @@ fun DebugDialog(
         },
         confirmButton = {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Button(
                     onClick = {
                         scope.launch {
                             isLoadingLogs = true
-                            logcatLogs = readLogcatLogs(200)
+                            logcatLogs = readLogcatLogs(300)
+                            
+                            // Refresh system info
+                            try {
+                                val workspaceDir = File(workspaceRoot)
+                                val systemInfoBuilder = StringBuilder()
+                                
+                                val hasPackageJson = File(workspaceDir, "package.json").exists()
+                                val hasGoMod = File(workspaceDir, "go.mod").exists()
+                                val hasCargoToml = File(workspaceDir, "Cargo.toml").exists()
+                                val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
+                                val hasMaven = File(workspaceDir, "pom.xml").exists()
+                                val hasRequirements = File(workspaceDir, "requirements.txt").exists()
+                                val hasPipfile = File(workspaceDir, "Pipfile").exists()
+                                
+                                systemInfoBuilder.appendLine("Project Type: ")
+                                when {
+                                    hasPackageJson -> systemInfoBuilder.appendLine("  - Node.js (package.json found)")
+                                    hasGoMod -> systemInfoBuilder.appendLine("  - Go (go.mod found)")
+                                    hasCargoToml -> systemInfoBuilder.appendLine("  - Rust (Cargo.toml found)")
+                                    hasGradle -> systemInfoBuilder.appendLine("  - Java/Kotlin (Gradle)")
+                                    hasMaven -> systemInfoBuilder.appendLine("  - Java (Maven)")
+                                    hasPipfile -> systemInfoBuilder.appendLine("  - Python (Pipfile)")
+                                    hasRequirements -> systemInfoBuilder.appendLine("  - Python (requirements.txt)")
+                                    else -> systemInfoBuilder.appendLine("  - Unknown/Generic")
+                                }
+                                
+                                val fileCount = workspaceDir.walkTopDown().count { it.isFile }
+                                val dirCount = workspaceDir.walkTopDown().count { it.isDirectory }
+                                systemInfoBuilder.appendLine("Files: $fileCount files, $dirCount directories")
+                                
+                                // Get system info
+                                try {
+                                    val sysInfo = com.qali.aterm.gemini.SystemInfoService.detectSystemInfo()
+                                    systemInfoBuilder.appendLine()
+                                    systemInfoBuilder.appendLine("OS: ${sysInfo.os}")
+                                    systemInfoBuilder.appendLine("OS Version: ${sysInfo.osVersion ?: "Unknown"}")
+                                    systemInfoBuilder.appendLine("Package Manager: ${sysInfo.packageManager}")
+                                    systemInfoBuilder.appendLine("Architecture: ${sysInfo.architecture}")
+                                } catch (e: Exception) {
+                                    // Ignore
+                                }
+                                
+                                systemInfo = systemInfoBuilder.toString()
+                            } catch (e: Exception) {
+                                systemInfo = "Error: ${e.message}"
+                            }
+                            
+                            // Refresh test info
+                            try {
+                                val testInfoBuilder = StringBuilder()
+                                val toolCalls = messages.filter { !it.isUser && it.text.contains("Tool") }
+                                val toolResults = messages.filter { !it.isUser && (it.text.contains("completed") || it.text.contains("Error")) }
+                                val testCommands = messages.filter { !it.isUser && (it.text.contains("test") || it.text.contains("npm test") || it.text.contains("pytest") || it.text.contains("cargo test") || it.text.contains("go test") || it.text.contains("mvn test") || it.text.contains("gradle test")) }
+                                
+                                testInfoBuilder.appendLine("Tool Calls: ${toolCalls.size}")
+                                testInfoBuilder.appendLine("Tool Results: ${toolResults.size}")
+                                testInfoBuilder.appendLine("Test Commands Detected: ${testCommands.size}")
+                                
+                                val shellCalls = toolCalls.count { it.text.contains("shell") }
+                                val editCalls = toolCalls.count { it.text.contains("edit") }
+                                val readCalls = toolCalls.count { it.text.contains("read") }
+                                val writeCalls = toolCalls.count { it.text.contains("write") }
+                                val todosCalls = toolCalls.count { it.text.contains("write_todos") || it.text.contains("todo") }
+                                
+                                testInfoBuilder.appendLine()
+                                testInfoBuilder.appendLine("Tool Usage:")
+                                testInfoBuilder.appendLine("  - shell: $shellCalls")
+                                testInfoBuilder.appendLine("  - edit: $editCalls")
+                                testInfoBuilder.appendLine("  - read: $readCalls")
+                                testInfoBuilder.appendLine("  - write: $writeCalls")
+                                testInfoBuilder.appendLine("  - todos: $todosCalls")
+                                
+                                val codeDebugAttempts = messages.count { !it.isUser && (it.text.contains("Code error detected") || it.text.contains("debugging code")) }
+                                val codeFixes = messages.count { !it.isUser && (it.text.contains("Code fix applied") || it.text.contains("Fixed __dirname")) }
+                                val fallbackAttempts = messages.count { !it.isUser && (it.text.contains("Fallback") || it.text.contains("fallback")) }
+                                val esModuleFixes = messages.count { !it.isUser && (it.text.contains("ES Module") || it.text.contains("type: \"module\"")) }
+                                
+                                testInfoBuilder.appendLine()
+                                testInfoBuilder.appendLine("Code Debugging:")
+                                testInfoBuilder.appendLine("  - Debug Attempts: $codeDebugAttempts")
+                                testInfoBuilder.appendLine("  - Successful Fixes: $codeFixes")
+                                testInfoBuilder.appendLine("  - ES Module Fixes: $esModuleFixes")
+                                testInfoBuilder.appendLine("  - Fallback Attempts: $fallbackAttempts")
+                                
+                                val errors = messages.filter { !it.isUser && (it.text.contains("Error") || it.text.contains("error") || it.text.contains("failed") || it.text.contains("Failed")) }
+                                val codeErrors = errors.count { it.text.contains("SyntaxError") || it.text.contains("TypeError") || it.text.contains("ReferenceError") || it.text.contains("ImportError") }
+                                val commandErrors = errors.count { it.text.contains("command not found") || it.text.contains("Exit code") || it.text.contains("127") }
+                                val dependencyErrors = errors.count { it.text.contains("module not found") || it.text.contains("package not found") || it.text.contains("Cannot find module") }
+                                val editErrors = errors.count { it.text.contains("String not found") || it.text.contains("edit") && it.text.contains("Error") }
+                                
+                                testInfoBuilder.appendLine()
+                                testInfoBuilder.appendLine("Error Analysis:")
+                                testInfoBuilder.appendLine("  - Total Errors: ${errors.size}")
+                                testInfoBuilder.appendLine("  - Code Errors: $codeErrors")
+                                testInfoBuilder.appendLine("  - Command Errors: $commandErrors")
+                                testInfoBuilder.appendLine("  - Dependency Errors: $dependencyErrors")
+                                testInfoBuilder.appendLine("  - Edit Tool Errors: $editErrors")
+                                
+                                val successfulTools = toolResults.count { it.text.contains("✅") || (it.text.contains("completed") && !it.text.contains("Error")) }
+                                val totalTools = toolCalls.size
+                                if (totalTools > 0) {
+                                    val successRate = (successfulTools * 100.0 / totalTools).toInt()
+                                    testInfoBuilder.appendLine()
+                                    testInfoBuilder.appendLine("Success Rate: $successRate% ($successfulTools/$totalTools)")
+                                }
+                                
+                                val apiCalls = logcatLogs?.split("\n")?.count { it.contains("makeApiCall") } ?: 0
+                                val apiSuccess = logcatLogs?.split("\n")?.count { it.contains("makeApiCall") && it.contains("Response code: 200") } ?: 0
+                                if (apiCalls > 0) {
+                                    val apiSuccessRate = (apiSuccess * 100.0 / apiCalls).toInt()
+                                    testInfoBuilder.appendLine()
+                                    testInfoBuilder.appendLine("API Calls:")
+                                    testInfoBuilder.appendLine("  - Total: $apiCalls")
+                                    testInfoBuilder.appendLine("  - Successful: $apiSuccess ($apiSuccessRate%)")
+                                }
+                                
+                                testInfo = testInfoBuilder.toString()
+                            } catch (e: Exception) {
+                                testInfo = "Error: ${e.message}"
+                            }
+                            
                             isLoadingLogs = false
                         }
-                    }
+                    },
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -1114,13 +1403,14 @@ fun DebugDialog(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Refresh Logs")
+                    Text("Refresh", fontSize = 12.sp)
                 }
                 Button(
                     onClick = {
                         onCopy(debugInfo)
                         onDismiss()
-                    }
+                    },
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
@@ -1128,10 +1418,13 @@ fun DebugDialog(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy All")
+                    Text("Copy", fontSize = 12.sp)
                 }
-                TextButton(onClick = onDismiss) {
-                    Text("Close")
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(0.8f)
+                ) {
+                    Text("Close", fontSize = 12.sp)
                 }
             }
         }
