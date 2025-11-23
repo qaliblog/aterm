@@ -68,7 +68,7 @@ class ShellToolInvocation(
             }
             
             // Ensure working directory exists (should exist now after mkdirs, but double-check)
-            val finalWorkingDir = if (!workingDir.exists()) {
+            val finalWorkingDir: File = if (!workingDir.exists()) {
                 // Last resort: use workspace root
                 val fallbackDir = File(workspaceRoot)
                 if (fallbackDir.exists()) {
