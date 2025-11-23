@@ -96,14 +96,31 @@ public class TextSelectionCursorController implements CursorController {
         mSelY1 = mSelY2 = columnAndRow[1];
 
         TerminalBuffer screen = terminalView.mEmulator.getScreen();
-        if (!" ".equals(screen.getSelectedText(mSelX1, mSelY1, mSelX1, mSelY1))) {
-            // Selecting something other than whitespace. Expand to word.
-            while (mSelX1 > 0 && !"".equals(screen.getSelectedText(mSelX1 - 1, mSelY1, mSelX1 - 1, mSelY1))) {
-                mSelX1--;
+        
+        // Validate coordinates before accessing
+        if (mSelY1 < -screen.getActiveTranscriptRows() || mSelY1 >= screen.getScreenRows() ||
+            mSelX1 < 0 || mSelX1 >= terminalView.mEmulator.mColumns) {
+            // Invalid coordinates, set to safe defaults
+            mSelX1 = mSelX2 = 0;
+            mSelY1 = mSelY2 = 0;
+            return;
+        }
+        
+        try {
+            if (!" ".equals(screen.getSelectedText(mSelX1, mSelY1, mSelX1, mSelY1))) {
+                // Selecting something other than whitespace. Expand to word.
+                while (mSelX1 > 0 && !"".equals(screen.getSelectedText(mSelX1 - 1, mSelY1, mSelX1 - 1, mSelY1))) {
+                    mSelX1--;
+                }
+                while (mSelX2 < terminalView.mEmulator.mColumns - 1 && !"".equals(screen.getSelectedText(mSelX2 + 1, mSelY1, mSelX2 + 1, mSelY1))) {
+                    mSelX2++;
+                }
             }
-            while (mSelX2 < terminalView.mEmulator.mColumns - 1 && !"".equals(screen.getSelectedText(mSelX2 + 1, mSelY1, mSelX2 + 1, mSelY1))) {
-                mSelX2++;
-            }
+        } catch (Exception e) {
+            // If getSelectedText throws an exception, reset to safe defaults
+            android.util.Log.w("TextSelectionCursorController", "Error in setInitialTextSelectionPosition: " + e.getMessage());
+            mSelX1 = mSelX2 = 0;
+            mSelY1 = mSelY2 = 0;
         }
     }
     

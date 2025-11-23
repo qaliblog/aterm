@@ -80,6 +80,11 @@ public final class TerminalBuffer {
         }
 
         for (int row = y1; row <= y2; row++) {
+            // Validate row bounds
+            if (row < -getActiveTranscriptRows() || row >= mScreenRows) {
+                continue; // Skip invalid rows
+            }
+            
             int startX = (row == y1) ? x1 : 0;
             int endX;
             if (row == y2) {
@@ -91,7 +96,17 @@ public final class TerminalBuffer {
                 endX = columns;
             }
             
-            TerminalRow lineObject = mLines[externalToInternalRow(row)];
+            int internalRow = externalToInternalRow(row);
+            if (internalRow < 0 || internalRow >= mTotalRows) {
+                continue; // Skip invalid internal row indices
+            }
+            
+            TerminalRow lineObject = mLines[internalRow];
+            // Allocate line if null to prevent NullPointerException
+            if (lineObject == null) {
+                lineObject = allocateFullLineIfNecessary(internalRow);
+            }
+            
             int x1Index = lineObject.findStartOfColumn(startX);
             int x2Index = (endX < mColumns) ? lineObject.findStartOfColumn(endX) : lineObject.getSpaceUsed();
             if (x2Index == x1Index && endX < columns) {
@@ -171,6 +186,10 @@ public final class TerminalBuffer {
         return text.substring(x1 + 1, x2);
     }
 
+    public int getScreenRows() {
+        return mScreenRows;
+    }
+    
     public int getActiveTranscriptRows() {
         return mActiveTranscriptRows;
     }
@@ -208,15 +227,24 @@ public final class TerminalBuffer {
     }
 
     public void setLineWrap(int row) {
-        mLines[externalToInternalRow(row)].mLineWrap = true;
+        int internalRow = externalToInternalRow(row);
+        TerminalRow lineObject = allocateFullLineIfNecessary(internalRow);
+        lineObject.mLineWrap = true;
     }
 
     public boolean getLineWrap(int row) {
-        return mLines[externalToInternalRow(row)].mLineWrap;
+        int internalRow = externalToInternalRow(row);
+        TerminalRow lineObject = mLines[internalRow];
+        if (lineObject == null) {
+            return false; // Null lines don't wrap
+        }
+        return lineObject.mLineWrap;
     }
 
     public void clearLineWrap(int row) {
-        mLines[externalToInternalRow(row)].mLineWrap = false;
+        int internalRow = externalToInternalRow(row);
+        TerminalRow lineObject = allocateFullLineIfNecessary(internalRow);
+        lineObject.mLineWrap = false;
     }
 
     /**
@@ -490,7 +518,8 @@ public final class TerminalBuffer {
     public void setOrClearEffect(int bits, boolean setOrClear, boolean reverse, boolean rectangular, int leftMargin, int rightMargin, int top, int left,
                                  int bottom, int right) {
         for (int y = top; y < bottom; y++) {
-            TerminalRow line = mLines[externalToInternalRow(y)];
+            int internalRow = externalToInternalRow(y);
+            TerminalRow line = allocateFullLineIfNecessary(internalRow);
             int startOfLine = (rectangular || y == top) ? left : leftMargin;
             int endOfLine = (rectangular || y + 1 == bottom) ? right : rightMargin;
             for (int x = startOfLine; x < endOfLine; x++) {
