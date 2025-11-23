@@ -2070,60 +2070,159 @@ fun AgentScreen(
                         retryCountdown--
                     }
                     
-                    // Retry the last prompt
-                    lastFailedPrompt?.let { prompt ->
-                        inputText = prompt
-                        // Trigger send (simulate button click)
-                        val userMessage = AgentMessage(
-                            text = prompt,
-                            isUser = true,
-                            timestamp = System.currentTimeMillis()
-                        )
-                        messages = messages + userMessage
-                        
-                        val loadingMessage = AgentMessage(
-                            text = "Retrying...",
+                    // Retry by continuing from where we left off (not resending original prompt)
+                    // Use special continuation message to preserve chat history
+                    val continuationMessage = AgentMessage(
+                        text = "Retrying after API key wait...",
+                        isUser = true,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    messages = messages + continuationMessage
+                    
+                    val loadingMessage = AgentMessage(
+                        text = "Retrying from current conversation state...",
+                        isUser = false,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    messages = messages + loadingMessage
+                    
+                    // Get the AI client
+                    val aiClient = if (GeminiService.isUsingOllama()) {
+                        GeminiService.getOllamaClient()
+                    } else {
+                        GeminiService.getClient()
+                    }
+                    
+                    if (aiClient == null) {
+                        val errorMessage = AgentMessage(
+                            text = "❌ Error: AI client not available",
                             isUser = false,
                             timestamp = System.currentTimeMillis()
                         )
-                        messages = messages + loadingMessage
-                        
-                        val result = ApiProviderManager.makeApiCallWithRetry { apiKey ->
-                            kotlinx.coroutines.delay(1000)
-                            if (kotlin.random.Random.nextDouble() < 0.3) {
-                                Result.failure(Exception("Rate limit exceeded (RPM)"))
-                            } else {
-                                Result.success("Retry successful! Response for: \"$prompt\"")
-                            }
-                        }
-                        
-                        val currentMessages = messages.dropLast(1)
-                        val responseMessage = if (result.isSuccess) {
-                            AgentMessage(
-                                text = result.getOrNull() ?: "No response",
-                                isUser = false,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        } else {
-                            val error = result.exceptionOrNull()
-                            if (error is KeysExhaustedException) {
-                                lastFailedPrompt = prompt
-                                showKeysExhaustedDialog = true
-                                AgentMessage(
-                                    text = "⚠️ Keys are still exhausted. Please wait longer or add more API keys.",
+                        messages = messages.dropLast(1) + errorMessage
+                        return@launch
+                    }
+                    
+                    // Use continuation message to resume from chat history
+                    currentResponseText = ""
+                    val stream = if (aiClient is OllamaClient) {
+                        (aiClient as OllamaClient).sendMessageStream(
+                            userMessage = "__CONTINUE__", // Special message to continue from chat history
+                            onChunk = { chunk ->
+                                currentResponseText += chunk
+                                val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                messages = currentMessages + AgentMessage(
+                                    text = currentResponseText,
                                     isUser = false,
                                     timestamp = System.currentTimeMillis()
                                 )
-                            } else {
-                                AgentMessage(
-                                    text = "Error: ${error?.message ?: "Unknown error"}",
+                            },
+                            onToolCall = { functionCall ->
+                                val toolMessage = AgentMessage(
+                                    text = "🔧 Calling tool: ${functionCall.name}",
                                     isUser = false,
                                     timestamp = System.currentTimeMillis()
                                 )
+                                messages = messages + toolMessage
+                            },
+                            onToolResult = { toolName, args ->
+                                val resultMessage = AgentMessage(
+                                    text = "✅ Tool '$toolName' completed",
+                                    isUser = false,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                messages = messages + resultMessage
+                            }
+                        )
+                    } else {
+                        (aiClient as GeminiClient).sendMessageStream(
+                            userMessage = "__CONTINUE__", // Special message to continue from chat history
+                            onChunk = { chunk ->
+                                currentResponseText += chunk
+                                val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                messages = currentMessages + AgentMessage(
+                                    text = currentResponseText,
+                                    isUser = false,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                            },
+                            onToolCall = { functionCall ->
+                                val toolMessage = AgentMessage(
+                                    text = "🔧 Calling tool: ${functionCall.name}",
+                                    isUser = false,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                messages = messages + toolMessage
+                            },
+                            onToolResult = { toolName, args ->
+                                val resultMessage = AgentMessage(
+                                    text = "✅ Tool '$toolName' completed",
+                                    isUser = false,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                messages = messages + resultMessage
+                            }
+                        )
+                    }
+                    
+                    // Collect stream events
+                    try {
+                        stream.collect { event ->
+                            when (event) {
+                                is GeminiStreamEvent.Chunk -> {
+                                    currentResponseText += event.text
+                                    val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                    messages = currentMessages + AgentMessage(
+                                        text = currentResponseText,
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                }
+                                is GeminiStreamEvent.ToolCall -> {
+                                    val toolMessage = AgentMessage(
+                                        text = "🔧 Calling tool: ${event.functionCall.name}",
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    messages = messages + toolMessage
+                                }
+                                is GeminiStreamEvent.ToolResult -> {
+                                    val resultMessage = AgentMessage(
+                                        text = "✅ Tool '${event.toolName}' completed: ${event.result.returnDisplay}",
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    messages = messages + resultMessage
+                                }
+                                is GeminiStreamEvent.Error -> {
+                                    val errorMessage = AgentMessage(
+                                        text = "❌ Error: ${event.message}",
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    messages = if (messages.isNotEmpty()) messages.dropLast(1) + errorMessage else messages + errorMessage
+                                }
+                                is GeminiStreamEvent.KeysExhausted -> {
+                                    lastFailedPrompt = null // Clear since we're continuing, not restarting
+                                    showKeysExhaustedDialog = true
+                                    val exhaustedMessage = AgentMessage(
+                                        text = "⚠️ Keys are still exhausted. Please wait longer or add more API keys.",
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    messages = if (messages.isNotEmpty()) messages.dropLast(1) + exhaustedMessage else messages + exhaustedMessage
+                                }
+                                else -> {}
                             }
                         }
-                        
-                        messages = currentMessages + responseMessage
+                    } catch (e: Exception) {
+                        android.util.Log.e("AgentScreen", "Error collecting stream", e)
+                        val errorMessage = AgentMessage(
+                            text = "❌ Error: ${e.message}",
+                            isUser = false,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        messages = if (messages.isNotEmpty()) messages.dropLast(1) + errorMessage else messages + errorMessage
                     }
                 }
             }

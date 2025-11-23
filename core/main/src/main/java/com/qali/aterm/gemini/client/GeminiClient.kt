@@ -88,8 +88,9 @@ class GeminiClient(
         onToolCall: (FunctionCall) -> Unit,
         onToolResult: (String, Map<String, Any>) -> Unit
     ): Flow<GeminiStreamEvent> = flow {
-        // Add user message to history (only if it's not already a function response)
-        if (userMessage.isNotEmpty() && !userMessage.startsWith("__CONTINUE__")) {
+        // Add user message to history (only if it's not already a function response or continuation)
+        val isContinuation = userMessage == "__CONTINUE__"
+        if (userMessage.isNotEmpty() && !isContinuation) {
             chatHistory.add(
                 Content(
                     role = "user",
@@ -116,7 +117,8 @@ class GeminiClient(
                 }
             
             // Prepare request (use chat history which already includes function responses for continuation)
-            val requestBody = buildRequest(if (turnCount == 1) userMessage else "", model)
+            // For continuation, use empty string to continue from chat history
+            val requestBody = buildRequest(if (turnCount == 1 && !isContinuation) userMessage else "", model)
             
             android.util.Log.d("GeminiClient", "sendMessageStream: Request body size: ${requestBody.toString().length} bytes")
             
@@ -1469,6 +1471,9 @@ class GeminiClient(
             metadataMap[filePath] = fileMeta
         }
         
+        // Track generated files for coherence
+        val generatedFiles = mutableMapOf<String, String>() // filePath to content
+        
         // Generate code for each file
         for ((fileIndex, filePath) in filePaths.withIndex()) {
             val fileMeta = metadataMap[filePath] ?: continue
@@ -1510,6 +1515,31 @@ class GeminiClient(
             val expectations = fileMeta.optString("expectations", "")
             val fileType = fileMeta.optString("file_type", "")
             
+            // Build context from already-generated related files
+            val relatedFilesContext = buildString {
+                relationships.forEach { relatedPath ->
+                    generatedFiles[relatedPath]?.let { content ->
+                        append("\n\n=== Related file: $relatedPath ===\n")
+                        // Include first 500 chars and key exports/classes
+                        val preview = content.take(500)
+                        append(preview)
+                        if (content.length > 500) append("\n... (truncated)")
+                    }
+                }
+            }
+            
+            // Build context from all previously generated files (for consistency)
+            val allFilesContext = if (generatedFiles.isNotEmpty()) {
+                buildString {
+                    append("\n\n=== Previously Generated Files (for reference and consistency) ===\n")
+                    generatedFiles.forEach { (path, content) ->
+                        append("\n--- $path ---\n")
+                        append(content.take(300))
+                        if (content.length > 300) append("\n...")
+                    }
+                }
+            } else ""
+            
             val codePrompt = """
                 $systemContext
                 
@@ -1523,6 +1553,9 @@ class GeminiClient(
                 - Do NOT use placeholders or TODOs unless explicitly needed
                 - Ensure all imports are correct and match the metadata
                 - Follow the file type conventions: $fileType
+                - Ensure consistency with already-generated files (see context below)
+                - Make sure imports reference actual files that exist or will exist
+                - Ensure function/class names match exactly with what other files expect
                 
                 **File Metadata:**
                 - Description: $description
@@ -1537,8 +1570,11 @@ class GeminiClient(
                 **Project Context:**
                 - User's original request: $userMessage
                 - All files in project: ${filePaths.joinToString(", ")}
+                $relatedFilesContext
+                $allFilesContext
                 
                 Generate the complete code now. Return ONLY the code, no explanations or markdown formatting.
+                Ensure the code is functional, coherent, and integrates properly with related files.
             """.trimIndent()
             
             // Make code generation request
@@ -1577,21 +1613,15 @@ class GeminiClient(
                 .replace(Regex("```\\n?"), "")
                 .trim()
             
-            files.add(Pair(filePath, cleanCode))
-            emit(GeminiStreamEvent.Chunk("✅ Generated: $filePath\n"))
-            onChunk("✅ Generated: $filePath\n")
-        }
-        
-        // Step 3: Create files using write_file tool
-        emit(GeminiStreamEvent.Chunk("📝 Creating files...\n"))
-        onChunk("📝 Creating files...\n")
-        
-        for ((filePath, content) in files) {
+            // Write file immediately instead of storing in memory
+            emit(GeminiStreamEvent.Chunk("📝 Writing: $filePath\n"))
+            onChunk("📝 Writing: $filePath\n")
+            
             val functionCall = FunctionCall(
                 name = "write_file",
                 args = mapOf(
                     "file_path" to filePath,
-                    "content" to content
+                    "content" to cleanCode
                 )
             )
             
@@ -1599,7 +1629,56 @@ class GeminiClient(
             onToolCall(functionCall)
             
             val toolResult = try {
-                executeToolSync(functionCall.name, functionCall.args)
+                val writeResult = executeToolSync(functionCall.name, functionCall.args)
+                
+                // Automatically run linter check after writing
+                if (writeResult.error == null) {
+                    emit(GeminiStreamEvent.Chunk("🔍 Checking: $filePath\n"))
+                    onChunk("🔍 Checking: $filePath\n")
+                    
+                    try {
+                        val linterCall = FunctionCall(
+                            name = "language_linter",
+                            args = mapOf(
+                                "file_path" to filePath,
+                                "strict" to false
+                            )
+                        )
+                        val linterResult = executeToolSync(linterCall.name, linterCall.args)
+                        
+                        if (linterResult.llmContent.contains("Found") && 
+                            (linterResult.llmContent.contains("error") || linterResult.llmContent.contains("issue"))) {
+                            emit(GeminiStreamEvent.Chunk("⚠️ Issues found in $filePath:\n${linterResult.llmContent.take(500)}\n"))
+                            onChunk("⚠️ Issues found in $filePath\n")
+                            
+                            // Add fix task
+                            val fixCall = FunctionCall(
+                                name = "syntax_fix",
+                                args = mapOf(
+                                    "file_path" to filePath,
+                                    "auto_fix" to true
+                                )
+                            )
+                            try {
+                                val fixResult = executeToolSync(fixCall.name, fixCall.args)
+                                if (fixResult.error == null) {
+                                    emit(GeminiStreamEvent.Chunk("🔧 Auto-fixed issues in $filePath\n"))
+                                    onChunk("🔧 Auto-fixed issues in $filePath\n")
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.w("GeminiClient", "Failed to auto-fix: ${e.message}")
+                            }
+                        } else {
+                            emit(GeminiStreamEvent.Chunk("✅ No issues found in $filePath\n"))
+                            onChunk("✅ No issues found in $filePath\n")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("GeminiClient", "Linter check failed: ${e.message}")
+                        // Continue even if linter check fails
+                    }
+                }
+                
+                writeResult
             } catch (e: Exception) {
                 ToolResult(
                     llmContent = "Error: ${e.message}",
@@ -1613,6 +1692,14 @@ class GeminiClient(
             
             emit(GeminiStreamEvent.ToolResult(functionCall.name, toolResult))
             onToolResult(functionCall.name, functionCall.args)
+            
+            // Store generated file for coherence in subsequent files
+            if (toolResult.error == null) {
+                generatedFiles[filePath] = cleanCode
+            }
+            
+            emit(GeminiStreamEvent.Chunk("✅ Generated and written: $filePath\n"))
+            onChunk("✅ Generated and written: $filePath\n")
         }
         
         // Mark Phase 3 as completed (no withContext - emit must be in same context)
