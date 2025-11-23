@@ -2202,6 +2202,152 @@ class GeminiClient(
     }
     
     /**
+     * Extract error message from user message
+     */
+    private fun extractErrorMessageFromUserMessage(userMessage: String): String {
+        // Look for error patterns in the user message
+        val errorPatterns = listOf(
+            Regex("""Error:.*?(?=\n|$)""", RegexOption.DOT_MATCHES_ALL),
+            Regex("""Error:.*?at.*?\([^)]+\)""", RegexOption.DOT_MATCHES_ALL),
+            Regex("""got a \[object Undefined\].*?at.*?\(([^:]+):(\d+):(\d+)\)"""),
+            Regex("""Route\.(post|get|put|delete)\(\) requires.*?but got.*?\[object Undefined\]"""),
+            Regex("""Cannot find module.*?at.*?\(([^:]+):(\d+):(\d+)\)"""),
+            Regex("""TypeError:.*?at.*?\(([^:]+):(\d+):(\d+)\)"""),
+            Regex("""ReferenceError:.*?at.*?\(([^:]+):(\d+):(\d+)\)""")
+        )
+        
+        for (pattern in errorPatterns) {
+            val match = pattern.find(userMessage)
+            if (match != null) {
+                return match.value
+            }
+        }
+        
+        // If no pattern matches, return the full message (might contain error)
+        return userMessage
+    }
+    
+    /**
+     * Extract fixes from text when JSON parsing fails
+     */
+    private fun extractFixesFromText(
+        text: String,
+        workspaceRoot: String
+    ): List<Triple<String, String, String>> {
+        val fixes = mutableListOf<Triple<String, String, String>>()
+        
+        // Look for file_path, old_string, new_string patterns
+        val filePathRegex = Regex("""["']file_path["']\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        val oldStringRegex = Regex("""["']old_string["']\s*:\s*["']([^"']*(?:\n[^"']*)*)["']""", RegexOption.IGNORE_CASE)
+        val newStringRegex = Regex("""["']new_string["']\s*:\s*["']([^"']*(?:\n[^"']*)*)["']""", RegexOption.IGNORE_CASE)
+        
+        // Try to find code blocks with file paths
+        val codeBlockRegex = Regex("""```(?:json|javascript|js)?\s*\n(.*?)```""", RegexOption.DOT_MATCHES_ALL)
+        val codeBlocks = codeBlockRegex.findAll(text)
+        
+        for (block in codeBlocks) {
+            val blockText = block.groupValues[1]
+            val filePathMatch = filePathRegex.find(blockText)
+            val oldStringMatch = oldStringRegex.find(blockText)
+            val newStringMatch = newStringRegex.find(blockText)
+            
+            if (filePathMatch != null && oldStringMatch != null && newStringMatch != null) {
+                val filePath = filePathMatch.groupValues[1]
+                val oldString = oldStringMatch.groupValues[1].replace("\\n", "\n")
+                val newString = newStringMatch.groupValues[1].replace("\\n", "\n")
+                
+                fixes.add(Triple(filePath, oldString, newString))
+            }
+        }
+        
+        return fixes
+    }
+    
+    /**
+     * Analyze error message and suggest a fix
+     */
+    private fun analyzeErrorAndSuggestFix(
+        errorMessage: String,
+        workspaceRoot: String
+    ): Triple<String, String, String>? {
+        // Check for undefined controller function errors
+        val undefinedRegex = Regex("""got a \[object Undefined\].*?at.*?\(([^:]+):(\d+):(\d+)\)""")
+        val undefinedMatch = undefinedRegex.find(errorMessage)
+        
+        if (undefinedMatch != null) {
+            val filePath = undefinedMatch.groupValues[1]
+            val lineNum = undefinedMatch.groupValues[2].toIntOrNull() ?: return null
+            
+            // Read the file to see what's missing
+            val file = File(workspaceRoot, filePath)
+            if (file.exists()) {
+                val lines = file.readLines()
+                if (lineNum <= lines.size) {
+                    val line = lines[lineNum - 1]
+                    
+                    // Check for controller function calls
+                    val controllerCallRegex = Regex("""(\w+Controller)\.(\w+)""")
+                    val controllerMatch = controllerCallRegex.find(line)
+                    
+                    if (controllerMatch != null) {
+                        val controllerName = controllerMatch.groupValues[1]
+                        val functionName = controllerMatch.groupValues[2]
+                        
+                        // Find the controller file
+                        val controllerFile = File(workspaceRoot, "controllers/${controllerName.replace("Controller", "").lowercase()}Controller.js")
+                        if (controllerFile.exists()) {
+                            val controllerContent = controllerFile.readText()
+                            
+                            // Check if function exists
+                            if (!controllerContent.contains("exports.$functionName") && 
+                                !controllerContent.contains("$functionName =")) {
+                                
+                                // Generate a basic function
+                                // Generate a basic function
+                                val functionNameFormatted = functionName.replace(Regex("([A-Z])"), " $1").trim()
+                                val functionCode = """
+// GET /admin/$functionName - Display form for $functionName
+exports.$functionName = (req, res, next) => {
+    res.render('admin/$functionName', {
+        pageTitle: '$functionNameFormatted',
+        path: '/admin/$functionName'
+    });
+};
+"""
+                                
+                                // Find a good place to insert (before POST handler if exists)
+                                val postHandlerRegex = Regex("""// POST.*?$functionName""")
+                                val postMatch = postHandlerRegex.find(controllerContent)
+                                
+                                if (postMatch != null) {
+                                    val insertPos = postMatch.range.first
+                                    val beforePost = controllerContent.substring(0, insertPos)
+                                    val afterPost = controllerContent.substring(insertPos)
+                                    
+                                    return Triple(
+                                        controllerFile.relativeTo(File(workspaceRoot)).path,
+                                        beforePost.takeLast(50) + afterPost.take(50),
+                                        beforePost + functionCode + "\n" + afterPost
+                                    )
+                                } else {
+                                    // Append at the end
+                                    return Triple(
+                                        controllerFile.relativeTo(File(workspaceRoot)).path,
+                                        controllerContent.takeLast(20),
+                                        controllerContent + "\n\n" + functionCode
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return null
+    }
+    
+    /**
      * Analyze linter errors to identify problematic files and code sections
      */
     private fun analyzeLinterError(
@@ -3588,23 +3734,189 @@ class GeminiClient(
             return@flow
         }
         
-        // Parse fixes
+        // Parse fixes with better error handling
         val fixesJson = try {
-            val jsonStart = fixText.indexOf('[')
-            val jsonEnd = fixText.lastIndexOf(']') + 1
+            // Clean the response - remove any markdown code blocks
+            var cleanedText = fixText
+                .replace(Regex("```json\\s*"), "")
+                .replace(Regex("```\\s*"), "")
+                .trim()
+            
+            // Try to find JSON array
+            val jsonStart = cleanedText.indexOf('[')
+            val jsonEnd = cleanedText.lastIndexOf(']') + 1
+            
             if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                JSONArray(fixText.substring(jsonStart, jsonEnd))
+                val jsonSubstring = cleanedText.substring(jsonStart, jsonEnd)
+                
+                // Check for common issues like [object Undefined]
+                if (jsonSubstring.contains("[object") || jsonSubstring.contains("undefined")) {
+                    android.util.Log.w("GeminiClient", "Response contains invalid JSON: $jsonSubstring")
+                    emit(GeminiStreamEvent.Chunk("⚠️ AI returned invalid JSON, trying to extract fixes manually...\n"))
+                    onChunk("⚠️ AI returned invalid JSON, trying to extract fixes manually...\n")
+                    
+                    // Try to extract fixes from the text description
+                    val extractedFixes = extractFixesFromText(fixText, workspaceRoot)
+                    if (extractedFixes.isNotEmpty()) {
+                        // Convert to JSONArray format
+                        val fixesArray = JSONArray()
+                        for (fix in extractedFixes) {
+                            fixesArray.put(JSONObject().apply {
+                                put("file_path", fix.first)
+                                put("old_string", fix.second)
+                                put("new_string", fix.third)
+                                put("confidence", "medium")
+                                put("description", "Extracted from AI response")
+                            })
+                        }
+                        fixesArray
+                    } else {
+                        null
+                    }
+                } else {
+                    JSONArray(jsonSubstring)
+                }
             } else {
-                null
+                // No JSON array found, try to extract from text
+                android.util.Log.w("GeminiClient", "No JSON array found in response, trying text extraction")
+                emit(GeminiStreamEvent.Chunk("⚠️ No JSON array found, extracting fixes from text...\n"))
+                onChunk("⚠️ No JSON array found, extracting fixes from text...\n")
+                
+                val extractedFixes = extractFixesFromText(fixText, workspaceRoot)
+                if (extractedFixes.isNotEmpty()) {
+                    val fixesArray = JSONArray()
+                    for (fix in extractedFixes) {
+                        fixesArray.put(JSONObject().apply {
+                            put("file_path", fix.first)
+                            put("old_string", fix.second)
+                            put("new_string", fix.third)
+                            put("confidence", "medium")
+                            put("description", "Extracted from AI response")
+                        })
+                    }
+                    fixesArray
+                } else {
+                    null
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("GeminiClient", "Failed to parse fixes", e)
-            null
+            android.util.Log.e("GeminiClient", "Response text: ${fixText.take(500)}")
+            
+            // Try to extract fixes from text as fallback
+            emit(GeminiStreamEvent.Chunk("⚠️ JSON parsing failed, trying text extraction...\n"))
+            onChunk("⚠️ JSON parsing failed, trying text extraction...\n")
+            
+            val extractedFixes = extractFixesFromText(fixText, workspaceRoot)
+            if (extractedFixes.isNotEmpty()) {
+                val fixesArray = JSONArray()
+                for (fix in extractedFixes) {
+                    fixesArray.put(JSONObject().apply {
+                        put("file_path", fix.first)
+                        put("old_string", fix.second)
+                        put("new_string", fix.third)
+                        put("confidence", "low")
+                        put("description", "Extracted from AI response after JSON parse failure")
+                    })
+                }
+                fixesArray
+            } else {
+                null
+            }
         }
         
         if (fixesJson == null || fixesJson.length() == 0) {
-            emit(GeminiStreamEvent.Error("No fixes generated"))
-            return@flow
+            // Try one more time with a simpler approach - look for the actual error and suggest a fix
+            emit(GeminiStreamEvent.Chunk("⚠️ Could not parse fixes, analyzing error to suggest fix...\n"))
+            onChunk("⚠️ Could not parse fixes, analyzing error to suggest fix...\n")
+            
+            // Extract error message from user message or recent error logs
+            val errorMessage = extractErrorMessageFromUserMessage(userMessage)
+            val suggestedFix = analyzeErrorAndSuggestFix(errorMessage, workspaceRoot)
+            if (suggestedFix != null) {
+                val fixesArray = JSONArray()
+                fixesArray.put(JSONObject().apply {
+                    put("file_path", suggestedFix.first)
+                    put("old_string", suggestedFix.second)
+                    put("new_string", suggestedFix.third)
+                    put("confidence", "high")
+                    put("description", "Auto-generated fix based on error analysis")
+                })
+                
+                emit(GeminiStreamEvent.Chunk("✅ Generated fix from error analysis\n"))
+                onChunk("✅ Generated fix from error analysis\n")
+                
+                // Continue with the suggested fix
+                val fixesJsonFinal = fixesArray
+                
+                // Apply the fix (code continues below)
+                emit(GeminiStreamEvent.Chunk("✅ Generated ${fixesJsonFinal.length()} fix(es)\n"))
+                onChunk("✅ Generated ${fixesJsonFinal.length()} fix(es)\n")
+                
+                // Update todos
+                updatedTodos = currentTodos.map { todo ->
+                    when {
+                        todo.description == "Phase 4: Get fixes with assurance" -> todo.copy(status = TodoStatus.COMPLETED)
+                        todo.description == "Phase 5: Apply fixes" -> todo.copy(status = TodoStatus.IN_PROGRESS)
+                        else -> todo
+                    }
+                }
+                updateTodos(updatedTodos)
+                
+                // Apply the fix
+                emit(GeminiStreamEvent.Chunk("✏️ Phase 5: Applying fix...\n"))
+                onChunk("✏️ Phase 5: Applying fix...\n")
+                
+                val fix = fixesJsonFinal.getJSONObject(0)
+                val filePath = fix.getString("file_path")
+                val oldString = fix.getString("old_string")
+                val newString = fix.getString("new_string")
+                
+                emit(GeminiStreamEvent.Chunk("🔨 Applying fix to $filePath...\n"))
+                onChunk("🔨 Applying fix to $filePath...\n")
+                
+                val editCall = FunctionCall(
+                    name = "edit",
+                    args = mapOf(
+                        "file_path" to filePath,
+                        "old_string" to oldString,
+                        "new_string" to newString
+                    )
+                )
+                
+                emit(GeminiStreamEvent.ToolCall(editCall))
+                onToolCall(editCall)
+                
+                val editResult = try {
+                    executeToolSync("edit", editCall.args)
+                } catch (e: Exception) {
+                    ToolResult(
+                        llmContent = "Error: ${e.message}",
+                        returnDisplay = "Error",
+                        error = ToolError(
+                            message = e.message ?: "Unknown error",
+                            type = ToolErrorType.EXECUTION_ERROR
+                        )
+                    )
+                }
+                
+                emit(GeminiStreamEvent.ToolResult("edit", editResult))
+                onToolResult("edit", editCall.args)
+                
+                if (editResult.error == null) {
+                    emit(GeminiStreamEvent.Chunk("✅ Fix applied successfully\n"))
+                    onChunk("✅ Fix applied successfully\n")
+                } else {
+                    emit(GeminiStreamEvent.Chunk("❌ Failed to apply fix: ${editResult.error?.message}\n"))
+                    onChunk("❌ Failed to apply fix: ${editResult.error?.message}\n")
+                }
+                
+                emit(GeminiStreamEvent.Done)
+                return@flow
+            } else {
+                emit(GeminiStreamEvent.Error("No fixes generated and could not analyze error"))
+                return@flow
+            }
         }
         
         emit(GeminiStreamEvent.Chunk("✅ Generated ${fixesJson.length()} fixes\n"))
