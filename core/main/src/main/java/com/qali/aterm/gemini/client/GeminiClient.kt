@@ -1228,10 +1228,421 @@ class GeminiClient(
     }
     
     /**
+     * Detect if task only needs commands to run (no file creation needed)
+     */
+    private suspend fun detectCommandsOnly(userMessage: String, workspaceRoot: String): Boolean {
+        val messageLower = userMessage.lowercase()
+        
+        // Keywords indicating command-only tasks
+        val commandOnlyKeywords = listOf(
+            "run", "execute", "install", "start", "launch", "test", "build", "compile",
+            "deploy", "migrate", "update", "upgrade", "setup", "configure", "init",
+            "install dependencies", "run tests", "start server", "build project"
+        )
+        
+        // Check if message is primarily about running commands
+        val hasCommandKeywords = commandOnlyKeywords.any { messageLower.contains(it) }
+        
+        // Check if workspace has existing files (suggests command-only task)
+        val workspaceDir = File(workspaceRoot)
+        val hasExistingFiles = workspaceDir.exists() && 
+            workspaceDir.listFiles()?.any { it.isFile && !it.name.startsWith(".") } == true
+        
+        // If has command keywords and existing files, likely command-only
+        return hasCommandKeywords && hasExistingFiles && 
+               !messageLower.contains("create") && 
+               !messageLower.contains("write") && 
+               !messageLower.contains("generate") &&
+               !messageLower.contains("make")
+    }
+    
+    /**
+     * Detect commands needed to run based on project structure, OS, and user message
+     * Uses AI to intelligently detect commands with OS-specific fallbacks
+     */
+    private suspend fun detectCommandsNeeded(
+        workspaceRoot: String,
+        systemInfo: SystemInfoService.SystemInfo,
+        userMessage: String,
+        emit: suspend (GeminiStreamEvent) -> Unit,
+        onChunk: (String) -> Unit
+    ): List<CommandWithFallbacks> {
+        val commands = mutableListOf<CommandWithFallbacks>()
+        val workspaceDir = File(workspaceRoot)
+        
+        if (!workspaceDir.exists()) return commands
+        
+        // First, try AI-based command detection
+        val aiCommands = detectCommandsWithAI(workspaceRoot, systemInfo, userMessage, emit, onChunk)
+        if (aiCommands.isNotEmpty()) {
+            commands.addAll(aiCommands)
+        }
+        
+        // Also add pattern-based detection as fallback
+        
+        // Check for Python projects
+        val hasPythonFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".py") || it.name == "requirements.txt" || it.name == "setup.py" || it.name == "pyproject.toml") }
+        
+        if (hasPythonFiles) {
+            val mainPy = workspaceDir.walkTopDown()
+                .firstOrNull { it.isFile && (it.name == "main.py" || it.name == "app.py" || it.name == "__main__.py" || it.name.endsWith("_main.py")) }
+            
+            if (mainPy != null) {
+                val pythonCmd = if (systemInfo.os.contains("Alpine")) "python3" else "python3"
+                val runCommand = "$pythonCmd ${mainPy.name}"
+                
+                commands.add(CommandWithFallbacks(
+                    primaryCommand = runCommand,
+                    description = "Run Python application",
+                    fallbacks = listOf(
+                        "pip3 install -r requirements.txt",
+                        "${systemInfo.packageManagerCommands["install"]} python3 python3-pip",
+                        "${systemInfo.packageManagerCommands["update"]} && ${systemInfo.packageManagerCommands["install"]} python3 python3-pip"
+                    ),
+                    checkCommand = "python3 --version",
+                    installCheck = "pip3 --version"
+                ))
+            }
+            
+            // Check for requirements.txt
+            val requirementsFile = File(workspaceDir, "requirements.txt")
+            if (requirementsFile.exists()) {
+                commands.add(CommandWithFallbacks(
+                    primaryCommand = "pip3 install -r requirements.txt",
+                    description = "Install Python dependencies",
+                    fallbacks = listOf(
+                        "${systemInfo.packageManagerCommands["install"]} python3-pip",
+                        "${systemInfo.packageManagerCommands["update"]} && ${systemInfo.packageManagerCommands["install"]} python3 python3-pip"
+                    ),
+                    checkCommand = "pip3 --version",
+                    installCheck = "python3 --version"
+                ))
+            }
+        }
+        
+        // Check for Node.js projects
+        val hasNodeFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name == "package.json" || it.name == "package-lock.json" || it.name.endsWith(".js") || it.name.endsWith(".ts")) }
+        
+        if (hasNodeFiles) {
+            val packageJson = File(workspaceDir, "package.json")
+            if (packageJson.exists()) {
+                // Check for start script
+                try {
+                    val packageContent = packageJson.readText()
+                    if (packageContent.contains("\"start\"")) {
+                        commands.add(CommandWithFallbacks(
+                            primaryCommand = "npm start",
+                            description = "Start Node.js application",
+                            fallbacks = listOf(
+                                "npm install",
+                                "${systemInfo.packageManagerCommands["install"]} nodejs npm",
+                                "${systemInfo.packageManagerCommands["update"]} && ${systemInfo.packageManagerCommands["install"]} nodejs npm"
+                            ),
+                            checkCommand = "node --version",
+                            installCheck = "npm --version"
+                        ))
+                    }
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                
+                commands.add(CommandWithFallbacks(
+                    primaryCommand = "npm install",
+                    description = "Install Node.js dependencies",
+                    fallbacks = listOf(
+                        "${systemInfo.packageManagerCommands["install"]} nodejs npm",
+                        "${systemInfo.packageManagerCommands["update"]} && ${systemInfo.packageManagerCommands["install"]} nodejs npm"
+                    ),
+                    checkCommand = "npm --version",
+                    installCheck = "node --version"
+                ))
+            }
+        }
+        
+        // Check for shell scripts
+        val hasShellScripts = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".sh") || it.name.endsWith(".bash")) }
+        
+        if (hasShellScripts) {
+            val mainScript = workspaceDir.walkTopDown()
+                .firstOrNull { it.isFile && (it.name.endsWith(".sh") || it.name.endsWith(".bash")) && 
+                    (it.name.contains("main") || it.name.contains("run") || it.name.contains("start")) }
+            
+            if (mainScript != null) {
+                commands.add(CommandWithFallbacks(
+                    primaryCommand = "bash ${mainScript.name}",
+                    description = "Run shell script",
+                    fallbacks = listOf(
+                        "chmod +x ${mainScript.name} && bash ${mainScript.name}",
+                        "${systemInfo.packageManagerCommands["install"]} bash"
+                    ),
+                    checkCommand = "bash --version",
+                    installCheck = null
+                ))
+            }
+        }
+        
+        return commands.distinctBy { it.primaryCommand } // Remove duplicates
+    }
+    
+    /**
+     * Use AI to detect commands needed based on project structure and user intent
+     */
+    private suspend fun detectCommandsWithAI(
+        workspaceRoot: String,
+        systemInfo: SystemInfoService.SystemInfo,
+        userMessage: String,
+        emit: suspend (GeminiStreamEvent) -> Unit,
+        onChunk: (String) -> Unit
+    ): List<CommandWithFallbacks> {
+        val workspaceDir = File(workspaceRoot)
+        if (!workspaceDir.exists()) return emptyList()
+        
+        // Get list of files in workspace
+        val files = workspaceDir.walkTopDown()
+            .filter { it.isFile && !it.name.startsWith(".") }
+            .take(20) // Limit to first 20 files
+            .map { it.name }
+            .toList()
+        
+        val systemContext = SystemInfoService.generateSystemContext()
+        val packageManager = systemInfo.packageManager
+        val installCmd = systemInfo.packageManagerCommands["install"] ?: "install"
+        val updateCmd = systemInfo.packageManagerCommands["update"] ?: "update"
+        
+        val commandDetectionPrompt = """
+            $systemContext
+            
+            Analyze the project structure and user request to determine what commands need to be executed.
+            
+            Files in workspace:
+            ${files.joinToString("\n") { "- $it" }}
+            
+            User request: $userMessage
+            
+            Based on the files and user request, determine:
+            1. What is the primary command to run? (e.g., "python3 app.py", "npm start", "node server.js")
+            2. What dependencies need to be installed first?
+            3. What fallback commands are needed if tools are missing?
+            
+            For each command needed, provide:
+            - primary_command: The main command to execute
+            - description: What this command does
+            - check_command: Command to check if tool is available (e.g., "python3 --version")
+            - fallback_commands: List of commands to run if tool is missing (in order of preference)
+              - First: Install dependencies (e.g., "pip3 install -r requirements.txt")
+              - Second: Install tool via package manager (e.g., "$installCmd python3 python3-pip")
+              - Third: Update package manager and install (e.g., "$updateCmd && $installCmd python3 python3-pip")
+            
+            Format as JSON array:
+            [
+              {
+                "primary_command": "python3 app.py",
+                "description": "Run Python application",
+                "check_command": "python3 --version",
+                "fallback_commands": [
+                  "pip3 install -r requirements.txt",
+                  "$installCmd python3 python3-pip",
+                  "$updateCmd && $installCmd python3 python3-pip"
+                ]
+              }
+            ]
+            
+            Only include commands that are actually needed based on the files and user request.
+            If no commands are needed, return an empty array [].
+        """.trimIndent()
+        
+        val model = ApiProviderManager.getCurrentModel()
+        val request = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("text", commandDetectionPrompt)
+                        })
+                    })
+                })
+            })
+            put("systemInstruction", JSONObject().apply {
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("text", SystemInfoService.generateSystemContext())
+                    })
+                })
+            })
+        }
+        
+        return try {
+            val response = makeApiCallSimple(
+                ApiProviderManager.getNextApiKey() ?: return emptyList(),
+                model,
+                request,
+                useLongTimeout = false
+            )
+            
+            // Parse JSON response
+            val jsonStart = response.indexOf('[')
+            val jsonEnd = response.lastIndexOf(']') + 1
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                val jsonArray = JSONArray(response.substring(jsonStart, jsonEnd))
+                val detectedCommands = mutableListOf<CommandWithFallbacks>()
+                
+                for (i in 0 until jsonArray.length()) {
+                    try {
+                        val cmdObj = jsonArray.getJSONObject(i)
+                        val primaryCmd = cmdObj.getString("primary_command")
+                        val description = cmdObj.optString("description", "Execute command")
+                        val checkCmd = cmdObj.optString("check_command", null)
+                        val fallbacks = cmdObj.optJSONArray("fallback_commands")?.let { array ->
+                            (0 until array.length()).mapNotNull { array.optString(it, null) }
+                        } ?: emptyList()
+                        
+                        detectedCommands.add(CommandWithFallbacks(
+                            primaryCommand = primaryCmd,
+                            description = description,
+                            fallbacks = fallbacks,
+                            checkCommand = checkCmd.takeIf { it.isNotBlank() },
+                            installCheck = null
+                        ))
+                    } catch (e: Exception) {
+                        android.util.Log.w("GeminiClient", "Failed to parse command: ${e.message}")
+                    }
+                }
+                
+                detectedCommands
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("GeminiClient", "AI command detection failed: ${e.message}")
+            emptyList()
+        }
+    }
+    
+    /**
+     * Data class for commands with fallbacks
+     */
+    private data class CommandWithFallbacks(
+        val primaryCommand: String,
+        val description: String,
+        val fallbacks: List<String>,
+        val checkCommand: String? = null, // Command to check if tool is installed
+        val installCheck: String? = null // Command to check if installer is available
+    )
+    
+    /**
+     * Execute command with fallbacks if it fails
+     */
+    private suspend fun executeCommandWithFallbacks(
+        command: CommandWithFallbacks,
+        workspaceRoot: String,
+        systemInfo: SystemInfoService.SystemInfo,
+        emit: suspend (GeminiStreamEvent) -> Unit,
+        onChunk: (String) -> Unit,
+        onToolCall: (FunctionCall) -> Unit,
+        onToolResult: (String, Map<String, Any>) -> Unit
+    ): Boolean {
+        emit(GeminiStreamEvent.Chunk("▶️ Running: ${command.primaryCommand}\n"))
+        onChunk("▶️ Running: ${command.primaryCommand}\n")
+        
+        // Check if command/tool is available
+        if (command.checkCommand != null) {
+            val checkCall = FunctionCall(
+                name = "shell",
+                args = mapOf(
+                    "command" to command.checkCommand!!,
+                    "description" to "Check if ${command.description} tool is available"
+                )
+            )
+            emit(GeminiStreamEvent.ToolCall(checkCall))
+            onToolCall(checkCall)
+            
+            try {
+                val checkResult = executeToolSync("shell", checkCall.args)
+                emit(GeminiStreamEvent.ToolResult("shell", checkResult))
+                onToolResult("shell", checkCall.args)
+                
+                if (checkResult.error != null) {
+                    // Tool not available, try fallbacks
+                    emit(GeminiStreamEvent.Chunk("⚠️ Tool not found, trying to install...\n"))
+                    onChunk("⚠️ Tool not found, trying to install...\n")
+                    
+                    for (fallback in command.fallbacks) {
+                        emit(GeminiStreamEvent.Chunk("📦 Installing: $fallback\n"))
+                        onChunk("📦 Installing: $fallback\n")
+                        
+                        val fallbackCall = FunctionCall(
+                            name = "shell",
+                            args = mapOf(
+                                "command" to fallback,
+                                "description" to "Install dependencies for ${command.description}",
+                                "dir_path" to workspaceRoot
+                            )
+                        )
+                        emit(GeminiStreamEvent.ToolCall(fallbackCall))
+                        onToolCall(fallbackCall)
+                        
+                        try {
+                            val fallbackResult = executeToolSync("shell", fallbackCall.args)
+                            emit(GeminiStreamEvent.ToolResult("shell", fallbackResult))
+                            onToolResult("shell", fallbackCall.args)
+                            
+                            if (fallbackResult.error == null) {
+                                // Installation successful, retry primary command
+                                break
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("GeminiClient", "Fallback command failed: ${e.message}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("GeminiClient", "Check command failed: ${e.message}")
+            }
+        }
+        
+        // Execute primary command
+        val primaryCall = FunctionCall(
+            name = "shell",
+            args = mapOf(
+                "command" to command.primaryCommand,
+                "description" to command.description,
+                "dir_path" to workspaceRoot
+            )
+        )
+        emit(GeminiStreamEvent.ToolCall(primaryCall))
+        onToolCall(primaryCall)
+        
+        try {
+            val result = executeToolSync("shell", primaryCall.args)
+            emit(GeminiStreamEvent.ToolResult("shell", result))
+            onToolResult("shell", primaryCall.args)
+            
+            if (result.error == null) {
+                emit(GeminiStreamEvent.Chunk("✅ Command executed successfully\n"))
+                onChunk("✅ Command executed successfully\n")
+                return true
+            } else {
+                emit(GeminiStreamEvent.Chunk("❌ Command failed: ${result.error?.message}\n"))
+                onChunk("❌ Command failed: ${result.error?.message}\n")
+                return false
+            }
+        } catch (e: Exception) {
+            emit(GeminiStreamEvent.Chunk("❌ Error executing command: ${e.message}\n"))
+            onChunk("❌ Error executing command: ${e.message}\n")
+            return false
+        }
+    }
+    
+    /**
      * Non-streaming mode: Enhanced 3-phase approach
      * Phase 1: Get list of all files needed
      * Phase 2: Get comprehensive metadata for all files (relationships, imports, classes, functions, etc.)
      * Phase 3: Generate each file separately with full code using only the metadata provided
+     * Phase 4: Detect and execute commands needed
      */
     private suspend fun sendMessageNonStreaming(
         userMessage: String,
@@ -1253,6 +1664,32 @@ class GeminiClient(
         val model = ApiProviderManager.getCurrentModel()
         val systemInfo = SystemInfoService.detectSystemInfo()
         val systemContext = SystemInfoService.generateSystemContext()
+        
+        // Check if task only needs commands (no file creation)
+        val commandsOnly = detectCommandsOnly(userMessage, workspaceRoot)
+        
+        if (commandsOnly) {
+            emit(GeminiStreamEvent.Chunk("🔍 Detected command-only task, detecting commands needed...\n"))
+            onChunk("🔍 Detected command-only task, detecting commands needed...\n")
+            
+            val commandsNeeded = detectCommandsNeeded(workspaceRoot, systemInfo, userMessage, ::emit, onChunk)
+            
+            if (commandsNeeded.isNotEmpty()) {
+                emit(GeminiStreamEvent.Chunk("📋 Found ${commandsNeeded.size} command(s) to execute\n"))
+                onChunk("📋 Found ${commandsNeeded.size} command(s) to execute\n")
+                
+                for (command in commandsNeeded) {
+                    executeCommandWithFallbacks(command, workspaceRoot, systemInfo, ::emit, onChunk, onToolCall, onToolResult)
+                }
+                
+                emit(GeminiStreamEvent.Done)
+                return@flow
+            } else {
+                // No commands detected, fall through to normal flow
+                emit(GeminiStreamEvent.Chunk("⚠️ No commands detected, proceeding with normal flow...\n"))
+                onChunk("⚠️ No commands detected, proceeding with normal flow...\n")
+            }
+        }
         
         // Check if task needs documentation search
         val needsDocSearch = needsDocumentationSearch(userMessage)
@@ -1748,6 +2185,40 @@ class GeminiClient(
             }
         }
         updateTodos(updatedTodos)
+        
+        // Phase 4: Detect and execute commands needed after file creation
+        emit(GeminiStreamEvent.Chunk("\n🔍 Phase 4: Detecting commands to run...\n"))
+        onChunk("\n🔍 Phase 4: Detecting commands to run...\n")
+        
+        val commandsNeeded = detectCommandsNeeded(workspaceRoot, systemInfo, userMessage, ::emit, onChunk)
+        
+        if (commandsNeeded.isNotEmpty()) {
+            emit(GeminiStreamEvent.Chunk("📋 Found ${commandsNeeded.size} command(s) to execute\n"))
+            onChunk("📋 Found ${commandsNeeded.size} command(s) to execute\n")
+            
+            // Add command execution to todos
+            val todosWithCommands = updatedTodos + commandsNeeded.mapIndexed { index, cmd ->
+                Todo("Execute: ${cmd.primaryCommand}", TodoStatus.PENDING)
+            }
+            updateTodos(todosWithCommands)
+            
+            for ((index, command) in commandsNeeded.withIndex()) {
+                val success = executeCommandWithFallbacks(command, workspaceRoot, systemInfo, ::emit, onChunk, onToolCall, onToolResult)
+                
+                // Update todo status
+                val updatedTodosWithStatus = currentTodos.map { todo ->
+                    if (todo.description == "Execute: ${command.primaryCommand}") {
+                        todo.copy(status = if (success) TodoStatus.COMPLETED else TodoStatus.PENDING)
+                    } else {
+                        todo
+                    }
+                }
+                updateTodos(updatedTodosWithStatus)
+            }
+        } else {
+            emit(GeminiStreamEvent.Chunk("ℹ️ No commands detected to run\n"))
+            onChunk("ℹ️ No commands detected to run\n")
+        }
         
         emit(GeminiStreamEvent.Chunk("\n✨ Project generation complete!\n"))
         onChunk("\n✨ Project generation complete!\n")
