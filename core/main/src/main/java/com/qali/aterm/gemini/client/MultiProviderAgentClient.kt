@@ -2623,12 +2623,17 @@ class GeminiClient(
         }
         
         return try {
-            val response = makeApiCallSimple(
-                ApiProviderManager.getNextApiKey() ?: return emptyList(),
-                model,
-                request,
-                useLongTimeout = false
-            )
+            // Wrap network call in IO dispatcher to avoid NetworkOnMainThreadException
+            val response = withContext(Dispatchers.IO) {
+                makeApiCallSimple(
+                    ApiProviderManager.getNextApiKey() ?: return@withContext "",
+                    model,
+                    request,
+                    useLongTimeout = false
+                )
+            }
+            
+            if (response.isEmpty()) return emptyList()
             
             // Parse JSON response
             val jsonStart = response.indexOf('[')
@@ -2988,12 +2993,17 @@ class GeminiClient(
         }
         
         return try {
-            val response = makeApiCallSimple(
-                ApiProviderManager.getNextApiKey() ?: return null,
-                model,
-                request,
-                useLongTimeout = false
-            )
+            // Wrap network call in IO dispatcher to avoid NetworkOnMainThreadException
+            val response = withContext(Dispatchers.IO) {
+                makeApiCallSimple(
+                    ApiProviderManager.getNextApiKey() ?: return@withContext "",
+                    model,
+                    request,
+                    useLongTimeout = false
+                )
+            }
+            
+            if (response.isEmpty()) return null
             
             val jsonStart = response.indexOf('{')
             val jsonEnd = response.lastIndexOf('}') + 1
@@ -3300,12 +3310,17 @@ class GeminiClient(
         }
         
         return try {
-            val response = makeApiCallSimple(
-                ApiProviderManager.getNextApiKey() ?: return emptyList(),
-                model,
-                request,
-                useLongTimeout = false
-            )
+            // Wrap network call in IO dispatcher to avoid NetworkOnMainThreadException
+            val response = withContext(Dispatchers.IO) {
+                makeApiCallSimple(
+                    ApiProviderManager.getNextApiKey() ?: return@withContext "",
+                    model,
+                    request,
+                    useLongTimeout = false
+                )
+            }
+            
+            if (response.isEmpty()) return emptyList()
             
             val jsonStart = response.indexOf('[')
             val jsonEnd = response.lastIndexOf(']') + 1
@@ -7403,145 +7418,331 @@ exports.$functionName = (req, res, next) => {
         emit: suspend (GeminiStreamEvent) -> Unit,
         onChunk: (String) -> Unit
     ): List<CommandWithFallbacks> {
+        val commands = mutableListOf<CommandWithFallbacks>()
         val workspaceDir = File(workspaceRoot)
-        if (!workspaceDir.exists()) return emptyList()
+        if (!workspaceDir.exists()) return commands
         
-        // Get list of files
-        val files = workspaceDir.walkTopDown()
-            .filter { it.isFile && !it.name.startsWith(".") }
-            .map { it.relativeTo(workspaceDir).path }
-            .take(50)
-            .toList()
+        // First, try hardcoded test command detection (no API calls)
+        val messageLower = userMessage.lowercase()
         
-        val systemContext = SystemInfoService.generateSystemContext()
+        // Detect Python test commands
+        val hasPythonFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".py") || it.name == "requirements.txt" || 
+                it.name == "setup.py" || it.name == "pyproject.toml" || it.name == "Pipfile" || 
+                it.name == "poetry.lock") }
         
-        val installCmd = when (systemInfo.packageManager.lowercase()) {
-            "apk" -> "apk add"
-            "apt", "apt-get" -> "apt-get install -y"
-            "yum" -> "yum install -y"
-            "dnf" -> "dnf install -y"
-            "pacman" -> "pacman -S --noconfirm"
-            else -> systemInfo.packageManagerCommands["install"] ?: "apk add"
+        if (hasPythonFiles) {
+            val venvExists = File(workspaceDir, "venv").exists() || 
+                           File(workspaceDir, ".venv").exists() ||
+                           File(workspaceDir, "env").exists()
+            val hasPoetry = File(workspaceDir, "pyproject.toml").exists() && 
+                           File(workspaceDir, "poetry.lock").exists()
+            val hasPipfile = File(workspaceDir, "Pipfile").exists()
+            val pythonCmd = if (systemInfo.os == "Windows") "python" else "python3"
+            val venvActivate = if (systemInfo.os == "Windows") "venv\\Scripts\\activate" else "source venv/bin/activate"
+            
+            val testCmd = when {
+                hasPoetry -> "poetry run pytest || poetry run python -m pytest"
+                hasPipfile -> "pipenv run pytest || pipenv run python -m pytest"
+                File(workspaceDir, "pytest.ini").exists() || File(workspaceDir, "setup.cfg").exists() -> 
+                    if (venvExists) "$venvActivate && pytest" else "pytest"
+                File(workspaceDir, "tests").exists() || File(workspaceDir, "test").exists() ->
+                    if (venvExists) "$venvActivate && $pythonCmd -m pytest tests/ || $pythonCmd -m unittest discover" else "$pythonCmd -m pytest tests/ || $pythonCmd -m unittest discover"
+                else -> if (venvExists) "$venvActivate && $pythonCmd -m unittest discover" else "$pythonCmd -m unittest discover"
+            }
+            
+            commands.add(CommandWithFallbacks(
+                primaryCommand = testCmd,
+                description = "Run Python tests",
+                fallbacks = listOf(
+                    "pip3 install pytest unittest2 || pip install pytest unittest2",
+                    "${systemInfo.packageManagerCommands["install"]} python3-pytest"
+                ),
+                checkCommand = "pytest --version || python3 -m pytest --version",
+                installCheck = "$pythonCmd --version"
+            ))
         }
         
-        val updateCmd = when (systemInfo.packageManager.lowercase()) {
-            "apk" -> "apk update"
-            "apt", "apt-get" -> "apt-get update"
-            "yum" -> "yum update -y"
-            "dnf" -> "dnf update -y"
-            "pacman" -> "pacman -Sy"
-            else -> systemInfo.packageManagerCommands["update"] ?: "apk update"
+        // Detect Node.js test commands
+        val hasNodeFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name == "package.json" || it.name == "package-lock.json" || 
+                it.name == "yarn.lock" || it.name == "pnpm-lock.yaml" || it.name.endsWith(".js") || 
+                it.name.endsWith(".ts") || it.name.endsWith(".jsx") || it.name.endsWith(".tsx")) }
+        
+        if (hasNodeFiles) {
+            val packageJson = File(workspaceDir, "package.json")
+            if (packageJson.exists()) {
+                try {
+                    val packageContent = packageJson.readText()
+                    val hasTest = packageContent.contains("\"test\"")
+                    val hasYarn = File(workspaceDir, "yarn.lock").exists()
+                    val hasPnpm = File(workspaceDir, "pnpm-lock.yaml").exists()
+                    
+                    if (hasTest) {
+                        val testCmd = when {
+                            hasPnpm -> "pnpm test"
+                            hasYarn -> "yarn test"
+                            else -> "npm test"
+                        }
+                        
+                        commands.add(CommandWithFallbacks(
+                            primaryCommand = testCmd,
+                            description = "Run Node.js tests",
+                            fallbacks = listOf(
+                                when {
+                                    hasPnpm -> "pnpm install"
+                                    hasYarn -> "yarn install"
+                                    else -> "npm install"
+                                },
+                                "${systemInfo.packageManagerCommands["install"]} nodejs npm"
+                            ),
+                            checkCommand = "node --version",
+                            installCheck = "npm --version"
+                        ))
+                    }
+                } catch (e: Exception) {
+                    // Ignore parse errors
+                }
+            }
         }
         
-        val testDetectionPrompt = """
-            $systemContext
+        // Detect Go test commands
+        val hasGoFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".go") || it.name == "go.mod" || it.name == "go.sum") }
+        
+        if (hasGoFiles) {
+            commands.add(CommandWithFallbacks(
+                primaryCommand = "go test ./...",
+                description = "Run Go tests",
+                fallbacks = listOf(
+                    "${systemInfo.packageManagerCommands["install"]} golang-go",
+                    "${systemInfo.packageManagerCommands["update"]} && ${systemInfo.packageManagerCommands["install"]} golang-go"
+                ),
+                checkCommand = "go version",
+                installCheck = null
+            ))
+        }
+        
+        // Detect Rust test commands
+        val hasRustFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".rs") || it.name == "Cargo.toml" || it.name == "Cargo.lock") }
+        
+        if (hasRustFiles && File(workspaceDir, "Cargo.toml").exists()) {
+            commands.add(CommandWithFallbacks(
+                primaryCommand = "cargo test",
+                description = "Run Rust tests",
+                fallbacks = listOf(
+                    "cargo build",
+                    "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || true"
+                ),
+                checkCommand = "cargo --version",
+                installCheck = "rustc --version"
+            ))
+        }
+        
+        // Detect Java/Kotlin test commands
+        val hasJavaFiles = workspaceDir.walkTopDown()
+            .any { it.isFile && (it.name.endsWith(".java") || it.name.endsWith(".kt") || 
+                it.name == "build.gradle" || it.name == "build.gradle.kts" || 
+                it.name == "pom.xml" || it.name == "build.sbt") }
+        
+        if (hasJavaFiles) {
+            val hasGradle = File(workspaceDir, "build.gradle").exists() || File(workspaceDir, "build.gradle.kts").exists()
+            val hasMaven = File(workspaceDir, "pom.xml").exists()
+            val hasSbt = File(workspaceDir, "build.sbt").exists()
+            val gradleWrapper = File(workspaceDir, "gradlew").exists() || File(workspaceDir, "gradlew.bat").exists()
             
-            Analyze the project structure and user request to determine what TEST commands need to be executed.
+            when {
+                hasGradle -> {
+                    val gradleCmd = if (gradleWrapper) {
+                        if (systemInfo.os == "Windows") "./gradlew.bat" else "./gradlew"
+                    } else {
+                        "gradle"
+                    }
+                    
+                    commands.add(CommandWithFallbacks(
+                        primaryCommand = "$gradleCmd test",
+                        description = "Run Gradle tests",
+                        fallbacks = listOf(
+                            "$gradleCmd build",
+                            if (!gradleWrapper) "${systemInfo.packageManagerCommands["install"]} gradle" else ""
+                        ).filter { it.isNotEmpty() },
+                        checkCommand = "$gradleCmd --version || gradle --version",
+                        installCheck = "java -version"
+                    ))
+                }
+                hasMaven -> {
+                    commands.add(CommandWithFallbacks(
+                        primaryCommand = "mvn test",
+                        description = "Run Maven tests",
+                        fallbacks = listOf(
+                            "mvn install",
+                            "${systemInfo.packageManagerCommands["install"]} maven"
+                        ),
+                        checkCommand = "mvn --version",
+                        installCheck = "java -version"
+                    ))
+                }
+                hasSbt -> {
+                    commands.add(CommandWithFallbacks(
+                        primaryCommand = "sbt test",
+                        description = "Run SBT tests",
+                        fallbacks = listOf(
+                            "sbt compile",
+                            "${systemInfo.packageManagerCommands["install"]} sbt"
+                        ),
+                        checkCommand = "sbt --version",
+                        installCheck = "java -version"
+                    ))
+                }
+            }
+        }
+        
+        // Only use AI detection as last resort if no hardcoded commands were found
+        if (commands.isEmpty()) {
+            android.util.Log.d("GeminiClient", "No hardcoded test commands found, falling back to AI detection")
             
-            Files in workspace:
-            ${files.joinToString("\n") { "- $it" }}
+            // Get list of files for AI prompt
+            val files = workspaceDir.walkTopDown()
+                .filter { it.isFile && !it.name.startsWith(".") }
+                .map { it.relativeTo(workspaceDir).path }
+                .take(50)
+                .toList()
             
-            User request: $userMessage
+            val systemContext = SystemInfoService.generateSystemContext()
             
-            Based on the files and user request, determine:
-            1. What test commands should be run? (e.g., "npm test", "pytest", "jest", "python -m pytest", etc.)
-            2. What dependencies need to be installed first?
-            3. What fallback commands are needed if test tools are missing?
+            val installCmd = when (systemInfo.packageManager.lowercase()) {
+                "apk" -> "apk add"
+                "apt", "apt-get" -> "apt-get install -y"
+                "yum" -> "yum install -y"
+                "dnf" -> "dnf install -y"
+                "pacman" -> "pacman -S --noconfirm"
+                else -> systemInfo.packageManagerCommands["install"] ?: "apk add"
+            }
             
-            Focus ONLY on test commands. Do not include build, start, or other non-test commands.
+            val updateCmd = when (systemInfo.packageManager.lowercase()) {
+                "apk" -> "apk update"
+                "apt", "apt-get" -> "apt-get update"
+                "yum" -> "yum update -y"
+                "dnf" -> "dnf update -y"
+                "pacman" -> "pacman -Sy"
+                else -> systemInfo.packageManagerCommands["update"] ?: "apk update"
+            }
             
-            For each test command needed, provide:
-            - primary_command: The main test command to execute
-            - description: What this test command does
-            - check_command: Command to check if test tool is available
-            - fallback_commands: List of commands to run if tool is missing (install test dependencies, etc.)
-              - First: Install dependencies (e.g., "npm install", "pip install -r requirements.txt")
-              - Second: Install tool via package manager (e.g., "$installCmd nodejs npm")
-              - Third: Update package manager and install (e.g., "$updateCmd && $installCmd nodejs npm")
-            
-            Format as JSON array:
-            [
-              {
-                "primary_command": "npm test",
-                "description": "Run npm test suite",
-                "check_command": "npm --version",
-                "fallback_commands": [
-                  "npm install",
-                  "$installCmd nodejs npm",
-                  "$updateCmd && $installCmd nodejs npm"
+            val testDetectionPrompt = """
+                $systemContext
+                
+                Analyze the project structure and user request to determine what TEST commands need to be executed.
+                
+                Files in workspace:
+                ${files.joinToString("\n") { "- $it" }}
+                
+                User request: $userMessage
+                
+                Based on the files and user request, determine:
+                1. What test commands should be run? (e.g., "npm test", "pytest", "jest", "python -m pytest", etc.)
+                2. What dependencies need to be installed first?
+                3. What fallback commands are needed if test tools are missing?
+                
+                Focus ONLY on test commands. Do not include build, start, or other non-test commands.
+                
+                For each test command needed, provide:
+                - primary_command: The main test command to execute
+                - description: What this test command does
+                - check_command: Command to check if test tool is available
+                - fallback_commands: List of commands to run if tool is missing (install test dependencies, etc.)
+                  - First: Install dependencies (e.g., "npm install", "pip install -r requirements.txt")
+                  - Second: Install tool via package manager (e.g., "$installCmd nodejs npm")
+                  - Third: Update package manager and install (e.g., "$updateCmd && $installCmd nodejs npm")
+                
+                Format as JSON array:
+                [
+                  {
+                    "primary_command": "npm test",
+                    "description": "Run npm test suite",
+                    "check_command": "npm --version",
+                    "fallback_commands": [
+                      "npm install",
+                      "$installCmd nodejs npm",
+                      "$updateCmd && $installCmd nodejs npm"
+                    ]
+                  }
                 ]
-              }
-            ]
+                
+                Only include test commands that are actually needed. If no test commands are needed, return an empty array [].
+            """.trimIndent()
             
-            Only include test commands that are actually needed. If no test commands are needed, return an empty array [].
-        """.trimIndent()
-        
-        val model = ApiProviderManager.getCurrentModel()
-        val request = JSONObject().apply {
-            put("contents", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("parts", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("text", testDetectionPrompt)
+            val model = ApiProviderManager.getCurrentModel()
+            val request = JSONObject().apply {
+                put("contents", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("text", testDetectionPrompt)
+                            })
                         })
                     })
                 })
-            })
-            put("systemInstruction", JSONObject().apply {
-                put("parts", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("text", SystemInfoService.generateSystemContext())
+                put("systemInstruction", JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("text", SystemInfoService.generateSystemContext())
+                        })
                     })
                 })
-            })
-        }
-        
-        return try {
-            val response = makeApiCallSimple(
-                ApiProviderManager.getNextApiKey() ?: return emptyList(),
-                model,
-                request,
-                useLongTimeout = false
-            )
+            }
             
-            // Parse JSON response
-            val jsonStart = response.indexOf('[')
-            val jsonEnd = response.lastIndexOf(']') + 1
-            if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                val jsonArray = JSONArray(response.substring(jsonStart, jsonEnd))
-                val detectedCommands = mutableListOf<CommandWithFallbacks>()
+            return try {
+                // Wrap network call in IO dispatcher to avoid NetworkOnMainThreadException
+                val response = withContext(Dispatchers.IO) {
+                    makeApiCallSimple(
+                        ApiProviderManager.getNextApiKey() ?: return@withContext "",
+                        model,
+                        request,
+                        useLongTimeout = false
+                    )
+                }
                 
-                for (i in 0 until jsonArray.length()) {
-                    try {
-                        val cmdObj = jsonArray.getJSONObject(i)
-                        val primaryCmd = cmdObj.getString("primary_command")
-                        val description = cmdObj.optString("description", "Run test command")
-                        val checkCmd = cmdObj.optString("check_command", null)
-                        val fallbacks = cmdObj.optJSONArray("fallback_commands")?.let { array ->
-                            (0 until array.length()).mapNotNull { array.optString(it, null) }
-                        } ?: emptyList()
-                        
-                        detectedCommands.add(CommandWithFallbacks(
-                            primaryCommand = primaryCmd,
-                            description = description,
-                            fallbacks = fallbacks,
-                            checkCommand = checkCmd.takeIf { it.isNotBlank() },
-                            installCheck = null
-                        ))
-                    } catch (e: Exception) {
-                        android.util.Log.w("GeminiClient", "Failed to parse test command: ${e.message}")
+                if (response.isEmpty()) return commands
+                
+                // Parse JSON response
+                val jsonStart = response.indexOf('[')
+                val jsonEnd = response.lastIndexOf(']') + 1
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    val jsonArray = JSONArray(response.substring(jsonStart, jsonEnd))
+                    
+                    for (i in 0 until jsonArray.length()) {
+                        try {
+                            val cmdObj = jsonArray.getJSONObject(i)
+                            val primaryCmd = cmdObj.getString("primary_command")
+                            val description = cmdObj.optString("description", "Run test command")
+                            val checkCmd = cmdObj.optString("check_command", null)
+                            val fallbacks = cmdObj.optJSONArray("fallback_commands")?.let { array ->
+                                (0 until array.length()).mapNotNull { array.optString(it, null) }
+                            } ?: emptyList()
+                            
+                            commands.add(CommandWithFallbacks(
+                                primaryCommand = primaryCmd,
+                                description = description,
+                                fallbacks = fallbacks,
+                                checkCommand = checkCmd.takeIf { it.isNotBlank() },
+                                installCheck = null
+                            ))
+                        } catch (e: Exception) {
+                            android.util.Log.w("GeminiClient", "Failed to parse test command: ${e.message}")
+                        }
                     }
                 }
                 
-                detectedCommands
-            } else {
-                emptyList()
+                commands
+            } catch (e: Exception) {
+                android.util.Log.w("GeminiClient", "AI test command detection failed: ${e.message}")
+                commands
             }
-        } catch (e: Exception) {
-            android.util.Log.w("GeminiClient", "AI test command detection failed: ${e.message}")
-            emptyList()
         }
+        
+        return commands.distinctBy { it.primaryCommand } // Remove duplicates
     }
     
     /**
