@@ -126,6 +126,35 @@ object AutoAgentLearningService {
     }
     
     /**
+     * Learn from question-answer pairs
+     */
+    fun learnFromQuestionAnswer(
+        question: String,
+        answer: String,
+        filesRead: List<String>? = null,
+        source: String = LearnedDataSource.NORMAL_FLOW
+    ) {
+        if (!shouldLearn()) return
+        
+        AutoAgentLogger.debug("AutoAgentLearning", "Learning from question-answer", mapOf(
+            "questionLength" to question.length,
+            "answerLength" to answer.length,
+            "filesRead" to (filesRead?.size ?: 0)
+        ))
+        
+        learningQueue.offer(
+            LearningTask.QuestionAnswer(
+                question = question,
+                answer = answer,
+                filesRead = filesRead,
+                source = source
+            )
+        )
+        
+        processLearningQueue()
+    }
+    
+    /**
      * Learn from tool execution results
      */
     fun learnFromToolResult(
@@ -183,6 +212,9 @@ object AutoAgentLearningService {
                 }
                 is LearningTask.ToolResult -> {
                     processToolResult(task)
+                }
+                is LearningTask.QuestionAnswer -> {
+                    processQuestionAnswer(task)
                 }
             }
         } catch (e: Exception) {
@@ -355,6 +387,50 @@ object AutoAgentLearningService {
     }
     
     /**
+     * Process question-answer task - store Q&A pairs for AutoAgent to learn from
+     */
+    private suspend fun processQuestionAnswer(task: LearningTask.QuestionAnswer) {
+        AutoAgentLogger.info("AutoAgentLearning", "Processing question-answer task", mapOf(
+            "questionLength" to task.question.length,
+            "answerLength" to task.answer.length,
+            "filesRead" to (task.filesRead?.size ?: 0)
+        ))
+        
+        // Store Q&A as metadata transformation with question as user prompt
+        val qaContent = buildString {
+            append("Q: ${task.question}\n\n")
+            append("A: ${task.answer}")
+        }
+        
+        val metadata = buildString {
+            append("{")
+            append("\"question\":\"${task.question.replace("\"", "\\\"").replace("\n", "\\n")}\",")
+            append("\"answer\":\"${task.answer.replace("\"", "\\\"").replace("\n", "\\n")}\"")
+            if (task.filesRead != null && task.filesRead.isNotEmpty()) {
+                append(",\"files_read\":[${task.filesRead.joinToString(",") { "\"$it\"" }}]")
+            }
+            append("}")
+        }
+        
+        database.insertOrUpdateLearnedData(
+            type = LearnedDataType.METADATA_TRANSFORMATION,
+            content = qaContent,
+            source = task.source,
+            metadata = metadata,
+            incrementScore = true,
+            userPrompt = task.question
+        )
+        
+        _learningEvents.emit(
+            LearningEvent.Learned(
+                type = "question_answer",
+                content = qaContent.take(100),
+                confidence = 1.0f
+            )
+        )
+    }
+    
+    /**
      * Record negative feedback
      */
     fun recordNegativeFeedback(entryId: Long) {
@@ -422,6 +498,13 @@ sealed class LearningTask {
     data class ToolResult(
         val toolName: String,
         val result: String,
+        val source: String
+    ) : LearningTask()
+    
+    data class QuestionAnswer(
+        val question: String,
+        val answer: String,
+        val filesRead: List<String>? = null,
         val source: String
     ) : LearningTask()
 }

@@ -274,6 +274,55 @@ object AutoAgentProvider {
         val intent = analyzeIntent(userMessage)
         
         when (intent) {
+            Intent.ANSWER_QUESTION -> {
+                // Search for learned Q&A pairs
+                val qaEntries = relevantData[LearnedDataType.METADATA_TRANSFORMATION]?.filter { entry ->
+                    entry.metadata?.contains("\"question\"") == true && entry.metadata?.contains("\"answer\"") == true
+                } ?: emptyList()
+                
+                if (qaEntries.isNotEmpty()) {
+                    // Find best matching Q&A
+                    val bestMatch = qaEntries.firstOrNull()
+                    if (bestMatch != null) {
+                        // Parse Q&A from metadata
+                        val qaMatch = try {
+                            val metadata = bestMatch.metadata ?: ""
+                            val questionMatch = Regex("\"question\"\\s*:\\s*\"([^\"]+)\"").find(metadata)
+                            val answerMatch = Regex("\"answer\"\\s*:\\s*\"([^\"]+)\"").find(metadata)
+                            
+                            if (questionMatch != null && answerMatch != null) {
+                                Pair(
+                                    questionMatch.groupValues[1].replace("\\n", "\n"),
+                                    answerMatch.groupValues[1].replace("\\n", "\n")
+                                )
+                            } else null
+                        } catch (e: Exception) {
+                            null
+                        }
+                        
+                        if (qaMatch != null) {
+                            response.append("Based on learned knowledge:\n\n")
+                            response.append(qaMatch.second)
+                            response.append("\n\n(Learned from previous question: \"${qaMatch.first.take(100)}\")")
+                        } else {
+                            // Fallback to content
+                            response.append("Based on learned knowledge:\n\n")
+                            response.append(bestMatch.content)
+                        }
+                    }
+                } else {
+                    // Fallback: use general metadata transformations that might answer the question
+                    val generalEntries = relevantData[LearnedDataType.METADATA_TRANSFORMATION]?.take(3)
+                    if (generalEntries != null && generalEntries.isNotEmpty()) {
+                        response.append("Based on learned knowledge:\n\n")
+                        generalEntries.forEach { entry ->
+                            response.append("${entry.content}\n\n")
+                        }
+                    } else {
+                        response.append("I don't have learned answers for this question yet. Please use other providers to get answers, and I'll learn from them.")
+                    }
+                }
+            }
             Intent.CREATE_CODE -> {
                 // Find best matching code snippet
                 val bestMatch = relevantData[LearnedDataType.CODE_SNIPPET]?.firstOrNull()
@@ -341,8 +390,11 @@ object AutoAgentProvider {
      */
     private fun analyzeIntent(message: String): Intent {
         val lower = message.lowercase()
+        val questionWords = listOf("what", "how", "why", "when", "where", "which", "who", "does", "do", "did", "will", "would", "should", "can", "could")
+        val isQuestion = message.trim().endsWith("?") || questionWords.any { lower.contains(it) }
         
         return when {
+            isQuestion -> Intent.ANSWER_QUESTION
             lower.contains("create") || lower.contains("write") || lower.contains("generate") || lower.contains("implement") -> Intent.CREATE_CODE
             lower.contains("fix") || lower.contains("error") || lower.contains("bug") || lower.contains("issue") -> Intent.FIX_CODE
             lower.contains("api") || lower.contains("call") || lower.contains("request") -> Intent.USE_API
@@ -416,6 +468,7 @@ object AutoAgentProvider {
      * User intent types
      */
     private enum class Intent {
+        ANSWER_QUESTION,
         CREATE_CODE,
         FIX_CODE,
         USE_API,

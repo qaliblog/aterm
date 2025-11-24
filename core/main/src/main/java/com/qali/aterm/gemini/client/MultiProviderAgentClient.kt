@@ -73,9 +73,18 @@ class GeminiClient(
             return@flow
         }
         
-        // Detect intent: create new project vs debug/upgrade existing
-        val intent = detectIntent(userMessage)
-        android.util.Log.d("GeminiClient", "sendMessageStream: Detected intent: $intent")
+        // Detect intents: can be multiple (e.g., debug AND test AND question)
+        val intents = detectIntents(userMessage)
+        android.util.Log.d("GeminiClient", "sendMessageStream: Detected intents: $intents")
+        
+        // If multiple intents, use multi-intent flow
+        if (intents.size > 1) {
+            emitAll(sendMessageMultiIntent(intents, userMessage, learningOnChunk, onToolCall, onToolResult))
+            return@flow
+        }
+        
+        // Single intent - use existing flow
+        val intent = intents.firstOrNull() ?: IntentType.CREATE_NEW
         
         // Add first prompt to clarify and expand user intention
         val enhancedUserMessage = enhanceUserIntent(userMessage, intent)
@@ -1675,10 +1684,114 @@ class GeminiClient(
     }
     
     /**
+     * Detect multiple user intents: can detect multiple intents in one message
+     * Returns list of intents in order of priority
+     */
+    private suspend fun detectIntents(userMessage: String): List<IntentType> {
+        val intents = mutableListOf<IntentType>()
+        
+        // Load memory context for better intent detection
+        val memoryContext = MemoryService.getSummarizedMemory()
+        
+        val debugKeywords = listOf(
+            "debug", "fix", "repair", "error", "bug", "issue", "problem",
+            "upgrade", "update", "improve", "refactor", "modify", "change",
+            "enhance", "optimize", "correct", "resolve", "solve"
+        )
+        
+        val createKeywords = listOf(
+            "create", "new", "build", "generate", "make", "start", "init",
+            "setup", "scaffold", "bootstrap"
+        )
+        
+        val testKeywords = listOf(
+            "test", "run test", "run tests", "test api", "test endpoint", "test endpoints",
+            "api test", "api testing", "test server", "test the", "testing", "test suite",
+            "unit test", "integration test", "e2e test", "end to end test", "test coverage",
+            "pytest", "jest", "mocha", "npm test", "test command", "execute test"
+        )
+        
+        val questionWords = listOf(
+            "what", "how", "why", "when", "where", "which", "who", "whom", "whose",
+            "can you", "could you", "would you", "should i", "is there", "are there",
+            "does", "do", "did", "will", "would", "should", "may", "might"
+        )
+        
+        val messageLower = userMessage.lowercase()
+        val contextLower = (userMessage + " " + memoryContext).lowercase()
+        
+        val debugScore = debugKeywords.count { contextLower.contains(it) }
+        val createScore = createKeywords.count { contextLower.contains(it) }
+        val testScore = testKeywords.count { contextLower.contains(it) }
+        val questionIndicators = questionWords.count { messageLower.contains(it) }
+        val endsWithQuestionMark = userMessage.trim().endsWith("?")
+        val isQuestionPattern = messageLower.matches(Regex(".*\\b(what|how|why|when|where|which|who)\\b.*"))
+        
+        // Check if workspace has existing files
+        val workspaceDir = File(workspaceRoot)
+        val hasExistingFiles = workspaceDir.exists() && 
+            workspaceDir.listFiles()?.any { it.isFile && !it.name.startsWith(".") } == true
+        
+        // Check memory for project context
+        val hasProjectContext = memoryContext.contains("project", ignoreCase = true) ||
+                                memoryContext.contains("codebase", ignoreCase = true) ||
+                                memoryContext.contains("repository", ignoreCase = true)
+        
+        // Detect QUESTION intent (can coexist with others)
+        val isQuestion = (endsWithQuestionMark || questionIndicators > 0 || isQuestionPattern) &&
+                        (questionIndicators > 0 || endsWithQuestionMark)
+        if (isQuestion) {
+            intents.add(IntentType.QUESTION_ONLY)
+        }
+        
+        // Detect TEST intent
+        if (testScore > 0 && hasExistingFiles) {
+            val isPrimarilyTest = testScore > debugScore && testScore > createScore
+            val mentionsTestCommand = messageLower.contains("npm test") || 
+                                     messageLower.contains("pytest") || 
+                                     messageLower.contains("jest") ||
+                                     messageLower.contains("test api") ||
+                                     messageLower.contains("test endpoint") ||
+                                     messageLower.contains("run test") ||
+                                     messageLower.contains("run tests")
+            
+            val isSimpleCommand = messageLower.matches(Regex(".*@\\d+\\.\\d+.*")) ||
+                                 messageLower.contains("init") && !messageLower.contains("test") ||
+                                 (messageLower.contains("start") || messageLower.contains("run")) && 
+                                 !messageLower.contains("test") && testScore <= 1
+            
+            if ((isPrimarilyTest || mentionsTestCommand) && !isSimpleCommand) {
+                intents.add(IntentType.TEST_ONLY)
+            }
+        }
+        
+        // Detect DEBUG intent
+        if (hasExistingFiles && debugScore > 0) {
+            intents.add(IntentType.DEBUG_UPGRADE)
+        } else if (hasProjectContext && hasExistingFiles && debugScore >= createScore) {
+            intents.add(IntentType.DEBUG_UPGRADE)
+        }
+        
+        // Detect CREATE intent
+        if (createScore > 0 && (!hasExistingFiles || createScore > debugScore)) {
+            intents.add(IntentType.CREATE_NEW)
+        }
+        
+        // If no intents detected, use default
+        if (intents.isEmpty()) {
+            intents.add(if (hasExistingFiles) IntentType.DEBUG_UPGRADE else IntentType.CREATE_NEW)
+        }
+        
+        return intents.distinct() // Remove duplicates
+    }
+    
+    /**
      * Detect user intent: create new project, debug/upgrade existing, or test only
      * Uses memory context and keyword analysis
      * Also detects if task needs documentation search or planning
+     * @deprecated Use detectIntents() instead for multi-intent support
      */
+    @Deprecated("Use detectIntents() for multi-intent support")
     private suspend fun detectIntent(userMessage: String): IntentType {
         // Load memory context for better intent detection
         val memoryContext = MemoryService.getSummarizedMemory()
@@ -9418,6 +9531,15 @@ exports.$functionName = (req, res, next) => {
         emit(GeminiStreamEvent.Chunk("\n$cleanAnswer\n"))
         onChunk("\n$cleanAnswer\n")
         
+        // Learn from question-answer pair
+        val filesReadList = fileContents.keys.toList()
+        AutoAgentLearningService.learnFromQuestionAnswer(
+            question = userMessage,
+            answer = cleanAnswer,
+            filesRead = if (filesReadList.isNotEmpty()) filesReadList else null,
+            source = LearnedDataSource.NORMAL_FLOW
+        )
+        
         // Add answer to chat history
         chatHistory.add(
             Content(
@@ -9425,6 +9547,145 @@ exports.$functionName = (req, res, next) => {
                 parts = listOf(Part.TextPart(text = cleanAnswer))
             )
         )
+        
+        emit(GeminiStreamEvent.Done)
+    }
+    
+    /**
+     * Plan execution order for multiple intents
+     * Determines the best order based on dependencies and logical flow
+     */
+    private fun planIntentExecution(intents: List<IntentType>): List<IntentType> {
+        // Priority order:
+        // 1. Questions first (to understand context before actions)
+        // 2. Create (if needed, establish base)
+        // 3. Debug (fix issues before testing)
+        // 4. Test (verify everything works)
+        
+        val priorityOrder = listOf(
+            IntentType.QUESTION_ONLY,
+            IntentType.CREATE_NEW,
+            IntentType.DEBUG_UPGRADE,
+            IntentType.TEST_ONLY
+        )
+        
+        // Sort intents by priority
+        return intents.sortedBy { intent ->
+            priorityOrder.indexOf(intent).let { index ->
+                if (index == -1) Int.MAX_VALUE else index
+            }
+        }
+    }
+    
+    /**
+     * Multi-intent flow: Execute multiple intents in the best order
+     */
+    private suspend fun sendMessageMultiIntent(
+        intents: List<IntentType>,
+        userMessage: String,
+        onChunk: (String) -> Unit,
+        onToolCall: (FunctionCall) -> Unit,
+        onToolResult: (String, Map<String, Any>) -> Unit
+    ): Flow<GeminiStreamEvent> = flow {
+        val signal = CancellationSignal()
+        android.util.Log.d("GeminiClient", "sendMessageMultiIntent: Starting multi-intent flow with ${intents.size} intents")
+        
+        try {
+            emit(GeminiStreamEvent.Chunk("🎯 Detected multiple intents: ${intents.joinToString(", ")}\n"))
+            onChunk("🎯 Detected multiple intents: ${intents.joinToString(", ")}\n")
+        } catch (e: Exception) {
+            android.util.Log.e("GeminiClient", "Error in multi-intent flow", e)
+            emit(GeminiStreamEvent.Error("Failed to start: ${e.message}"))
+            return@flow
+        }
+        
+        // Plan execution order
+        val plannedOrder = planIntentExecution(intents)
+        emit(GeminiStreamEvent.Chunk("📋 Execution plan: ${plannedOrder.joinToString(" → ")}\n\n"))
+        onChunk("📋 Execution plan: ${plannedOrder.joinToString(" → ")}\n\n")
+        
+        // Execute each intent in order
+        var accumulatedContext = userMessage
+        var previousResults = mutableListOf<String>()
+        
+        for ((index, intent) in plannedOrder.withIndex()) {
+            emit(GeminiStreamEvent.Chunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"))
+            emit(GeminiStreamEvent.Chunk("📍 Step ${index + 1}/${plannedOrder.size}: ${intent.name}\n"))
+            emit(GeminiStreamEvent.Chunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"))
+            onChunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+            onChunk("📍 Step ${index + 1}/${plannedOrder.size}: ${intent.name}\n")
+            onChunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+            
+            // Build context message for this intent
+            val contextMessage = buildString {
+                append(accumulatedContext)
+                if (previousResults.isNotEmpty()) {
+                    append("\n\nPrevious step results:\n")
+                    previousResults.forEachIndexed { i, result ->
+                        append("Step ${i + 1}: $result\n")
+                    }
+                }
+            }
+            
+            // Execute intent based on type
+            val intentFlow = when (intent) {
+                IntentType.QUESTION_ONLY -> {
+                    sendMessageQuestionFlow(contextMessage, onChunk, onToolCall, onToolResult)
+                }
+                IntentType.TEST_ONLY -> {
+                    val enhancedMessage = enhanceUserIntent(contextMessage, intent)
+                    sendMessageTestOnly(enhancedMessage, onChunk, onToolCall, onToolResult)
+                }
+                IntentType.DEBUG_UPGRADE -> {
+                    val enhancedMessage = enhanceUserIntent(contextMessage, intent)
+                    sendMessageNonStreamingReverse(enhancedMessage, onChunk, onToolCall, onToolResult)
+                }
+                IntentType.CREATE_NEW -> {
+                    val enhancedMessage = enhanceUserIntent(contextMessage, intent)
+                    sendMessageNonStreaming(enhancedMessage, onChunk, onToolCall, onToolResult)
+                }
+            }
+            
+            // Collect results from this intent
+            var stepResult = StringBuilder()
+            intentFlow.collect { event ->
+                when (event) {
+                    is GeminiStreamEvent.Chunk -> {
+                        stepResult.append(event.text)
+                        emit(event)
+                    }
+                    is GeminiStreamEvent.ToolCall -> {
+                        emit(event)
+                    }
+                    is GeminiStreamEvent.ToolResult -> {
+                        emit(event)
+                    }
+                    is GeminiStreamEvent.Error -> {
+                        emit(event)
+                        stepResult.append("Error: ${event.message}\n")
+                    }
+                    is GeminiStreamEvent.Done -> {
+                        // Intent completed
+                    }
+                }
+            }
+            
+            // Store result for next steps
+            previousResults.add(stepResult.toString().take(500))
+            
+            // Update accumulated context with results
+            accumulatedContext = "$contextMessage\n\nResult from ${intent.name}: ${stepResult.toString().take(200)}"
+            
+            emit(GeminiStreamEvent.Chunk("\n✅ Step ${index + 1} completed\n\n"))
+            onChunk("\n✅ Step ${index + 1} completed\n\n")
+        }
+        
+        emit(GeminiStreamEvent.Chunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"))
+        emit(GeminiStreamEvent.Chunk("✨ All intents completed successfully!\n"))
+        emit(GeminiStreamEvent.Chunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"))
+        onChunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+        onChunk("✨ All intents completed successfully!\n")
+        onChunk("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
         
         emit(GeminiStreamEvent.Done)
     }
