@@ -693,7 +693,10 @@ fun TerminalScreen(
                                                 // Ensure agent session exists - createSessionWithHidden should have created it, but double-check
                                                 var tabSession = mainActivityActivity.sessionBinder!!.getSession(sessionIdForTab)
                                                 if (tabSession == null && sessionIdForTab.endsWith("_agent")) {
-                                                    // Agent session doesn't exist, create it
+                                                    // Agent session doesn't exist, create it with matching working mode
+                                                    val mainSessionWorkingMode = mainActivityActivity.sessionBinder!!.getSessionWorkingMode(mainSessionId) 
+                                                        ?: Settings.working_Mode
+                                                    
                                                     val agentClient = object : TerminalSessionClient {
                                                         override fun onTextChanged(changedSession: TerminalSession) {}
                                                         override fun onTitleChanged(changedSession: TerminalSession) {}
@@ -713,7 +716,8 @@ fun TerminalScreen(
                                                         override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {}
                                                         override fun logStackTrace(tag: String?, e: Exception?) {}
                                                     }
-                                                    tabSession = mainActivityActivity.sessionBinder!!.createSession(sessionIdForTab, agentClient, mainActivityActivity, Settings.working_Mode)
+                                                    // Use the same working mode as the main session to ensure matching distros
+                                                    tabSession = mainActivityActivity.sessionBinder!!.createSession(sessionIdForTab, agentClient, mainActivityActivity, mainSessionWorkingMode)
                                                 }
                                                 tabSession ?: mainActivityActivity.sessionBinder!!.getSession(mainSessionId)
                                             } else {
@@ -728,7 +732,10 @@ fun TerminalScreen(
                                                 // Ensure agent session exists if needed
                                                 var tabSession = mainActivityActivity.sessionBinder!!.getSession(sessionIdForTab)
                                                 if (tabSession == null && sessionIdForTab.endsWith("_agent")) {
-                                                    // Agent session doesn't exist, create it
+                                                    // Agent session doesn't exist, create it with matching working mode
+                                                    val mainSessionWorkingMode = mainActivityActivity.sessionBinder!!.getSessionWorkingMode(mainSessionId) 
+                                                        ?: Settings.working_Mode
+                                                    
                                                     val agentClient = object : TerminalSessionClient {
                                                         override fun onTextChanged(changedSession: TerminalSession) {}
                                                         override fun onTitleChanged(changedSession: TerminalSession) {}
@@ -748,7 +755,8 @@ fun TerminalScreen(
                                                         override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {}
                                                         override fun logStackTrace(tag: String?, e: Exception?) {}
                                                     }
-                                                    tabSession = mainActivityActivity.sessionBinder!!.createSession(sessionIdForTab, agentClient, mainActivityActivity, Settings.working_Mode)
+                                                    // Use the same working mode as the main session to ensure matching distros
+                                                    tabSession = mainActivityActivity.sessionBinder!!.createSession(sessionIdForTab, agentClient, mainActivityActivity, mainSessionWorkingMode)
                                                 }
                                                 tabSession ?: mainSession
                                             }
@@ -1006,8 +1014,12 @@ fun changeSession(mainActivityActivity: MainActivity, session_id: String) {
             )
         
         // Ensure agent session exists even if main session already existed
+        // Use the same working mode as the main session to ensure matching distros
         val agentSessionId = "${session_id}_agent"
         if (mainActivityActivity.sessionBinder!!.getSession(agentSessionId) == null) {
+            val mainSessionWorkingMode = mainActivityActivity.sessionBinder!!.getSessionWorkingMode(session_id) 
+                ?: Settings.working_Mode
+            
             val agentClient = object : TerminalSessionClient {
                 override fun onTextChanged(changedSession: TerminalSession) {}
                 override fun onTitleChanged(changedSession: TerminalSession) {}
@@ -1027,7 +1039,8 @@ fun changeSession(mainActivityActivity: MainActivity, session_id: String) {
                 override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {}
                 override fun logStackTrace(tag: String?, e: Exception?) {}
             }
-            mainActivityActivity.sessionBinder!!.createSession(agentSessionId, agentClient, mainActivityActivity, Settings.working_Mode)
+            // Use the same working mode as the main session to ensure matching distros
+            mainActivityActivity.sessionBinder!!.createSession(agentSessionId, agentClient, mainActivityActivity, mainSessionWorkingMode)
         }
         
         session.updateTerminalSessionClient(client)

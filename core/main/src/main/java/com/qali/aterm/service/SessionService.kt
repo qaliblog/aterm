@@ -35,6 +35,8 @@ class SessionService : Service() {
     private val hiddenSessions = mutableSetOf<String>()
     // Track which hidden sessions belong to which main session
     private val sessionGroups = mutableMapOf<String, List<String>>()
+    // Track working mode for each session (including hidden ones)
+    private val sessionWorkingModes = mutableMapOf<String, Int>()
 
     inner class SessionBinder : Binder() {
         fun getService():SessionService{
@@ -48,12 +50,14 @@ class SessionService : Service() {
             sessionList.clear()
             hiddenSessions.clear()
             sessionGroups.clear()
+            sessionWorkingModes.clear()
             updateNotification()
         }
         fun createSession(id: String, client: TerminalSessionClient, activity: MainActivity,workingMode:Int): TerminalSession {
             return MkSession.createSession(activity, client, id, workingMode = workingMode).also {
                 sessions[id] = it
                 sessionList[id] = workingMode
+                sessionWorkingModes[id] = workingMode // Store working mode for all sessions
                 updateNotification()
             }
         }
@@ -69,6 +73,7 @@ class SessionService : Service() {
             )
             
             // Create hidden session with a dummy client (it won't be displayed)
+            // IMPORTANT: Use the same workingMode as the main session to ensure matching distros
             hiddenSessionIds.forEach { hiddenId ->
                 val hiddenClient = object : TerminalSessionClient {
                     override fun onTextChanged(changedSession: TerminalSession) {}
@@ -90,8 +95,10 @@ class SessionService : Service() {
                     override fun logStackTrace(tag: String?, e: Exception?) {}
                 }
                 
+                // Use the same workingMode as the main session to ensure matching distros
                 val hiddenSession = MkSession.createSession(activity, hiddenClient, hiddenId, workingMode = workingMode)
                 sessions[hiddenId] = hiddenSession
+                sessionWorkingModes[hiddenId] = workingMode // Store working mode for hidden session
                 // Don't add hidden sessions to sessionList - they should not appear in UI
                 hiddenSessions.add(hiddenId)
             }
@@ -100,6 +107,13 @@ class SessionService : Service() {
             sessionGroups[id] = hiddenSessionIds
             
             return mainSession
+        }
+        
+        /**
+         * Get the working mode for a session (including hidden sessions)
+         */
+        fun getSessionWorkingMode(sessionId: String): Int? {
+            return this@SessionService.getSessionWorkingMode(sessionId)
         }
         
         fun isHiddenSession(id: String): Boolean {
@@ -132,6 +146,7 @@ class SessionService : Service() {
 
                 sessions.remove(id)
                 sessionList.remove(id)
+                sessionWorkingModes.remove(id)
                 
                 // Also terminate associated hidden sessions
                 sessionGroups[id]?.forEach { hiddenId ->
@@ -142,6 +157,7 @@ class SessionService : Service() {
                     }
                     sessions.remove(hiddenId)
                     hiddenSessions.remove(hiddenId)
+                    sessionWorkingModes.remove(hiddenId)
                 }
                 sessionGroups.remove(id)
                 
@@ -242,12 +258,21 @@ class SessionService : Service() {
     }
 
     private fun getNotificationContentText(): String {
-        // Only count visible sessions, not hidden ones
-        val count = getVisibleSessions().size
-        if (count == 1){
-            return "1 session running"
+        // Count visible terminal sessions and hidden agent sessions separately
+        val visibleCount = getVisibleSessions().size
+        val agentCount = hiddenSessions.count { it.endsWith("_agent") }
+        
+        return when {
+            visibleCount == 1 && agentCount == 1 -> "1 terminal session and 1 agent session (hidden terminal)"
+            visibleCount == 1 && agentCount == 0 -> "1 terminal session"
+            visibleCount == 0 && agentCount == 1 -> "1 agent session (hidden terminal)"
+            visibleCount > 1 && agentCount == 1 -> "$visibleCount terminal sessions and 1 agent session (hidden terminal)"
+            visibleCount == 1 && agentCount > 1 -> "1 terminal session and $agentCount agent sessions (hidden terminals)"
+            visibleCount > 1 && agentCount > 1 -> "$visibleCount terminal sessions and $agentCount agent sessions (hidden terminals)"
+            visibleCount > 1 && agentCount == 0 -> "$visibleCount terminal sessions"
+            visibleCount == 0 && agentCount > 1 -> "$agentCount agent sessions (hidden terminals)"
+            else -> "No sessions running"
         }
-        return "$count sessions running"
     }
     
     fun isHiddenSession(id: String): Boolean {
@@ -272,5 +297,12 @@ class SessionService : Service() {
             tabSessionId.endsWith("_agent") -> tabSessionId.removeSuffix("_agent")
             else -> if (!isHiddenSession(tabSessionId)) tabSessionId else null
         }
+    }
+    
+    /**
+     * Get the working mode for a session (including hidden sessions)
+     */
+    fun getSessionWorkingMode(sessionId: String): Int? {
+        return sessionWorkingModes[sessionId] ?: sessionList[sessionId]
     }
 }
