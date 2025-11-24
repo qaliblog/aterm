@@ -77,29 +77,39 @@ class GeminiClient(
         val intents = detectIntents(userMessage)
         android.util.Log.d("GeminiClient", "sendMessageStream: Detected intents: $intents")
         
+        // Track accumulated content for learning
+        var accumulatedContent = StringBuilder()
+        
+        // Single intent - use existing flow
+        val intent = if (intents.size == 1) intents.first() else null
+        
+        // Create learning callback
+        val learningOnChunk: (String) -> Unit = { chunk ->
+            accumulatedContent.append(chunk)
+            onChunk(chunk)
+            // Learn from streaming chunks
+            val source = when (intent) {
+                IntentType.DEBUG_UPGRADE -> LearnedDataSource.REVERSE_FLOW
+                else -> LearnedDataSource.NORMAL_FLOW
+            }
+            AutoAgentLearningService.learnFromStreamingChunk(
+                chunk = chunk,
+                accumulatedContent = accumulatedContent.toString(),
+                source = source
+            )
+        }
+        
         // If multiple intents, use multi-intent flow
         if (intents.size > 1) {
             emitAll(sendMessageMultiIntent(intents, userMessage, learningOnChunk, onToolCall, onToolResult))
             return@flow
         }
         
-        // Single intent - use existing flow
-        val intent = intents.firstOrNull() ?: IntentType.CREATE_NEW
-        
         // Add first prompt to clarify and expand user intention
-        val enhancedUserMessage = enhanceUserIntent(userMessage, intent)
-        
-        // Track accumulated content for learning
-        var accumulatedContent = StringBuilder()
-        val learningOnChunk: (String) -> Unit = { chunk ->
-            accumulatedContent.append(chunk)
-            onChunk(chunk)
-            // Learn from streaming chunks
-            AutoAgentLearningService.learnFromStreamingChunk(
-                chunk = chunk,
-                accumulatedContent = accumulatedContent.toString(),
-                source = if (intent == IntentType.DEBUG_UPGRADE) LearnedDataSource.REVERSE_FLOW else LearnedDataSource.NORMAL_FLOW
-            )
+        val enhancedUserMessage = if (intent != null) {
+            enhanceUserIntent(userMessage, intent)
+        } else {
+            userMessage
         }
         
         // Check if streaming is enabled
@@ -9663,6 +9673,10 @@ exports.$functionName = (req, res, next) => {
                     is GeminiStreamEvent.Error -> {
                         emit(event)
                         stepResult.append("Error: ${event.message}\n")
+                    }
+                    is GeminiStreamEvent.KeysExhausted -> {
+                        emit(event)
+                        stepResult.append("Keys exhausted: ${event.message}\n")
                     }
                     is GeminiStreamEvent.Done -> {
                         // Intent completed

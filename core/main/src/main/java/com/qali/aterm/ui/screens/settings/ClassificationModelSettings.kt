@@ -406,6 +406,7 @@ private fun DownloadModelDialog(
     var isDownloading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val mainScope = rememberCoroutineScope()
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -459,7 +460,8 @@ private fun DownloadModelDialog(
                                             url = model.downloadUrl,
                                             outputFile = outputFile,
                                             onProgress = { downloaded, total ->
-                                                withContext(Dispatchers.Main) {
+                                                // Update progress on main thread using coroutine scope
+                                                mainScope.launch(Dispatchers.Main) {
                                                     downloadProgress = downloaded.toFloat() / total
                                                 }
                                             }
