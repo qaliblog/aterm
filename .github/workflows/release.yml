@@ -50,10 +50,10 @@ jobs:
         run: |
           if [ -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
             yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-            $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+            $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.2.12479018" || echo "NDK will be installed via setup-ndk action"
           elif [ -d "$ANDROID_HOME/tools/bin" ]; then
             yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
-            $ANDROID_HOME/tools/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+            $ANDROID_HOME/tools/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" || $ANDROID_HOME/tools/bin/sdkmanager "ndk;27.2.12479018" || echo "NDK will be installed via setup-ndk action"
           else
             echo "Android SDK tools not found, but continuing..."
           fi
