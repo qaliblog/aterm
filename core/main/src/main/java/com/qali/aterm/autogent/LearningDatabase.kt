@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.os.Environment
+import com.rk.libcommons.localDir
 import java.io.File
 
 /**
@@ -35,31 +36,11 @@ class LearningDatabase private constructor(private val modelName: String = "ater
         }
         
         fun getDatabasePath(modelName: String): String {
-            // Try app-specific external storage first (no permissions needed on Android 10+)
-            val modelDir = try {
-                val app = com.rk.libcommons.application
-                if (app != null) {
-                    val externalFilesDir = app.getExternalFilesDir(null)
-                    if (externalFilesDir != null) {
-                        File(externalFilesDir, "aterm/model").also {
-                            if (!it.exists()) {
-                                it.mkdirs()
-                            }
-                        }
-                    } else {
-                        null
-                    }
-                } else {
-                    null
-                }
-            } catch (e: Exception) {
-                null
-            } ?: run {
-                // Fallback to public external storage (requires permissions)
-                File(Environment.getExternalStorageDirectory(), "aterm/model").also {
-                    if (!it.exists()) {
-                        it.mkdirs()
-                    }
+            // Store database in localDir()/aterm/model/ (same location as models and near distros)
+            // This allows manual copying of database files if needed
+            val modelDir = File(localDir(), "aterm/model").also {
+                if (!it.exists()) {
+                    it.mkdirs()
                 }
             }
             

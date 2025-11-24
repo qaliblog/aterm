@@ -2,6 +2,7 @@ package com.qali.aterm.autogent
 
 import android.os.Environment
 import com.google.gson.Gson
+import com.rk.libcommons.localDir
 import com.rk.settings.Preference
 import java.io.File
 
@@ -159,37 +160,16 @@ object ClassificationModelManager {
     
     /**
      * Get model file path
-     * Models are stored in app-specific external storage to avoid permission issues
-     * Falls back to /sdcard/aterm/model/ if external files dir is not available
+     * Models are stored in localDir()/aterm/model/ (same location as distros)
+     * This allows manual copying of models if needed
      */
     fun getModelFilePath(modelId: String): String? {
         val model = getAvailableModels().find { it.id == modelId }
         return model?.filePath ?: model?.let {
-            // Try app-specific external storage first (no permissions needed on Android 10+)
-            val modelDir = try {
-                val app = com.rk.libcommons.application
-                if (app != null) {
-                    val externalFilesDir = app.getExternalFilesDir(null)
-                    if (externalFilesDir != null) {
-                        File(externalFilesDir, "aterm/model").also {
-                            if (!it.exists()) {
-                                it.mkdirs()
-                            }
-                        }
-                    } else {
-                        null
-                    }
-                } else {
-                    null
-                }
-            } catch (e: Exception) {
-                null
-            } ?: run {
-                // Fallback to public external storage (requires permissions)
-                File(Environment.getExternalStorageDirectory(), "aterm/model").also {
-                    if (!it.exists()) {
-                        it.mkdirs()
-                    }
+            // Store models in localDir()/aterm/model/ (near distros)
+            val modelDir = File(localDir(), "aterm/model").also {
+                if (!it.exists()) {
+                    it.mkdirs()
                 }
             }
             
