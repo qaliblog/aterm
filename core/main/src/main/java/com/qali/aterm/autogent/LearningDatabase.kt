@@ -35,10 +35,34 @@ class LearningDatabase private constructor(private val modelName: String = "ater
         }
         
         fun getDatabasePath(modelName: String): String {
-            val modelDir = File(Environment.getExternalStorageDirectory(), "aterm/model")
-            if (!modelDir.exists()) {
-                modelDir.mkdirs()
+            // Try app-specific external storage first (no permissions needed on Android 10+)
+            val modelDir = try {
+                val app = com.rk.libcommons.application
+                if (app != null) {
+                    val externalFilesDir = app.getExternalFilesDir(null)
+                    if (externalFilesDir != null) {
+                        File(externalFilesDir, "aterm/model").also {
+                            if (!it.exists()) {
+                                it.mkdirs()
+                            }
+                        }
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                null
+            } ?: run {
+                // Fallback to public external storage (requires permissions)
+                File(Environment.getExternalStorageDirectory(), "aterm/model").also {
+                    if (!it.exists()) {
+                        it.mkdirs()
+                    }
+                }
             }
+            
             // Use model name as database name (sanitize for filename)
             val sanitizedModelName = modelName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
             val dbFileName = "$sanitizedModelName.db"

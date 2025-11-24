@@ -33,6 +33,7 @@ object ClassificationModelManager {
     }
     
     // Predefined Mediapipe models
+    // Note: Using working Mediapipe model URLs
     val builtInModels = listOf(
         ClassificationModel(
             id = "mediapipe_bert_en",
@@ -43,11 +44,11 @@ object ClassificationModelManager {
             isBuiltIn = true
         ),
         ClassificationModel(
-            id = "mediapipe_bert_en_v2",
-            name = "Mediapipe BERT English v2",
-            description = "Updated BERT text classifier with improved accuracy",
+            id = "mediapipe_bert_en_lite",
+            name = "Mediapipe BERT English Lite",
+            description = "Lightweight BERT text classifier for faster inference",
             modelType = ModelType.MEDIAPIPE_BERT,
-            downloadUrl = "https://storage.googleapis.com/mediapipe-models/text_classifier/bert_classifier/float32/2/bert_classifier.tflite",
+            downloadUrl = "https://storage.googleapis.com/mediapipe-models/text_classifier/bert_classifier/float32/lite/bert_classifier.tflite",
             isBuiltIn = true
         ),
         ClassificationModel(
@@ -158,16 +159,40 @@ object ClassificationModelManager {
     
     /**
      * Get model file path
-     * Models are stored in /sdcard/aterm/model/ (same location as learning database)
+     * Models are stored in app-specific external storage to avoid permission issues
+     * Falls back to /sdcard/aterm/model/ if external files dir is not available
      */
     fun getModelFilePath(modelId: String): String? {
         val model = getAvailableModels().find { it.id == modelId }
         return model?.filePath ?: model?.let {
-            // For built-in models, construct path in /sdcard/aterm/model/
-            val modelDir = File(Environment.getExternalStorageDirectory(), "aterm/model")
-            if (!modelDir.exists()) {
-                modelDir.mkdirs()
+            // Try app-specific external storage first (no permissions needed on Android 10+)
+            val modelDir = try {
+                val app = com.rk.libcommons.application
+                if (app != null) {
+                    val externalFilesDir = app.getExternalFilesDir(null)
+                    if (externalFilesDir != null) {
+                        File(externalFilesDir, "aterm/model").also {
+                            if (!it.exists()) {
+                                it.mkdirs()
+                            }
+                        }
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                null
+            } ?: run {
+                // Fallback to public external storage (requires permissions)
+                File(Environment.getExternalStorageDirectory(), "aterm/model").also {
+                    if (!it.exists()) {
+                        it.mkdirs()
+                    }
+                }
             }
+            
             File(modelDir, "${model.id}.tflite").absolutePath
         }
     }
