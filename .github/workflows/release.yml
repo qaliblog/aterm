@@ -37,25 +37,26 @@ jobs:
         with:
           api-level: 35
           target: default
-          ndk-version: 27.2.12479018
           arch: x64
       
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: 27.2.12479018
-          add-to-path: true
-      
-      - name: Accept Android SDK licenses and install components
+      - name: Accept Android SDK licenses and install NDK
         run: |
-          if [ -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
-            yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-            $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.2.12479018" || echo "NDK will be installed via setup-ndk action"
+          SDKMANAGER_CMD=""
+          if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
+            SDKMANAGER_CMD="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           elif [ -d "$ANDROID_HOME/tools/bin" ]; then
-            yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
-            $ANDROID_HOME/tools/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" || $ANDROID_HOME/tools/bin/sdkmanager "ndk;27.2.12479018" || echo "NDK will be installed via setup-ndk action"
+            SDKMANAGER_CMD="$ANDROID_HOME/tools/bin/sdkmanager"
+          elif command -v sdkmanager &> /dev/null; then
+            SDKMANAGER_CMD="sdkmanager"
+          fi
+          
+          if [ -n "$SDKMANAGER_CMD" ]; then
+            yes | $SDKMANAGER_CMD --licenses || true
+            $SDKMANAGER_CMD "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+            # Try to install NDK - if specific version fails, try latest
+            $SDKMANAGER_CMD "ndk;27.2.12479018" || $SDKMANAGER_CMD "ndk;27.1.10909125" || $SDKMANAGER_CMD "ndk-bundle" || echo "NDK installation attempted"
           else
-            echo "Android SDK tools not found, but continuing..."
+            echo "sdkmanager not found, NDK may need to be installed manually"
           fi
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
