@@ -114,7 +114,7 @@ class LearningDatabase private constructor(private val modelName: String = "offl
         incrementScore: Boolean = true,
         userPrompt: String? = null
     ): Long {
-        val db = writableDatabase
+        val db = getWritableDatabase()
         
         // Check if similar content exists
         val cursor = db.query(
@@ -172,7 +172,7 @@ class LearningDatabase private constructor(private val modelName: String = "offl
      * Get learned data by type, ordered by positive score
      */
     fun getLearnedDataByType(type: String, limit: Int = 100, userPrompt: String? = null): List<LearnedDataEntry> {
-        val db = readableDatabase
+        val db = getReadableDatabase()
         val entries = mutableListOf<LearnedDataEntry>()
         
         val selection = if (userPrompt != null) {
@@ -221,7 +221,7 @@ class LearningDatabase private constructor(private val modelName: String = "offl
      * Get fixes with JSON format including reason
      */
     fun getFixesByKeywords(keywords: List<String>, limit: Int = 20): List<FixEntry> {
-        val db = readableDatabase
+        val db = getReadableDatabase()
         val fixes = mutableListOf<FixEntry>()
         
         // Build search query for keywords
@@ -307,7 +307,7 @@ class LearningDatabase private constructor(private val modelName: String = "offl
      * Search learned data by content similarity
      */
     fun searchLearnedData(query: String, type: String? = null, limit: Int = 50): List<LearnedDataEntry> {
-        val db = readableDatabase
+        val db = getReadableDatabase()
         val entries = mutableListOf<LearnedDataEntry>()
         
         val selection = if (type != null) {
@@ -356,7 +356,7 @@ class LearningDatabase private constructor(private val modelName: String = "offl
      * Decrement score for negative feedback
      */
     fun decrementScore(id: Long) {
-        val db = writableDatabase
+        val db = getWritableDatabase()
         val cursor = db.query(
             TABLE_LEARNED_DATA,
             arrayOf(COL_POSITIVE_SCORE),

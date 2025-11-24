@@ -259,6 +259,34 @@ class EditToolInvocation(
                     .take(10)
             }
             
+            // Helper to extract reason from AI proposal
+            fun extractReasonFromAIProposal(proposal: String?): String? {
+                if (proposal == null) return null
+                
+                // Look for reason patterns in AI response
+                val reasonPatterns = listOf(
+                    Regex("reason[:\"']\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE),
+                    Regex("why[:\"']\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE),
+                    Regex("because[:\"']?\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE),
+                    Regex("explanation[:\"']\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE)
+                )
+                
+                for (pattern in reasonPatterns) {
+                    val match = pattern.find(proposal)
+                    if (match != null) {
+                        return match.groupValues[1].trim()
+                    }
+                }
+                
+                // Fallback: look for JSON-like reason field
+                val jsonReasonMatch = Regex("\"reason\"\\s*:\\s*\"([^\"]+)\"").find(proposal)
+                if (jsonReasonMatch != null) {
+                    return jsonReasonMatch.groupValues[1].trim()
+                }
+                
+                return null
+            }
+            
             // Extract reason from AI proposed content if available
             val reason = extractReasonFromAIProposal(params.ai_proposed_content) 
                 ?: "Edit applied successfully"
@@ -315,27 +343,6 @@ class EditToolInvocation(
                     ),
                     userPrompt = params.ai_proposed_content
                 )
-            }
-            
-            // Helper to extract reason from AI proposal
-            fun extractReasonFromAIProposal(proposal: String?): String? {
-                if (proposal == null) return null
-                
-                // Look for reason patterns in AI response
-                val reasonPatterns = listOf(
-                    Regex("reason[:\"']\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE),
-                    Regex("why[:\"']\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE),
-                    Regex("because[:\"']?\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE),
-                    Regex("explanation[:\"']\\s*([^\\n\"]+)", RegexOption.IGNORE_CASE)
-                )
-                
-                reasonPatterns.forEach { pattern ->
-                    pattern.find(proposal)?.let {
-                        return it.groupValues[1].trim()
-                    }
-                }
-                
-                return null
             }
             
             // Automatically detect errors after file modification

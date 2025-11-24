@@ -107,7 +107,8 @@ fun ClassificationModelSettings() {
                     }) {
                         Icon(Icons.Default.Clear, contentDescription = "Deselect")
                     }
-                }
+                },
+                onClick = { /* Display only, no action */ }
             )
         }
         
@@ -137,7 +138,8 @@ fun ClassificationModelSettings() {
             if (customModels.isEmpty()) {
                 SettingsCard(
                     title = { Text("No custom models") },
-                    description = { Text("Add a custom model using the button below") }
+                    description = { Text("Add a custom model using the button below") },
+                    onClick = { /* Display only, no action */ }
                 )
             } else {
                 customModels.forEach { model ->
