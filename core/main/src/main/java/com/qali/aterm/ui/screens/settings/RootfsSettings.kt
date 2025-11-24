@@ -6,6 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Info
@@ -175,75 +176,194 @@ fun RootfsSettings(
                     errorMessage = null
                 }
             },
-            title = { Text("Install Rootfs") },
+            title = { 
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Storage,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text("Install Rootfs")
+                }
+            },
             text = {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Rootfs type selection
-                    Text(
-                        text = "Select rootfs type:",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-
-                    Row(
+                    // Step 1: Rootfs source selection
+                    Card(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
-                        FilterChip(
-                            selected = selectedType == RootfsType.ALPINE,
-                            onClick = { 
-                                if (!Rootfs.isRootfsInstalled("alpine.tar.gz")) {
-                                    selectedType = RootfsType.ALPINE
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "1. Select Source",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp)
+                            ) {
+                                item {
+                                    FilterChip(
+                                        selected = selectedType == RootfsType.ALPINE,
+                                        onClick = { 
+                                            if (!Rootfs.isRootfsInstalled("alpine.tar.gz")) {
+                                                selectedType = RootfsType.ALPINE
+                                                errorMessage = null
+                                            }
+                                        },
+                                        label = { Text("Alpine") },
+                                        enabled = !Rootfs.isRootfsInstalled("alpine.tar.gz"),
+                                        leadingIcon = if (selectedType == RootfsType.ALPINE) {
+                                            { Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                        } else null
+                                    )
                                 }
-                            },
-                            label = { Text("Alpine") },
-                            enabled = !Rootfs.isRootfsInstalled("alpine.tar.gz")
-                        )
-                        FilterChip(
-                            selected = selectedType == RootfsType.UBUNTU,
-                            onClick = { 
-                                if (!Rootfs.isRootfsInstalled("ubuntu.tar.gz")) {
-                                    selectedType = RootfsType.UBUNTU
+                                item {
+                                    FilterChip(
+                                        selected = selectedType == RootfsType.UBUNTU,
+                                        onClick = { 
+                                            if (!Rootfs.isRootfsInstalled("ubuntu.tar.gz")) {
+                                                selectedType = RootfsType.UBUNTU
+                                                errorMessage = null
+                                            }
+                                        },
+                                        label = { Text("Ubuntu") },
+                                        enabled = !Rootfs.isRootfsInstalled("ubuntu.tar.gz"),
+                                        leadingIcon = if (selectedType == RootfsType.UBUNTU) {
+                                            { Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                        } else null
+                                    )
                                 }
-                            },
-                            label = { Text("Ubuntu") },
-                            enabled = !Rootfs.isRootfsInstalled("ubuntu.tar.gz")
-                        )
-                        FilterChip(
-                            selected = selectedType == RootfsType.CUSTOM,
-                            onClick = { selectedType = RootfsType.CUSTOM },
-                            label = { Text("Custom") }
-                        )
-                        FilterChip(
-                            selected = selectedType == RootfsType.FILE_PICKER,
-                            onClick = { 
-                                selectedType = RootfsType.FILE_PICKER
-                                if (checkStoragePermission()) {
-                                    showFilePicker = true
-                                } else {
-                                    // Request permission first, then show picker after permission is granted
-                                    requestStoragePermission()
+                                item {
+                                    FilterChip(
+                                        selected = selectedType == RootfsType.CUSTOM,
+                                        onClick = { 
+                                            selectedType = RootfsType.CUSTOM
+                                            errorMessage = null
+                                        },
+                                        label = { Text("Custom URL") },
+                                        leadingIcon = if (selectedType == RootfsType.CUSTOM) {
+                                            { Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                        } else null
+                                    )
                                 }
-                            },
-                            label = { Text("📁 Pick File") }
-                        )
+                                item {
+                                    FilterChip(
+                                        selected = selectedType == RootfsType.FILE_PICKER,
+                                        onClick = { 
+                                            selectedType = RootfsType.FILE_PICKER
+                                            errorMessage = null
+                                            if (checkStoragePermission()) {
+                                                showFilePicker = true
+                                            } else {
+                                                requestStoragePermission()
+                                            }
+                                        },
+                                        label = { Text("📁 Local File") },
+                                        leadingIcon = if (selectedType == RootfsType.FILE_PICKER) {
+                                            { Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                        } else null
+                                    )
+                                }
+                            }
+                            
+                            // Show disabled message for installed rootfs
+                            if (Rootfs.isRootfsInstalled("alpine.tar.gz") || Rootfs.isRootfsInstalled("ubuntu.tar.gz")) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Already installed rootfs are disabled",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
 
-                    // Custom URL input
+                    // Custom URL input or File picker result
                     if (selectedType == RootfsType.CUSTOM) {
-                        OutlinedTextField(
-                            value = customUrl,
-                            onValueChange = { customUrl = it },
+                        Card(
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Rootfs URL") },
-                            placeholder = { Text("https://example.com/rootfs.tar.gz") },
-                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
-                            singleLine = true
-                        )
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Link,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = "2. Enter URL",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = customUrl,
+                                    onValueChange = { 
+                                        customUrl = it
+                                        errorMessage = null
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Rootfs URL") },
+                                    placeholder = { Text("https://example.com/rootfs.tar.gz") },
+                                    leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
+                                    singleLine = true,
+                                    isError = customUrl.isNotBlank() && !customUrl.startsWith("http")
+                                )
+                                if (customUrl.isNotBlank() && !customUrl.startsWith("http")) {
+                                    Text(
+                                        text = "⚠ URL must start with http:// or https://",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // File picker result
@@ -251,52 +371,74 @@ fun RootfsSettings(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.CheckCircle,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(24.dp)
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Selected: ${selectedFile!!.name}",
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        text = "Selected File",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                    Text(
+                                        text = selectedFile!!.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                     Text(
                                         text = selectedFile!!.absolutePath,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                                        maxLines = 2
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { 
+                                        selectedFile = null
+                                        if (selectedType == RootfsType.FILE_PICKER) {
+                                            selectedType = null
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear selection",
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
                             }
                         }
                     }
 
-                    // Distro type selector
+                    // Step 2: Distro type selector
                     if (selectedType != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
                             Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
@@ -307,135 +449,202 @@ fun RootfsSettings(
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Text(
-                                        text = "Distribution Type",
-                                        style = MaterialTheme.typography.labelLarge,
+                                        text = "2. Select Distribution",
+                                        style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 4.dp)
                                 ) {
                                     com.qali.aterm.ui.screens.setup.DistroType.values().forEach { distro ->
-                                        FilterChip(
-                                            selected = selectedDistro == distro,
-                                            onClick = { 
-                                                selectedDistro = distro
-                                                if (distro.hasPredefinedInit) {
-                                                    customInitScript = ""
-                                                }
-                                            },
-                                            label = { 
-                                                Text(
-                                                    text = distro.displayName,
-                                                    maxLines = 1,
-                                                    softWrap = false
-                                                ) 
-                                            }
-                                        )
+                                        item {
+                                            FilterChip(
+                                                selected = selectedDistro == distro,
+                                                onClick = { 
+                                                    selectedDistro = distro
+                                                    errorMessage = null
+                                                    if (distro.hasPredefinedInit) {
+                                                        customInitScript = ""
+                                                    }
+                                                },
+                                                label = { 
+                                                    Text(
+                                                        text = distro.displayName,
+                                                        maxLines = 1
+                                                    ) 
+                                                },
+                                                leadingIcon = if (selectedDistro == distro) {
+                                                    { Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                                } else null
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Custom init script input
+                    // Step 3: Custom init script input (if needed)
                     if (selectedType != null && selectedDistro == com.qali.aterm.ui.screens.setup.DistroType.CUSTOM) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
+                        Card(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
-                            Text(
-                                text = "Custom Init Script (Required):",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = { showInitScriptInfo = true },
-                                modifier = Modifier.size(24.dp)
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Info,
-                                    contentDescription = "Init script help",
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            text = "3. Init Script (Required)",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { showInitScriptInfo = true },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Info,
+                                            contentDescription = "Init script help",
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = customInitScript,
+                                    onValueChange = { 
+                                        customInitScript = it
+                                        errorMessage = null
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 180.dp, max = 350.dp),
+                                    label = { Text("Init Script") },
+                                    placeholder = { Text("#!/bin/sh\nset -e\nexport PATH=...") },
+                                    leadingIcon = { Icon(Icons.Default.Code, contentDescription = null) },
+                                    minLines = 8,
+                                    maxLines = 18,
+                                    isError = customInitScript.isBlank()
                                 )
+                                if (customInitScript.isBlank()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                        Text(
+                                            text = "Custom distro requires an init script",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
                             }
-                        }
-                        OutlinedTextField(
-                            value = customInitScript,
-                            onValueChange = { customInitScript = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 200.dp, max = 400.dp),
-                            label = { Text("Init Script") },
-                            placeholder = { Text("#!/bin/sh\nset -e\nexport PATH=...") },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                            minLines = 10,
-                            maxLines = 20
-                        )
-                        if (customInitScript.isBlank()) {
-                            Text(
-                                text = "⚠ Custom distro requires an init script",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                            )
                         }
                     } else {
                         val currentDistro = selectedDistro
                         if (selectedType != null && currentDistro != null && currentDistro != com.qali.aterm.ui.screens.setup.DistroType.CUSTOM && currentDistro.hasPredefinedInit) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
+                            Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                                ),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                             ) {
-                                Text(
-                                    text = "Custom Init Script (Optional):",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(
-                                    onClick = { showInitScriptInfo = true },
-                                    modifier = Modifier.size(24.dp)
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Info,
-                                        contentDescription = "Init script help",
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.primary
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Text(
+                                                text = "3. Custom Init Script (Optional)",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { showInitScriptInfo = true },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Info,
+                                                contentDescription = "Init script help",
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    OutlinedTextField(
+                                        value = customInitScript,
+                                        onValueChange = { customInitScript = it },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 120.dp, max = 250.dp),
+                                        label = { Text("Custom Init Script") },
+                                        placeholder = { Text("Leave empty to use default ${currentDistro.displayName} init script") },
+                                        leadingIcon = { Icon(Icons.Default.Code, contentDescription = null) },
+                                        minLines = 5,
+                                        maxLines = 12
                                     )
                                 }
                             }
-                            OutlinedTextField(
-                                value = customInitScript,
-                                onValueChange = { customInitScript = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 150.dp, max = 300.dp),
-                                label = { Text("Custom Init Script (optional)") },
-                                placeholder = { Text("Leave empty to use default ${currentDistro.displayName} init script") },
-                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                                minLines = 6,
-                                maxLines = 15
-                            )
                         }
                     }
 
-                    // Name input (for all types except predefined)
+                    // Step 4: Name input (for all types except predefined)
                     if (selectedType != null && selectedType != RootfsType.ALPINE && selectedType != RootfsType.UBUNTU) {
-                        Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
                             value = rootfsName,
-                            onValueChange = { rootfsName = it },
+                            onValueChange = { 
+                                rootfsName = it
+                                errorMessage = null
+                            },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Rootfs Name (optional)") },
+                            label = { Text("Display Name (Optional)") },
                             placeholder = { Text("e.g., My Custom Rootfs") },
                             leadingIcon = { Icon(Icons.Default.Label, contentDescription = null) },
                             singleLine = true
@@ -447,25 +656,42 @@ fun RootfsSettings(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                         ) {
                             Column(
-                                modifier = Modifier.padding(16.dp),
+                                modifier = Modifier.padding(20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Text(
-                                    text = downloadText,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = downloadText,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
                                 LinearProgressIndicator(
                                     progress = { downloadProgress },
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth(),
+                                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                                 Text(
                                     text = "${(downloadProgress * 100).toInt()}%",
-                                    style = MaterialTheme.typography.bodySmall
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             }
                         }
@@ -476,23 +702,26 @@ fun RootfsSettings(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer
-                            )
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
                             Row(
                                 modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Error,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onErrorContainer
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(24.dp)
                                 )
                                 Text(
                                     text = error,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         }

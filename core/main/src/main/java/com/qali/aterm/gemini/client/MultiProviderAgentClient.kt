@@ -5819,6 +5819,11 @@ exports.$functionName = (req, res, next) => {
         val signal = CancellationSignal() // Create local signal for non-streaming mode
         android.util.Log.d("GeminiClient", "sendMessageNonStreaming: Starting non-streaming mode")
         
+        // Emit initial event immediately to ensure flow is active before setup work
+        // This prevents the flow from being cancelled before it can start emitting
+        emit(GeminiStreamEvent.Chunk("🚀 Starting...\n"))
+        onChunk("🚀 Starting...\n")
+        
         // Add user message to history
         chatHistory.add(
             Content(
