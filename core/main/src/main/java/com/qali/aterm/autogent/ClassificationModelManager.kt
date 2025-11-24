@@ -158,12 +158,13 @@ object ClassificationModelManager {
     
     /**
      * Get model file path
+     * Models are stored in /sdcard/aterm/model/ (same location as learning database)
      */
     fun getModelFilePath(modelId: String): String? {
         val model = getAvailableModels().find { it.id == modelId }
         return model?.filePath ?: model?.let {
-            // For built-in models, construct path
-            val modelDir = File(Environment.getExternalStorageDirectory(), "aterm/models/classification")
+            // For built-in models, construct path in /sdcard/aterm/model/
+            val modelDir = File(Environment.getExternalStorageDirectory(), "aterm/model")
             if (!modelDir.exists()) {
                 modelDir.mkdirs()
             }
