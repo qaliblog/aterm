@@ -454,7 +454,7 @@ class LanguageLinterToolInvocation(
         return errors
     }
     
-    private fun detectBasicErrors(file: File): List<LinterError> {
+    private suspend fun detectBasicErrors(file: File): List<LinterError> {
         val errors = mutableListOf<LinterError>()
         
         // First, try to read and analyze the file content directly
@@ -477,9 +477,8 @@ class LanguageLinterToolInvocation(
                 workspaceRoot
             )
             
-            val result = kotlinx.coroutines.runBlocking {
-                detectionTool.execute(null, null)
-            }
+            // Use coroutineScope instead of runBlocking to avoid blocking
+            val result = detectionTool.execute(null, null)
             
             // Parse the result to extract errors
             errors.addAll(parseBasicErrorOutput(result.llmContent, file))
