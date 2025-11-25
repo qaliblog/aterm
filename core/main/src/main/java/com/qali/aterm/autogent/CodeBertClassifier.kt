@@ -34,10 +34,12 @@ class CodeBertClassifier(
         // Tokenize input
         val tokens = tokenizer.encode(text)
         
-        // Create input tensor
-        // Shape: [1, sequence_length]
-        val inputShape = longArrayOf(1, tokens.size.toLong())
-        val inputTensor = OnnxTensor.createTensor(env, inputShape, tokens)
+        // Create input tensor with shape [1, sequence_length]
+        // ONNX Runtime API: createTensor(env, data) where data is the array
+        // For 2D shape [1, sequence_length], we create Array<LongArray>
+        // Note: LongArray in Kotlin is compatible with Java long[]
+        val tokens2D = arrayOf(tokens)
+        val inputTensor = OnnxTensor.createTensor(env, tokens2D)
         
         var output: OrtSession.Result? = null
         try {
