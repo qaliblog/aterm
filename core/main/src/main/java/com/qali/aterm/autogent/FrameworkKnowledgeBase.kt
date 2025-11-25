@@ -266,7 +266,7 @@ object FrameworkKnowledgeBase {
                     
                     export default class Utils {
                         static formatCurrency(amount) {
-                            return `$${amount.toFixed(2)}`;
+                            return "$" + amount.toFixed(2);
                         }
                     }
                     
@@ -307,7 +307,7 @@ object FrameworkKnowledgeBase {
                     
                     const PORT = process.env.PORT || 3000;
                     app.listen(PORT, () => {
-                        console.log(`Server running on port $${PORT}`);
+                        console.log("Server running on port " + PORT);
                     });
                 """.trimIndent(),
                 frameworkType = "Node.js",
@@ -350,7 +350,7 @@ object FrameworkKnowledgeBase {
                     
                     // Custom middleware
                     const logger = (req, res, next) => {
-                        console.log(`$${req.method} $${req.path}`);
+                        console.log(req.method + " " + req.path);
                         next();
                     };
                     
@@ -548,7 +548,7 @@ object FrameworkKnowledgeBase {
                     // Kotlin Data Classes and Extension Functions
                     data class User(val id: Long, val name: String, val email: String)
                     
-                    fun User.fullName(): String = "$${name} ($${email})"
+                    fun User.fullName(): String = name + " (" + email + ")"
                     
                     fun String.isValidEmail(): Boolean {
                         return this.contains("@") && this.contains(".")
@@ -570,8 +570,8 @@ object FrameworkKnowledgeBase {
                     
                     fun handleResult(result: Result<String>) {
                         when (result) {
-                            is Result.Success -> println("Success: $${result.data}")
-                            is Result.Error -> println("Error: $${result.message}")
+                            is Result.Success -> println("Success: " + result.data)
+                            is Result.Error -> println("Error: " + result.message)
                         }
                     }
                 """.trimIndent(),
@@ -616,13 +616,13 @@ object FrameworkKnowledgeBase {
                     // MVC Pattern - View
                     class UserView {
                         fun displayUser(user: UserModel) {
-                            println("ID: $${user.getId()}")
-                            println("Name: $${user.getName()}")
-                            println("Email: $${user.getEmail()}")
+                            println("ID: " + user.getId())
+                            println("Name: " + user.getName())
+                            println("Email: " + user.getEmail())
                         }
                         
                         fun displayError(message: String) {
-                            println("Error: $${message}")
+                            println("Error: " + message)
                         }
                     }
                 """.trimIndent(),
