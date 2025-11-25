@@ -1,6 +1,7 @@
 package com.qali.aterm.autogent
 
 import com.qali.aterm.api.ApiProviderManager
+import kotlin.text.RegexOption
 import com.qali.aterm.api.ApiProviderType
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
@@ -337,7 +338,7 @@ object AutoAgentLearningService {
         val imports = mutableListOf<String>()
         
         // Extract import statements
-        val importRegex = Regex("""(?:import|require|from)\s+["']?([^"'\s]+)["']?""", Regex.IGNORE_CASE or Regex.MULTILINE)
+        val importRegex = Regex("""(?:import|require|from)\s+["']?([^"'\s]+)["']?""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
         val matches = importRegex.findAll(code)
         matches.forEach { match ->
             imports.add(match.value.trim())
@@ -357,14 +358,14 @@ object AutoAgentLearningService {
         val handlers = mutableListOf<String>()
         
         // Extract event handlers
-        val handlerRegex = Regex("""(?:on|handle)(?:click|change|submit|load|focus|blur|mouse|key|input|change)\w*""", Regex.IGNORE_CASE or Regex.MULTILINE)
+        val handlerRegex = Regex("""(?:on|handle)(?:click|change|submit|load|focus|blur|mouse|key|input|change)\w*""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
         val matches = handlerRegex.findAll(code)
         matches.forEach { match ->
             handlers.add(match.value.lowercase())
         }
         
         // Also check for addEventListener
-        val listenerRegex = Regex("""addEventListener\s*\(\s*["']([^"']+)["']""", Regex.IGNORE_CASE or Regex.MULTILINE)
+        val listenerRegex = Regex("""addEventListener\s*\(\s*["']([^"']+)["']""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
         val listenerMatches = listenerRegex.findAll(code)
         listenerMatches.forEach { match ->
             handlers.add("addEventListener:${match.groupValues[1]}")

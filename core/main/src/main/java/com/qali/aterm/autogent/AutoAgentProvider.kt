@@ -438,6 +438,20 @@ object AutoAgentProvider {
                     response.append("I don't have learned API patterns for this yet.")
                 }
             }
+            com.qali.aterm.autogent.Intent.RUN_TEST -> {
+                // Test execution - use learned test patterns
+                response.append("Based on learned test patterns:\n\n")
+                val testPatterns = relevantData[LearnedDataType.CODE_SNIPPET]?.filter { 
+                    it.content.contains("test", ignoreCase = true) 
+                }?.take(3)
+                if (testPatterns != null && testPatterns.isNotEmpty()) {
+                    testPatterns.forEach { pattern ->
+                        response.append("${pattern.content}\n\n")
+                    }
+                } else {
+                    response.append("I don't have learned test patterns for this yet.")
+                }
+            }
             com.qali.aterm.autogent.Intent.GENERAL -> {
                 // General response combining all types
                 response.append(context)

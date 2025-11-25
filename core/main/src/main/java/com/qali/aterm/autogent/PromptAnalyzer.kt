@@ -1,5 +1,7 @@
 package com.qali.aterm.autogent
 
+import kotlin.text.RegexOption
+
 /**
  * Analyzes user prompts to extract intent, file types, metadata, and framework information
  * Uses text classification to understand what the user wants to do
@@ -108,17 +110,17 @@ object PromptAnalyzer {
         val metadata = mutableMapOf<String, Any>()
         
         // Extract file names (quoted strings or after "file" keyword)
-        val filePattern = Regex("""["']([^"']+\.(html|css|js|ts|py|java|kt|json|xml))["']""", Regex.IGNORE_CASE)
+        val filePattern = Regex("""["']([^"']+\.(html|css|js|ts|py|java|kt|json|xml))["']""", RegexOption.IGNORE_CASE)
         val fileMatches = filePattern.findAll(prompt)
-        val fileNames = fileMatches.map { it.groupValues[1] }.toList()
+        val fileNames = fileMatches.map { match -> match.groupValues[1] }.toList()
         if (fileNames.isNotEmpty()) {
             metadata["file_names"] = fileNames
         }
         
         // Extract function/class names (capitalized words or after "function"/"class")
-        val functionPattern = Regex("""(?:function|def|fun|class|interface)\s+([a-zA-Z_][a-zA-Z0-9_]*)""", Regex.IGNORE_CASE)
+        val functionPattern = Regex("""(?:function|def|fun|class|interface)\s+([a-zA-Z_][a-zA-Z0-9_]*)""", RegexOption.IGNORE_CASE)
         val functionMatches = functionPattern.findAll(prompt)
-        val functionNames = functionMatches.map { it.groupValues[1] }.toList()
+        val functionNames = functionMatches.map { match -> match.groupValues[1] }.toList()
         if (functionNames.isNotEmpty()) {
             metadata["function_names"] = functionNames
         }
@@ -154,8 +156,8 @@ object PromptAnalyzer {
         val importPatterns = mutableListOf<String>()
         
         // Extract explicit imports mentioned in prompt
-        val importRegex = Regex("""(?:import|require|from)\s+["']?([^"'\s]+)["']?""", Regex.IGNORE_CASE)
-        val imports = importRegex.findAll(prompt).map { it.groupValues[1] }.toList()
+        val importRegex = Regex("""(?:import|require|from)\s+["']?([^"'\s]+)["']?""", RegexOption.IGNORE_CASE)
+        val imports = importRegex.findAll(prompt).map { match -> match.groupValues[1] }.toList()
         importPatterns.addAll(imports)
         
         // Add framework-specific common imports
@@ -178,8 +180,8 @@ object PromptAnalyzer {
         val eventPatterns = mutableListOf<String>()
         
         // Extract explicit event handlers mentioned
-        val eventRegex = Regex("""(?:on|handle)(?:click|change|submit|load|focus|blur|mouse|key|input|change)""", Regex.IGNORE_CASE)
-        val events = eventRegex.findAll(prompt).map { it.value.lowercase() }.toList()
+        val eventRegex = Regex("""(?:on|handle)(?:click|change|submit|load|focus|blur|mouse|key|input|change)""", RegexOption.IGNORE_CASE)
+        val events = eventRegex.findAll(prompt).map { match -> match.value.lowercase() }.toList()
         eventPatterns.addAll(events)
         
         // Add framework-specific common event handlers

@@ -266,7 +266,7 @@ object FrameworkKnowledgeBase {
                     
                     export default class Utils {
                         static formatCurrency(amount) {
-                            return `$${amount.toFixed(2)}`;
+                            return `\${amount.toFixed(2)}`;
                         }
                     }
                     
@@ -302,12 +302,12 @@ object FrameworkKnowledgeBase {
                     
                     app.post('/api/users', (req, res) => {
                         const { name, email } = req.body;
-                        res.status(201).json({ id: 1, name, email });
+                        res.status(201).json({ id: 1, name: name, email: email });
                     });
                     
                     const PORT = process.env.PORT || 3000;
                     app.listen(PORT, () => {
-                        console.log(`Server running on port ${PORT}`);
+                        console.log(`Server running on port \${PORT}`);
                     });
                 """.trimIndent(),
                 frameworkType = "Node.js",
@@ -350,7 +350,7 @@ object FrameworkKnowledgeBase {
                     
                     // Custom middleware
                     const logger = (req, res, next) => {
-                        console.log(`${req.method} ${req.path}`);
+                        console.log(`\${req.method} \${req.path}`);
                         next();
                     };
                     
@@ -404,8 +404,8 @@ object FrameworkKnowledgeBase {
                     
                     async def main():
                         urls = ['http://example.com', 'http://example.org']
-                        results = await asyncio.gather(*[fetch_url(url) for url in urls])
-                        return results
+                        result_list = await asyncio.gather(*[fetch_url(url) for url in urls])
+                        return result_list
                 """.trimIndent(),
                 frameworkType = "Python",
                 importPatterns = "import asyncio, import aiohttp, import json",
@@ -456,16 +456,16 @@ object FrameworkKnowledgeBase {
                     @RequestMapping("/api/users")
                     public class UserController {
                         
-                        @GetMapping
-                        public ResponseEntity<List<User>> getAllUsers() {
-                            return ResponseEntity.ok(userService.findAll());
-                        }
-                        
-                        @PostMapping
-                        public ResponseEntity<User> createUser(@RequestBody User user) {
-                            User saved = userService.save(user);
-                            return ResponseEntity.status(201).body(saved);
-                        }
+                    @GetMapping
+                    public ResponseEntity<List<User>> getAllUsers() {
+                        return ResponseEntity.ok(userService.findAll());
+                    }
+                    
+                    @PostMapping
+                    public ResponseEntity<User> createUser(@RequestBody User userObj) {
+                        User saved = userService.save(userObj);
+                        return ResponseEntity.status(201).body(saved);
+                    }
                     }
                 """.trimIndent(),
                 frameworkType = "Java",
@@ -548,7 +548,7 @@ object FrameworkKnowledgeBase {
                     // Kotlin Data Classes and Extension Functions
                     data class User(val id: Long, val name: String, val email: String)
                     
-                    fun User.fullName(): String = "$name ($email)"
+                    fun User.fullName(): String = "\${name} (\${email})"
                     
                     fun String.isValidEmail(): Boolean {
                         return this.contains("@") && this.contains(".")
@@ -616,13 +616,13 @@ object FrameworkKnowledgeBase {
                     // MVC Pattern - View
                     class UserView {
                         fun displayUser(user: UserModel) {
-                            println("ID: ${user.getId()}")
-                            println("Name: ${user.getName()}")
-                            println("Email: ${user.getEmail()}")
+                            println("ID: \${user.getId()}")
+                            println("Name: \${user.getName()}")
+                            println("Email: \${user.getEmail()}")
                         }
                         
                         fun displayError(message: String) {
-                            println("Error: $message")
+                            println("Error: \${message}")
                         }
                     }
                 """.trimIndent(),
@@ -657,8 +657,8 @@ object FrameworkKnowledgeBase {
                     const router = express.Router();
                     
                     router.get('/users/:id', async (req, res) => {
-                        const user = await userService.findById(req.params.id);
-                        res.render('user', { user });
+                        const userObj = await userService.findById(req.params.id);
+                        res.render('user', { user: userObj });
                     });
                     
                     module.exports = router;
