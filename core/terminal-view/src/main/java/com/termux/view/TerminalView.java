@@ -1380,8 +1380,8 @@ public final class TerminalView extends View {
     /** Get the currently selected text if selecting. */
     public String getSelectedText() {
         // Skip selection for hidden/headless sessions (agent sessions without TerminalView)
-        if (mTerminalSession != null && !mTerminalSession.isVisible()) {
-            android.util.Log.d("TerminalView", "getSelectedText: Skipping for hidden session " + mTerminalSession.mSessionName);
+        if (mTermSession != null && !mTermSession.isVisible()) {
+            android.util.Log.d("TerminalView", "getSelectedText: Skipping for hidden session " + mTermSession.mSessionName);
             return "";
         }
         if (isSelectingText() && mTextSelectionCursorController != null)
@@ -1411,8 +1411,8 @@ public final class TerminalView extends View {
 
     public void startTextSelectionMode(MotionEvent event) {
         // Skip selection for hidden/headless sessions (agent sessions without TerminalView)
-        if (mTerminalSession != null && !mTerminalSession.isVisible()) {
-            android.util.Log.d("TerminalView", "startTextSelectionMode: Skipping for hidden session " + mTerminalSession.mSessionName);
+        if (mTermSession != null && !mTermSession.isVisible()) {
+            android.util.Log.d("TerminalView", "startTextSelectionMode: Skipping for hidden session " + mTermSession.mSessionName);
             return;
         }
         if (!requestFocus()) {

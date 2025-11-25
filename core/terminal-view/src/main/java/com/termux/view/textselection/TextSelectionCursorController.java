@@ -45,8 +45,8 @@ public class TextSelectionCursorController implements CursorController {
     @Override
     public void show(MotionEvent event) {
         // Skip selection for hidden/headless sessions (agent sessions without TerminalView)
-        if (terminalView.mTerminalSession != null && !terminalView.mTerminalSession.isVisible()) {
-            android.util.Log.d("TextSelectionCursorController", "show: Skipping for hidden session " + terminalView.mTerminalSession.mSessionName);
+        if (terminalView.mTermSession != null && !terminalView.mTermSession.isVisible()) {
+            android.util.Log.d("TextSelectionCursorController", "show: Skipping for hidden session " + terminalView.mTermSession.mSessionName);
             return;
         }
         setInitialTextSelectionPosition(event);
@@ -395,13 +395,13 @@ public class TextSelectionCursorController implements CursorController {
     /** Get the currently selected text. */
     public String getSelectedText() {
         // Skip selection for hidden/headless sessions (agent sessions without TerminalView)
-        if (terminalView.mTerminalSession != null && !terminalView.mTerminalSession.isVisible()) {
-            android.util.Log.d("TextSelectionCursorController", "getSelectedText: Skipping for hidden session " + terminalView.mTerminalSession.mSessionName);
+        if (terminalView.mTermSession != null && !terminalView.mTermSession.isVisible()) {
+            android.util.Log.d("TextSelectionCursorController", "getSelectedText: Skipping for hidden session " + terminalView.mTermSession.mSessionName);
             return "";
         }
-        // Additional safety check: ensure emulator and screen are initialized
-        if (terminalView.mEmulator == null || terminalView.mEmulator.mScreen == null) {
-            android.util.Log.w("TextSelectionCursorController", "getSelectedText: Emulator or screen not initialized");
+        // Additional safety check: ensure emulator is initialized
+        if (terminalView.mEmulator == null) {
+            android.util.Log.w("TextSelectionCursorController", "getSelectedText: Emulator not initialized");
             return "";
         }
         return terminalView.mEmulator.getSelectedText(mSelX1, mSelY1, mSelX2, mSelY2);
