@@ -55,31 +55,33 @@ fun ApiProviderSettings() {
             }
         }
         
-        // Model Selection
-        PreferenceGroup(heading = "Model Configuration") {
-            var currentModel by remember { mutableStateOf(ApiProviderManager.getCurrentModel()) }
-            var showModelDialog by remember { mutableStateOf(false) }
-            
-            SettingsCard(
-                title = { Text("Model") },
-                description = { Text(currentModel.ifEmpty { "Not set" }) },
-                endWidget = {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit Model")
-                },
-                onClick = { showModelDialog = true }
-            )
-            
-            if (showModelDialog) {
-                ModelSelectionDialog(
-                    providerType = selectedProvider,
-                    currentModel = currentModel,
-                    onDismiss = { showModelDialog = false },
-                    onSave = { model ->
-                        ApiProviderManager.setCurrentModel(model)
-                        currentModel = model
-                        showModelDialog = false
-                    }
+        // Model Selection (hidden for AutoAgent - it has its own settings)
+        if (selectedProvider != ApiProviderType.AUTOAGENT) {
+            PreferenceGroup(heading = "Model Configuration") {
+                var currentModel by remember { mutableStateOf(ApiProviderManager.getCurrentModel()) }
+                var showModelDialog by remember { mutableStateOf(false) }
+                
+                SettingsCard(
+                    title = { Text("Model") },
+                    description = { Text(currentModel.ifEmpty { "Not set" }) },
+                    endWidget = {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Model")
+                    },
+                    onClick = { showModelDialog = true }
                 )
+                
+                if (showModelDialog) {
+                    ModelSelectionDialog(
+                        providerType = selectedProvider,
+                        currentModel = currentModel,
+                        onDismiss = { showModelDialog = false },
+                        onSave = { model ->
+                            ApiProviderManager.setCurrentModel(model)
+                            currentModel = model
+                            showModelDialog = false
+                        }
+                    )
+                }
             }
         }
         
