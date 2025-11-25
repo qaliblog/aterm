@@ -145,6 +145,26 @@ fun AutoAgentSettings() {
                 )
             }
             
+            // AutoAgent Database Model Name display
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            SettingsCard(
+                title = { Text("Database Model Name") },
+                description = {
+                    Column {
+                        val dbModelName = ClassificationModelManager.getAutoAgentModelName()
+                        Text(
+                            dbModelName,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "This is the model name used for the AutoAgent learning database. The database is automatically created and initialized when a classification model is selected.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                },
+                onClick = { /* Display only, no action */ }
+            )
+            
             Divider(modifier = Modifier.padding(vertical = 8.dp))
             
             // Built-in models - Group by type
