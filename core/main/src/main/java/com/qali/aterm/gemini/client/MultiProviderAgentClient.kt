@@ -1184,63 +1184,64 @@ class GeminiClient(
     }
     
     private suspend fun executeToolSync(name: String, args: Map<String, Any>): ToolResult {
-        val tool = toolRegistry.getTool(name)
-            ?: return ToolResult(
-                llmContent = "Tool not found: $name",
-                returnDisplay = "Error: Tool not found",
-                error = ToolError(
-                    message = "Tool not found: $name",
-                    type = ToolErrorType.EXECUTION_ERROR
-                )
-            )
-        
-        return try {
-            val params = tool.validateParams(args)
-                ?: return ToolResult(
-                    llmContent = "Invalid parameters for tool: $name",
-                    returnDisplay = "Error: Invalid parameters",
+        // Ensure all tool execution happens on IO dispatcher to avoid blocking main thread
+        return withContext(Dispatchers.IO) {
+            android.util.Log.d("GeminiClient", "executeToolSync: Executing tool '$name' on IO dispatcher")
+            val tool = toolRegistry.getTool(name)
+                ?: return@withContext ToolResult(
+                    llmContent = "Tool not found: $name",
+                    returnDisplay = "Error: Tool not found",
                     error = ToolError(
-                        message = "Invalid parameters",
-                        type = ToolErrorType.INVALID_PARAMETERS
+                        message = "Tool not found: $name",
+                        type = ToolErrorType.EXECUTION_ERROR
                     )
                 )
             
-            @Suppress("UNCHECKED_CAST")
-            val invocation = (tool as DeclarativeTool<Any, ToolResult>).createInvocation(params as Any)
-            
-            // Execute tool with proper coroutine context
-            // Use IO dispatcher for tool execution to avoid blocking main thread
-            withContext(Dispatchers.IO) {
+            try {
+                val params = tool.validateParams(args)
+                    ?: return@withContext ToolResult(
+                        llmContent = "Invalid parameters for tool: $name",
+                        returnDisplay = "Error: Invalid parameters",
+                        error = ToolError(
+                            message = "Invalid parameters",
+                            type = ToolErrorType.INVALID_PARAMETERS
+                        )
+                    )
+                
+                @Suppress("UNCHECKED_CAST")
+                val invocation = (tool as DeclarativeTool<Any, ToolResult>).createInvocation(params as Any)
+                
+                // Execute tool - already on IO dispatcher from outer withContext
                 try {
                     invocation.execute(null, null)
                 } catch (e: Exception) {
                     android.util.Log.e("GeminiClient", "Error executing tool $name", e)
                     throw e
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Handle cancellation gracefully
+                return@withContext ToolResult(
+                    llmContent = "Tool execution was cancelled: $name",
+                    returnDisplay = "Cancelled",
+                    error = ToolError(
+                        message = "Tool execution cancelled",
+                        type = ToolErrorType.EXECUTION_ERROR
+                    )
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("GeminiClient", "Error executing tool: $name", e)
+                android.util.Log.e("GeminiClient", "Exception type: ${e.javaClass.simpleName}")
+                android.util.Log.e("GeminiClient", "Exception message: ${e.message}")
+                e.printStackTrace()
+                return@withContext ToolResult(
+                    llmContent = "Error executing tool '$name': ${e.message ?: e.javaClass.simpleName}",
+                    returnDisplay = "Error: ${e.message ?: "Unknown error"}",
+                    error = ToolError(
+                        message = e.message ?: "Unknown error",
+                        type = ToolErrorType.EXECUTION_ERROR
+                    )
+                )
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // Handle cancellation gracefully
-            ToolResult(
-                llmContent = "Tool execution was cancelled: $name",
-                returnDisplay = "Cancelled",
-                error = ToolError(
-                    message = "Tool execution cancelled",
-                    type = ToolErrorType.EXECUTION_ERROR
-                )
-            )
-        } catch (e: Exception) {
-            android.util.Log.e("GeminiClient", "Error executing tool: $name", e)
-            android.util.Log.e("GeminiClient", "Exception type: ${e.javaClass.simpleName}")
-            android.util.Log.e("GeminiClient", "Exception message: ${e.message}")
-            e.printStackTrace()
-            ToolResult(
-                llmContent = "Error executing tool '$name': ${e.message ?: e.javaClass.simpleName}",
-                returnDisplay = "Error: ${e.message ?: "Unknown error"}",
-                error = ToolError(
-                    message = e.message ?: "Unknown error",
-                    type = ToolErrorType.EXECUTION_ERROR
-                )
-            )
         }
     }
     

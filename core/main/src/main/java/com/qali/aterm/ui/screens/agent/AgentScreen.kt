@@ -1600,8 +1600,16 @@ fun AgentScreen(
                         override fun logStackTrace(tag: String?, e: Exception?) {}
                     }
                     
-                    mainActivity.sessionBinder!!.createSession(agentSessionId, agentClient, mainActivity, workingMode)
-                    android.util.Log.d("AgentScreen", "Created agent session: $agentSessionId with working mode: $workingMode")
+                    val agentSession = mainActivity.sessionBinder!!.createSession(agentSessionId, agentClient, mainActivity, workingMode)
+                    // Mark as hidden/headless - this prevents UI operations like text selection
+                    agentSession.setVisible(false)
+                    android.util.Log.d("AgentScreen", "Created hidden agent session: $agentSessionId with working mode: $workingMode")
+                    
+                    // Ensure proper initialization of headless terminal
+                    if (agentSession.emulator == null) {
+                        android.util.Log.d("AgentScreen", "Initializing headless terminal emulator for $agentSessionId")
+                        agentSession.updateSize(80, 24, 10, 20) // Default terminal size
+                    }
                 } else {
                     // Main session doesn't exist either, create both using createSessionWithHidden
                     val dummyClient = object : com.termux.terminal.TerminalSessionClient {

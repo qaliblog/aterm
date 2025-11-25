@@ -105,10 +105,15 @@ public final class TerminalBuffer {
             // Allocate line if null to prevent NullPointerException
             if (lineObject == null) {
                 lineObject = allocateFullLineIfNecessary(internalRow);
-                // If allocation failed, skip this row
+                // If allocation failed or still null, skip this row
                 if (lineObject == null) {
                     continue;
                 }
+            }
+            
+            // Additional safety check: ensure lineObject is not null before calling methods
+            if (lineObject == null) {
+                continue; // Skip this row if lineObject is still null
             }
             
             int x1Index = lineObject.findStartOfColumn(startX);

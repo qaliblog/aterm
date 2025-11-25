@@ -55,6 +55,9 @@ class SessionService : Service() {
         }
         fun createSession(id: String, client: TerminalSessionClient, activity: MainActivity,workingMode:Int): TerminalSession {
             return MkSession.createSession(activity, client, id, workingMode = workingMode).also {
+                // Mark visible sessions as visible (default is true, but be explicit)
+                it.setVisible(true)
+                android.util.Log.d("SessionService", "Created visible session: $id (workingMode: $workingMode)")
                 sessions[id] = it
                 sessionList[id] = workingMode
                 sessionWorkingModes[id] = workingMode // Store working mode for all sessions
@@ -97,10 +100,20 @@ class SessionService : Service() {
                 
                 // Use the same workingMode as the main session to ensure matching distros
                 val hiddenSession = MkSession.createSession(activity, hiddenClient, hiddenId, workingMode = workingMode)
+                // Mark as hidden/headless - this prevents UI operations like text selection
+                hiddenSession.setVisible(false)
+                android.util.Log.d("SessionService", "Created hidden agent session: $hiddenId (workingMode: $workingMode)")
                 sessions[hiddenId] = hiddenSession
                 sessionWorkingModes[hiddenId] = workingMode // Store working mode for hidden session
                 // Don't add hidden sessions to sessionList - they should not appear in UI
                 hiddenSessions.add(hiddenId)
+                
+                // Ensure proper initialization of headless terminal
+                // Initialize emulator with default size if not already initialized
+                if (hiddenSession.emulator == null) {
+                    android.util.Log.d("SessionService", "Initializing headless terminal emulator for $hiddenId")
+                    hiddenSession.updateSize(80, 24, 10, 20) // Default terminal size
+                }
             }
             
             // Track the relationship between main session and hidden sessions

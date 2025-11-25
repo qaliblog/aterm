@@ -67,6 +67,9 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Set by the application for user identification of session, not by terminal. */
     public String mSessionName;
+    
+    /** Whether this session is visible (bound to a TerminalView) or hidden (headless agent session) */
+    private boolean mIsVisible = true;
 
     final Handler mMainThreadHandler = new MainThreadHandler();
 
@@ -97,6 +100,22 @@ public final class TerminalSession extends TerminalOutput {
 
         if (mEmulator != null)
             mEmulator.updateTerminalSessionClient(client);
+    }
+    
+    /**
+     * Set whether this session is visible (bound to TerminalView) or hidden (headless).
+     * Hidden sessions should not trigger UI operations like text selection.
+     */
+    public void setVisible(boolean visible) {
+        mIsVisible = visible;
+        android.util.Log.d(LOG_TAG, "Session " + mSessionName + " visibility set to: " + visible);
+    }
+    
+    /**
+     * Check if this session is visible (has a TerminalView) or hidden (headless).
+     */
+    public boolean isVisible() {
+        return mIsVisible;
     }
 
     /** Inform the attached pty of the new size and reflow or initialize the emulator. */
