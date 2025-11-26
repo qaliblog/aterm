@@ -698,9 +698,11 @@ object LearnedDataType {
 }
 
 object LearnedDataSource {
-    const val NORMAL_FLOW = "normal_flow"
-    const val REVERSE_FLOW = "reverse_flow"
-    const val DEBUG_FEEDBACK = "debug_feedback"
+    // Tag sources explicitly with "gemini" so AutoAgent can prioritize
+    // entries learned from Gemini-based flows.
+    const val NORMAL_FLOW = "gemini_normal_flow"
+    const val REVERSE_FLOW = "gemini_reverse_flow"
+    const val DEBUG_FEEDBACK = "gemini_debug_feedback"
 }
 
 // Extension function for safe string retrieval

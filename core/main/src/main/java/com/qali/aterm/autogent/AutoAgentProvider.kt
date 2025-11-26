@@ -161,6 +161,10 @@ object AutoAgentProvider {
             // Generate response based on learned patterns and metadata
             val response = generateFromLearnedPatterns(context, userMessage, relevantData, promptAnalysis)
             
+            // Run a lightweight self-check pass on the generated response.
+            // This is for observability only and never blocks or mutates output.
+            runSelfCheck(response, promptAnalysis)
+            
             // Stream the response
             AutoAgentLogger.info("AutoAgentProvider", "Generating response", mapOf("responseLength" to response.length))
             streamResponse(response, onChunk)
@@ -175,6 +179,48 @@ object AutoAgentProvider {
             // Re-enable learning when AutoAgent is done
             AutoAgentLearningService.setLearningEnabled(true)
             AutoAgentLogger.debug("AutoAgentProvider", "Learning re-enabled")
+        }
+    }
+    
+    /**
+     * Lightweight self-check pass for generated responses.
+     * Verifies that required files/functions inferred from metadata are present
+     * in the generated response and logs any gaps for later analysis.
+     */
+    private fun runSelfCheck(
+        response: String,
+        promptAnalysis: PromptAnalysis
+    ) {
+        val requiredFiles = (promptAnalysis.metadata["file_names"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+        val requiredFunctions = (promptAnalysis.metadata["function_names"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+        
+        val missingFiles = requiredFiles.filterNot { file ->
+            response.contains(file, ignoreCase = true)
+        }
+        
+        val missingFunctions = requiredFunctions.filterNot { fn ->
+            response.contains(fn, ignoreCase = true)
+        }
+        
+        if (missingFiles.isEmpty() && missingFunctions.isEmpty()) {
+            AutoAgentLogger.debug(
+                "AutoAgentProvider",
+                "Self-check passed",
+                mapOf(
+                    "hasFiles" to requiredFiles.isNotEmpty(),
+                    "hasFunctions" to requiredFunctions.isNotEmpty()
+                )
+            )
+        } else {
+            AutoAgentLogger.warning(
+                "AutoAgentProvider",
+                "Self-check: generated response may be missing required items",
+                mapOf(
+                    "missingFiles" to missingFiles.joinToString(", "),
+                    "missingFunctions" to missingFunctions.joinToString(", "),
+                    "frameworkType" to (promptAnalysis.frameworkType ?: "none")
+                )
+            )
         }
     }
     
@@ -264,20 +310,43 @@ object AutoAgentProvider {
         
         context.append("Based on learned knowledge and framework patterns, here's relevant information:\n\n")
         
-        // Add framework knowledge first (high priority)
-        if (promptAnalysis.frameworkType != null) {
-            relevantData["framework_knowledge"]?.filter { 
-                it.metadata?.contains(promptAnalysis.frameworkType) == true || 
-                it.content.contains(promptAnalysis.frameworkType, ignoreCase = true)
-            }?.take(3)?.forEach { entry ->
-                context.append("// Framework knowledge (${promptAnalysis.frameworkType}):\n")
-                context.append("${entry.content}\n\n")
+        // Add framework knowledge first (high priority, filtered by frameworkType when available)
+        val frameworkType = promptAnalysis.frameworkType
+        val frameworkEntries = relevantData["framework_knowledge"].orEmpty()
+            .let { entries ->
+                if (frameworkType != null) {
+                    entries.filter { entry ->
+                        entry.metadata?.contains(frameworkType, ignoreCase = true) == true ||
+                            entry.content.contains(frameworkType, ignoreCase = true)
+                    }
+                } else {
+                    entries
+                }
             }
+            .sortedByDescending { it.positiveScore }
+            .take(3)
+        
+        frameworkEntries.forEach { entry ->
+            context.append("// Framework knowledge${if (frameworkType != null) " ($frameworkType)" else ""}:\n")
+            context.append("${entry.content}\n\n")
         }
         
-        // Add code snippets
-        relevantData[LearnedDataType.CODE_SNIPPET]?.take(5)?.forEach { entry ->
-            context.append("// Learned code snippet (score: ${entry.positiveScore}):\n")
+        // Add code snippets, preferring ones that match framework type or come from Gemini/normal_flow
+        val codeSnippets = relevantData[LearnedDataType.CODE_SNIPPET].orEmpty()
+            .sortedWith(
+                compareByDescending<LearnedDataEntry> { it.positiveScore }
+                    .thenByDescending { entry ->
+                        when {
+                            frameworkType != null && entry.content.contains(frameworkType, ignoreCase = true) -> 2
+                            entry.source.contains("gemini", ignoreCase = true) -> 1
+                            else -> 0
+                        }
+                    }
+            )
+            .take(5)
+        
+        codeSnippets.forEach { entry ->
+            context.append("// Learned code snippet (score: ${entry.positiveScore}, source: ${entry.source}):\n")
             if (entry.metadata?.contains("import") == true) {
                 context.append("// Imports: ${entry.metadata}\n")
             }
@@ -367,8 +436,33 @@ object AutoAgentProvider {
             }
             com.qali.aterm.autogent.Intent.CREATE_CODE -> {
                 // Find best matching code snippet or framework knowledge
-                val bestMatch = relevantData[LearnedDataType.CODE_SNIPPET]?.firstOrNull()
-                    ?: relevantData["framework_knowledge"]?.firstOrNull()
+                val frameworkType = promptAnalysis.frameworkType
+                val allCodeSnippets = relevantData[LearnedDataType.CODE_SNIPPET].orEmpty()
+                val allFramework = relevantData["framework_knowledge"].orEmpty()
+                
+                // Prefer snippets that match framework type or were learned from Gemini
+                val prioritizedSnippets = allCodeSnippets.sortedWith(
+                    compareByDescending<LearnedDataEntry> { entry ->
+                        when {
+                            frameworkType != null && entry.content.contains(frameworkType, ignoreCase = true) -> 3
+                            entry.source.contains("gemini", ignoreCase = true) -> 2
+                            entry.source.contains("normal_flow", ignoreCase = true) -> 1
+                            else -> 0
+                        }
+                    }.thenByDescending { it.positiveScore }
+                )
+                
+                val prioritizedFramework = allFramework.sortedWith(
+                    compareByDescending<LearnedDataEntry> { entry ->
+                        when {
+                            frameworkType != null && entry.content.contains(frameworkType, ignoreCase = true) -> 1
+                            else -> 0
+                        }
+                    }.thenByDescending { it.positiveScore }
+                )
+                
+                val bestMatch = prioritizedSnippets.firstOrNull()
+                    ?: prioritizedFramework.firstOrNull()
                 
                 if (bestMatch != null) {
                     response.append("Based on learned patterns and framework knowledge, here's a solution:\n\n")

@@ -278,6 +278,108 @@ object FrameworkKnowledgeBase {
                 importPatterns = "import, export, from",
                 eventHandlerPatterns = "",
                 codeTemplate = "ES6 module imports and exports"
+            ),
+            FrameworkEntry(
+                type = "framework_knowledge",
+                content = """
+                    <!-- Tic Tac Toe Game (HTML/CSS/JS Single Page App) -->
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8" />
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                        <title>Tic Tac Toe</title>
+                        <style>
+                            body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #0f172a; color: #e5e7eb; }
+                            .board { display: grid; grid-template-columns: repeat(3, 100px); gap: 8px; }
+                            .cell { width: 100px; height: 100px; display: flex; justify-content: center; align-items: center; font-size: 2.5rem; background: #1f2937; border-radius: 0.5rem; cursor: pointer; transition: background 0.15s ease; }
+                            .cell:hover { background: #374151; }
+                            .status { margin-top: 1rem; text-align: center; }
+                            .controls { margin-top: 0.5rem; text-align: center; }
+                            button { padding: 0.5rem 1rem; border-radius: 9999px; border: none; background: #2563eb; color: white; cursor: pointer; }
+                        </style>
+                    </head>
+                    <body>
+                        <main>
+                            <div id="board" class="board"></div>
+                            <div id="status" class="status"></div>
+                            <div class="controls">
+                                <button id="resetButton">Reset Game</button>
+                            </div>
+                        </main>
+                        <script>
+                            const boardElement = document.getElementById('board');
+                            const statusElement = document.getElementById('status');
+                            const resetButton = document.getElementById('resetButton');
+                            
+                            let board = Array(9).fill(null);
+                            let currentPlayer = 'X';
+                            let isGameOver = false;
+                            
+                            function renderBoard() {
+                                boardElement.innerHTML = '';
+                                board.forEach((value, index) => {
+                                    const cell = document.createElement('div');
+                                    cell.className = 'cell';
+                                    cell.dataset.index = index.toString();
+                                    cell.textContent = value || '';
+                                    cell.addEventListener('click', handleCellClick);
+                                    boardElement.appendChild(cell);
+                                });
+                            }
+                            
+                            function handleCellClick(event) {
+                                const index = parseInt(event.currentTarget.dataset.index, 10);
+                                if (board[index] || isGameOver) return;
+                                board[index] = currentPlayer;
+                                const winner = calculateWinner(board);
+                                if (winner) {
+                                    statusElement.textContent = `Player ${winner} wins!`;
+                                    isGameOver = true;
+                                } else if (board.every(cell => cell)) {
+                                    statusElement.textContent = 'Draw!';
+                                    isGameOver = true;
+                                } else {
+                                    currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+                                    statusElement.textContent = `Player ${currentPlayer}'s turn`;
+                                }
+                                renderBoard();
+                            }
+                            
+                            function calculateWinner(cells) {
+                                const lines = [
+                                    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+                                    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+                                    [0, 4, 8], [2, 4, 6],
+                                ];
+                                for (const [a, b, c] of lines) {
+                                    if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) {
+                                        return cells[a];
+                                    }
+                                }
+                                return null;
+                            }
+                            
+                            function resetGame() {
+                                board = Array(9).fill(null);
+                                currentPlayer = 'X';
+                                isGameOver = false;
+                                statusElement.textContent = `Player ${currentPlayer}'s turn`;
+                                renderBoard();
+                            }
+                            
+                            document.addEventListener('DOMContentLoaded', () => {
+                                resetButton.addEventListener('click', resetGame);
+                                resetGame();
+                            });
+                        </script>
+                    </body>
+                    </html>
+                """.trimIndent(),
+                frameworkType = "JavaScript",
+                importPatterns = "",
+                eventHandlerPatterns = "addEventListener, onclick",
+                codeTemplate = "HTML/CSS/JavaScript single-page Tic Tac Toe game with full game loop and UI"
             )
         )
         
@@ -314,6 +416,68 @@ object FrameworkKnowledgeBase {
                 importPatterns = "require('express'), require('fs'), require('path')",
                 eventHandlerPatterns = "",
                 codeTemplate = "Express.js server with GET and POST routes"
+            ),
+            FrameworkEntry(
+                type = "framework_knowledge",
+                content = """
+                    // Node.js + Express CRUD API for a simple todo resource
+                    const express = require('express');
+                    const app = express();
+                    
+                    app.use(express.json());
+                    
+                    let todos = [];
+                    let nextId = 1;
+                    
+                    // List all todos
+                    app.get('/api/todos', (req, res) => {
+                        res.json(todos);
+                    });
+                    
+                    // Create a todo
+                    app.post('/api/todos', (req, res) => {
+                        const { title } = req.body;
+                        if (!title) {
+                            return res.status(400).json({ error: 'title is required' });
+                        }
+                        const todo = { id: nextId++, title, completed: false };
+                        todos.push(todo);
+                        res.status(201).json(todo);
+                    });
+                    
+                    // Update a todo
+                    app.put('/api/todos/:id', (req, res) => {
+                        const id = parseInt(req.params.id, 10);
+                        const todo = todos.find(t => t.id === id);
+                        if (!todo) {
+                            return res.status(404).json({ error: 'Todo not found' });
+                        }
+                        const { title, completed } = req.body;
+                        if (typeof title === 'string') todo.title = title;
+                        if (typeof completed === 'boolean') todo.completed = completed;
+                        res.json(todo);
+                    });
+                    
+                    // Delete a todo
+                    app.delete('/api/todos/:id', (req, res) => {
+                        const id = parseInt(req.params.id, 10);
+                        const index = todos.findIndex(t => t.id === id);
+                        if (index === -1) {
+                            return res.status(404).json({ error: 'Todo not found' });
+                        }
+                        todos.splice(index, 1);
+                        res.status(204).end();
+                    });
+                    
+                    const PORT = process.env.PORT || 3000;
+                    app.listen(PORT, () => {
+                        console.log(`CRUD API server listening on port ${PORT}`);
+                    });
+                """.trimIndent(),
+                frameworkType = "Node.js",
+                importPatterns = "require('express')",
+                eventHandlerPatterns = "",
+                codeTemplate = "Node.js + Express CRUD API for todos with full create, read, update, and delete endpoints"
             ),
             FrameworkEntry(
                 type = "framework_knowledge",

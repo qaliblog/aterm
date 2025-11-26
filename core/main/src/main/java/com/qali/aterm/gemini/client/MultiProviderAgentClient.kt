@@ -1712,8 +1712,8 @@ class GeminiClient(
     }
     
     /**
-     * Detect multiple user intents: can detect multiple intents in one message
-     * Returns list of intents in order of priority
+     * Detect multiple user intents: can detect multiple intents in one message.
+     * This is a lightweight classifier – it does not call any remote LLM.
      */
     private suspend fun detectIntents(userMessage: String): List<IntentType> {
         val intents = mutableListOf<IntentType>()
@@ -1725,6 +1725,12 @@ class GeminiClient(
             "debug", "fix", "repair", "error", "bug", "issue", "problem",
             "upgrade", "update", "improve", "refactor", "modify", "change",
             "enhance", "optimize", "correct", "resolve", "solve"
+        )
+        
+        val stacktraceIndicators = listOf(
+            "exception:", "traceback (most recent call last)", " at ",
+            "java.lang.", "kotlin.", "org.junit.", "AssertionError",
+            "Error:", "ReferenceError", "TypeError", "SyntaxError"
         )
         
         val createKeywords = listOf(
@@ -1748,12 +1754,18 @@ class GeminiClient(
         val messageLower = userMessage.lowercase()
         val contextLower = (userMessage + " " + memoryContext).lowercase()
         
-        val debugScore = debugKeywords.count { contextLower.contains(it) }
+        var debugScore = debugKeywords.count { contextLower.contains(it) }
         val createScore = createKeywords.count { contextLower.contains(it) }
         val testScore = testKeywords.count { contextLower.contains(it) }
         val questionIndicators = questionWords.count { messageLower.contains(it) }
         val endsWithQuestionMark = userMessage.trim().endsWith("?")
         val isQuestionPattern = messageLower.matches(Regex(".*\\b(what|how|why|when|where|which|who)\\b.*"))
+        
+        // Strong signal for DEBUG: presence of stack traces / exceptions
+        val hasStacktraceSignals = stacktraceIndicators.any { contextLower.contains(it.lowercase()) }
+        if (hasStacktraceSignals) {
+            debugScore += 3 // boost debug score so debug wins over create/question
+        }
         
         // Check if workspace has existing files
         val workspaceDir = File(workspaceRoot)
@@ -1768,7 +1780,8 @@ class GeminiClient(
         // Detect QUESTION intent (can coexist with others)
         val isQuestion = (endsWithQuestionMark || questionIndicators > 0 || isQuestionPattern) &&
                         (questionIndicators > 0 || endsWithQuestionMark)
-        if (isQuestion) {
+        if (isQuestion && !hasStacktraceSignals) {
+            // If we clearly have a stacktrace, prefer DEBUG over QUESTION
             intents.add(IntentType.QUESTION_ONLY)
         }
         
@@ -1794,9 +1807,10 @@ class GeminiClient(
         }
         
         // Detect DEBUG intent
-        if (hasExistingFiles && debugScore > 0) {
-            intents.add(IntentType.DEBUG_UPGRADE)
-        } else if (hasProjectContext && hasExistingFiles && debugScore >= createScore) {
+        val isDebugByScore = debugScore > 0
+        val isDebugByContext = hasProjectContext && hasExistingFiles && debugScore >= createScore
+        val isDebug = hasExistingFiles && (isDebugByScore || isDebugByContext || hasStacktraceSignals)
+        if (isDebug) {
             intents.add(IntentType.DEBUG_UPGRADE)
         }
         
@@ -1809,6 +1823,12 @@ class GeminiClient(
         if (intents.isEmpty()) {
             intents.add(if (hasExistingFiles) IntentType.DEBUG_UPGRADE else IntentType.CREATE_NEW)
         }
+        
+        android.util.Log.d(
+            "GeminiClient",
+            "detectIntents: debugScore=$debugScore, createScore=$createScore, testScore=$testScore, " +
+                "questionIndicators=$questionIndicators, hasStacktraceSignals=$hasStacktraceSignals, intents=$intents"
+        )
         
         return intents.distinct() // Remove duplicates
     }
