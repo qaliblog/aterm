@@ -6098,8 +6098,9 @@ exports.$functionName = (req, res, next) => {
     
     /**
      * Non-streaming mode: Enhanced 3-phase approach
-     * Phase 1: Get list of all files needed
-     * Phase 2: Get comprehensive metadata for all files (relationships, imports, classes, functions, etc.)
+     * Phase 1: Get list of all files needed (one API call)
+     * Phase 2: Get comprehensive metadata for ALL files in ONE API call (relationships, imports, classes, functions, etc.)
+     *         This ensures all relationships are coherent and consistent across all files
      * Phase 3: Generate each file separately with full code using only the metadata provided
      * Phase 4: Detect and execute commands needed
      */
@@ -6309,16 +6310,26 @@ exports.$functionName = (req, res, next) => {
         }
         updateTodos(updatedTodos)
         
-        // Phase 2: Get comprehensive metadata for all files
-        emit(GeminiStreamEvent.Chunk("📊 Phase 2: Generating metadata for all files...\n"))
+        // Phase 2: Get comprehensive metadata for all files in ONE API call
+        // This ensures all relationships are coherent and consistent across all files
+        emit(GeminiStreamEvent.Chunk("📊 Phase 2: Generating metadata for all files in one call to ensure coherence...\n"))
         
         val metadataPrompt = """
             $systemContext
             
-            Now that we know all the files that need to be created, generate comprehensive metadata for ALL files.
+            **IMPORTANT: Generate metadata for ALL files in a SINGLE response. This ensures all relationships, imports, and exports are coherent and consistent across all files.**
+            
+            Now that we know all the files that need to be created, generate comprehensive metadata for ALL files TOGETHER in one response.
             
             Files to create:
             ${filePaths.joinToString("\n") { "- $it" }}
+            
+            **You must analyze ALL files together to ensure:**
+            - All import/export relationships are consistent across ALL files
+            - All file dependencies are correctly identified
+            - All function/class names match between related files
+            - No circular dependencies are missed
+            - All bidirectional relationships are properly established
             
             For each file, provide COMPREHENSIVE metadata:
             - file_path: The relative path from project root
@@ -6424,12 +6435,21 @@ exports.$functionName = (req, res, next) => {
             val retryMetadataPrompt = """
                 $systemContext
                 
-                Previous metadata generation had issues. Please regenerate comprehensive metadata for ALL files.
+                **IMPORTANT: Generate metadata for ALL files in a SINGLE response. This ensures all relationships, imports, and exports are coherent and consistent across all files.**
+                
+                Previous metadata generation had issues. Please regenerate comprehensive metadata for ALL files TOGETHER in one response.
                 
                 Files to create:
                 ${filePaths.joinToString("\n") { "- $it" }}
                 
-                Ensure you provide metadata for ALL ${filePaths.size} files. The previous response had ${metadataJson?.length() ?: 0} entries, but we need ${filePaths.size}.
+                Ensure you provide metadata for ALL ${filePaths.size} files in ONE response. The previous response had ${metadataJson?.length() ?: 0} entries, but we need ${filePaths.size}.
+                
+                **You must analyze ALL files together to ensure:**
+                - All import/export relationships are consistent across ALL files
+                - All file dependencies are correctly identified
+                - All function/class names match between related files
+                - No circular dependencies are missed
+                - All bidirectional relationships are properly established
                 
                 ${metadataPrompt.substringAfter("For each file, provide COMPREHENSIVE metadata:")}
             """.trimIndent()
