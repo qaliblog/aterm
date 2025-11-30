@@ -1995,7 +1995,7 @@ fun AgentScreen(
                                             val warningIntervalMs = 30000L // Warn every 30 seconds
                                             var lastWarningTime = messageStartTime
                                             
-                                            while (!execState.doneEventReceived && timeoutMonitorJob.isActive) {
+                                            while (!execState.doneEventReceived && coroutineContext.isActive) {
                                                 delay(5000) // Check every 5 seconds
                                                 val now = System.currentTimeMillis()
                                                 val timeSinceStart = now - messageStartTime
