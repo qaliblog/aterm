@@ -190,8 +190,18 @@ class CliBasedAgentClient(
                 
                 Log.d("CliBasedAgentClient", "Script execution completed successfully (total time: ${totalTime}ms)")
                 
+                // Wait for any pending events (like continuation responses) to be sent to the channel
+                // Continuation responses can arrive asynchronously after execution completes
+                // Give enough time for these to be captured (continuation API calls can take time)
+                kotlinx.coroutines.delay(500)
+                
+                Log.d("CliBasedAgentClient", "Closing channel after delay")
                 // Close the channel to signal completion
                 eventChannel.close()
+                
+                // Give the channel consumer time to process remaining events and the close signal
+                kotlinx.coroutines.delay(200)
+                Log.d("CliBasedAgentClient", "Channel consumer should have finished processing")
             }
             
         } catch (e: kotlinx.coroutines.CancellationException) {
