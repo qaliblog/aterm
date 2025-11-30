@@ -173,17 +173,35 @@ class PpeExecutionEngine(
                                     }
                                     
                                     // Check if response is empty or has no function calls - might need fallback continuation
+                                    // For write_file, if we've only written a few files (less than 5), be more aggressive about continuing
+                                    val writeFileCount = messages.takeLast(20).flatMap { content ->
+                                        content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
+                                    }.count { it == "write_file" }
+                                    val needsFallbackForWriteFile = (continuationResponse.text.isEmpty() || continuationResponse.functionCalls.isEmpty()) && 
+                                        functionCall.name == "write_file" && 
+                                        writeFileCount < 5  // If we've written less than 5 files, continue aggressively
                                     val needsFallback = continuationResponse.text.isEmpty() && 
                                         continuationResponse.functionCalls.isEmpty() && 
                                         functionCall.name == "write_todos"
                                     
-                                    if (needsFallback) {
+                                    if (needsFallback || needsFallbackForWriteFile) {
                                         // Make fallback continuation attempt
                                         val promptMessages = (chatHistory + turnMessages).toMutableList()
+                                        val fallbackPrompt = if (needsFallbackForWriteFile) {
+                                            "You must continue creating files. The project needs more files: server.js (if not created), index.html, style.css (or styles.css), and the JavaScript game logic file (app.js, script.js, or client.js). The game logic file is REQUIRED. Use write_file to create each file. IMPORTANT: Check the code relativeness information from previous write_file results. Only use imports/exports that exist in related files."
+                                        } else {
+                                            "The todo list has been created. Now proceed with implementing the first task. Start by creating the project files (package.json, server.js, etc.). Do not call write_todos again."
+                                        }
                                         promptMessages.add(
                                             Content(
                                                 role = "model",
-                                                parts = listOf(Part.TextPart(text = "The todo list has been created. Now proceed with implementing the first task. Start by creating the project files (package.json, server.js, etc.). Do not call write_todos again."))
+                                                parts = listOf(Part.TextPart(text = continuationResponse.text.ifEmpty { "Tool execution completed." }))
+                                            )
+                                        )
+                                        promptMessages.add(
+                                            Content(
+                                                role = "user",
+                                                parts = listOf(Part.TextPart(text = fallbackPrompt))
                                             )
                                         )
                                         
