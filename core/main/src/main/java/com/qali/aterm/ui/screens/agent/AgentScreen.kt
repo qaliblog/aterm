@@ -44,6 +44,8 @@ import com.qali.aterm.agent.client.AgentEvent
 import com.qali.aterm.agent.client.OllamaClient
 import com.qali.aterm.agent.ppe.CliBasedAgentClient
 import com.qali.aterm.agent.tools.ToolResult
+import com.qali.aterm.agent.utils.AgentMemory
+import com.qali.aterm.agent.SystemInfoService
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.ui.screens.terminal.changeSession
 import com.rk.settings.Settings
@@ -1723,12 +1725,23 @@ fun AgentScreen(
             }
         }
         
-        // Save session metadata (workspace, pause state, etc.)
+        // Parse and save memory to metadata
+        val parsedMemory = if (messages.isNotEmpty()) {
+            AgentMemory.parseMemoryFromHistory(messages, workspaceRoot)
+        } else {
+            null
+        }
+        val memoryJson = parsedMemory?.let { 
+            com.google.gson.Gson().toJson(it)
+        }
+        
+        // Save session metadata (workspace, pause state, memory, etc.)
         val metadata = SessionMetadata(
             workspaceRoot = workspaceRoot,
             isPaused = false,
             lastPrompt = messages.lastOrNull()?.takeIf { it.isUser }?.text,
-            currentResponseText = currentResponseText.takeIf { it.isNotEmpty() }
+            currentResponseText = currentResponseText.takeIf { it.isNotEmpty() },
+            memory = memoryJson
         )
         HistoryPersistenceService.saveSessionMetadata(sessionId, metadata)
     }
@@ -2005,6 +2018,23 @@ fun AgentScreen(
                                         
                                         android.util.Log.d("AgentScreen", "Starting message send for: ${prompt.take(50)}...")
                                         
+                                        // Parse memory from previous messages (for subsequent prompts)
+                                        val previousMessages = withContext(Dispatchers.Main) { messages.filter { it.timestamp < userMessage.timestamp } }
+                                        val memory = if (previousMessages.isNotEmpty()) {
+                                            val parsedMemory = AgentMemory.parseMemoryFromHistory(previousMessages, workspaceRoot)
+                                            AgentMemory.formatMemoryForPrompt(parsedMemory)
+                                        } else {
+                                            null
+                                        }
+                                        
+                                        // Generate system context (OS, package manager, etc.)
+                                        val systemContext = try {
+                                            SystemInfoService.generateSystemContext(workspaceRoot)
+                                        } catch (e: Exception) {
+                                            android.util.Log.w("AgentScreen", "Failed to generate system context: ${e.message}")
+                                            null
+                                        }
+                                        
                                         // Start timeout monitoring coroutine
                                         val timeoutMonitorJob = scope.launch(Dispatchers.IO) {
                                             val timeoutMs = 300000L // 5 minutes
@@ -2088,7 +2118,9 @@ fun AgentScreen(
                                                         userMessage = prompt,
                                                         onChunk = { },
                                                         onToolCall = { },
-                                                        onToolResult = { _, _ -> }
+                                                        onToolResult = { _, _ -> },
+                                                        memory = memory,
+                                                        systemContext = systemContext
                                                     )
                                                 }
                                                 else -> {
@@ -2554,21 +2586,16 @@ fun AgentScreen(
                             // Save current session history before clearing (optional - user might want to keep it)
                             // For now, we'll clear it to start fresh
                             
-                            // Clear history from persistence
-                            HistoryPersistenceService.deleteHistory(sessionId)
-                            
-                            // Clear current session state
-                            messages = emptyList()
-                            messageHistory = emptyList()
+                            // DO NOT clear history when creating new session - history should persist
+                            // Only terminate should clear history
+                            // Just clear current UI state for new session
                             inputText = ""
                             currentResponseText = ""
                             
-                            // Clear client history
-                            if (aiClient is AgentClient) {
-                                aiClient.resetChat()
-                            }
+                            // Note: messages and messageHistory will be loaded from persistence for the session
+                            // If user wants a truly fresh start, they should terminate the session first
                             
-                            android.util.Log.d("AgentScreen", "New session created - cleared session $sessionId")
+                            android.util.Log.d("AgentScreen", "New session opened - history preserved for session $sessionId")
                         }
                     }
                 ) {
@@ -2746,11 +2773,27 @@ fun AgentScreen(
                         }
                         aiClient is CliBasedAgentClient -> {
                             // CLI agent doesn't support continuation - just send a new message
+                            // Parse memory and system context for continuation
+                            val previousMessagesForContinue = messages.filter { it.isUser || it.text != "Thinking..." }
+                            val memoryForContinue = if (previousMessagesForContinue.isNotEmpty()) {
+                                val parsedMemory = AgentMemory.parseMemoryFromHistory(previousMessagesForContinue, workspaceRoot)
+                                AgentMemory.formatMemoryForPrompt(parsedMemory)
+                            } else {
+                                null
+                            }
+                            val systemContextForContinue = try {
+                                SystemInfoService.generateSystemContext(workspaceRoot)
+                            } catch (e: Exception) {
+                                null
+                            }
+                            
                             (aiClient as CliBasedAgentClient).sendMessage(
                                 userMessage = "Continue from previous conversation",
                                 onChunk = { },
                                 onToolCall = { },
-                                onToolResult = { _, _ -> }
+                                onToolResult = { _, _ -> },
+                                memory = memoryForContinue,
+                                systemContext = systemContextForContinue
                             )
                         }
                         else -> {

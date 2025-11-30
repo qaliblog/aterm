@@ -53,7 +53,8 @@ data class SessionMetadata(
     val workspaceRoot: String,
     val isPaused: Boolean,
     val lastPrompt: String? = null,
-    val currentResponseText: String? = null
+    val currentResponseText: String? = null,
+    val memory: String? = null  // Serialized AgentMemory.Memory as JSON
 )
 
 object HistoryPersistenceService {

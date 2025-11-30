@@ -37,7 +37,9 @@ class CliBasedAgentClient(
         onChunk: (String) -> Unit,
         onToolCall: (FunctionCall) -> Unit,
         onToolResult: (String, Map<String, Any>) -> Unit,
-        scriptPath: String? = null
+        scriptPath: String? = null,
+        memory: String? = null,  // Agent memory context from previous interactions
+        systemContext: String? = null  // System information (OS, package manager, etc.)
     ): Flow<AgentEvent> = channelFlow {
         val startTime = System.currentTimeMillis()
         var eventCount = 0
@@ -62,7 +64,7 @@ class CliBasedAgentClient(
                         PpeScriptLoader.loadScript(scriptFile)
                     } else {
                         Log.d("CliBasedAgentClient", "Script file not found, using inline default")
-                        createInlineDefaultScript(userMessage)
+                        createInlineDefaultScript(userMessage, memory, systemContext)
                     }
                 }
                 defaultScriptPath != null -> {
@@ -72,7 +74,7 @@ class CliBasedAgentClient(
                         PpeScriptLoader.loadScript(scriptFile)
                     } else {
                         Log.d("CliBasedAgentClient", "Default script file not found, using inline default")
-                        createInlineDefaultScript(userMessage)
+                        createInlineDefaultScript(userMessage, memory, systemContext)
                     }
                 }
                 else -> {
@@ -84,7 +86,7 @@ class CliBasedAgentClient(
                     } else {
                         Log.d("CliBasedAgentClient", "No script file found, using inline default")
                         // Use inline default script
-                        createInlineDefaultScript(userMessage)
+                        createInlineDefaultScript(userMessage, memory, systemContext)
                     }
                 }
             }
@@ -277,7 +279,41 @@ ${'$'}echo: "?=response"
     /**
      * Create an inline default script (when file doesn't exist)
      */
-    private fun createInlineDefaultScript(userMessage: String): PpeScript {
+    private fun createInlineDefaultScript(userMessage: String, memory: String? = null, systemContext: String? = null): PpeScript {
+        // Build system prompt with context
+        val systemPrompt = buildString {
+            appendLine("You are a CLI agent that helps users complete software tasks.")
+            appendLine()
+            
+            // Add system context if available
+            if (systemContext != null && systemContext.isNotEmpty()) {
+                appendLine(systemContext)
+                appendLine()
+            }
+            
+            // Add memory if available (for subsequent prompts in same session)
+            if (memory != null && memory.isNotEmpty()) {
+                appendLine(memory)
+                appendLine()
+            }
+            
+            appendLine("Rules:")
+            appendLine("- Use tools to complete tasks. Don't just plan - implement.")
+            appendLine("- Read existing files (read tool) before modifying them to keep code consistent.")
+            appendLine("- Use write_file to create/modify files. Use shell to run commands.")
+            appendLine("- Complete the entire task. Keep working until done.")
+            appendLine("- For Node.js projects: create package.json, server files, HTML, CSS, and JavaScript.")
+            appendLine("- After each tool call, continue with the next step automatically.")
+            appendLine("- Maintain code coherence: check existing code structure and style before writing new code.")
+            appendLine("- IMPORTANT: Code dependency matrix is maintained automatically. When writing files, check the relativeness information in tool results. Only use imports/exports that exist in related files. Do not add extra imports or unrelated function names.")
+            
+            // Add system-specific guidance if context is available
+            if (systemContext != null && systemContext.contains("Package Manager")) {
+                appendLine()
+                appendLine("- IMPORTANT: Use the correct package manager commands for this system. Check the system information above for the correct commands.")
+            }
+        }
+        
         return PpeScript(
             parameters = mapOf("userMessage" to userMessage),
             turns = listOf(
@@ -285,17 +321,7 @@ ${'$'}echo: "?=response"
                     messages = listOf(
                         com.qali.aterm.agent.ppe.models.PpeMessage(
                             role = "system",
-                            content = """You are a CLI agent that helps users complete software tasks.
-
-Rules:
-- Use tools to complete tasks. Don't just plan - implement.
-- Read existing files (read tool) before modifying them to keep code consistent.
-- Use write_file to create/modify files. Use shell to run commands.
-- Complete the entire task. Keep working until done.
-- For Node.js projects: create package.json, server files, HTML, CSS, and JavaScript.
-- After each tool call, continue with the next step automatically.
-- Maintain code coherence: check existing code structure and style before writing new code.
-- IMPORTANT: Code dependency matrix is maintained automatically. When writing files, check the relativeness information in tool results. Only use imports/exports that exist in related files. Do not add extra imports or unrelated function names."""
+                            content = systemPrompt.trim()
                         ),
                         com.qali.aterm.agent.ppe.models.PpeMessage(
                             role = "user",
