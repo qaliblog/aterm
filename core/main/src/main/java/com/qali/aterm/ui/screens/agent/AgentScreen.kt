@@ -46,6 +46,7 @@ import com.qali.aterm.agent.ppe.CliBasedAgentClient
 import com.qali.aterm.agent.tools.ToolResult
 import com.qali.aterm.agent.utils.AgentMemory
 import com.qali.aterm.agent.SystemInfoService
+import com.google.gson.Gson
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.ui.screens.terminal.changeSession
 import com.rk.settings.Settings
@@ -1732,7 +1733,7 @@ fun AgentScreen(
             null
         }
         val memoryJson = parsedMemory?.let { 
-            com.google.gson.Gson().toJson(it)
+            Gson().toJson(it)
         }
         
         // Save session metadata (workspace, pause state, memory, etc.)
