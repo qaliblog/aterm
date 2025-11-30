@@ -395,8 +395,28 @@ class PpeExecutionEngine(
         onToolCall: (FunctionCall) -> Unit,
         onToolResult: (String, Map<String, Any>) -> Unit
     ): PpeApiResponse? {
-        // Add tool result to history and continue
+        // Build messages with tool result for continuation
         val messages = chatHistory.toMutableList()
+        
+        // Add tool result to messages (as function response)
+        messages.add(
+            Content(
+                role = "user",
+                parts = listOf(
+                    Part.FunctionResponsePart(
+                        functionResponse = FunctionResponse(
+                            name = functionCall.name,
+                            response = when {
+                                toolResult.error != null -> mapOf("error" to toolResult.error.message)
+                                toolResult.llmContent is String -> mapOf("output" to toolResult.llmContent)
+                                else -> mapOf("output" to "Tool execution succeeded.")
+                            },
+                            id = functionCall.id ?: ""
+                        )
+                    )
+                )
+            )
+        )
         
         // Make continuation API call
         val tools = if (toolRegistry.getAllTools().isNotEmpty()) {
@@ -414,7 +434,46 @@ class PpeExecutionEngine(
             tools = tools
         )
         
-        return result.getOrNull()
+        val continuationResponse = result.getOrNull()
+        
+        // Emit continuation response chunks to UI
+        if (continuationResponse != null) {
+            // Handle function calls from continuation response
+            if (continuationResponse.functionCalls.isNotEmpty()) {
+                for (nextFunctionCall in continuationResponse.functionCalls) {
+                    onToolCall(nextFunctionCall)
+                    
+                    // Execute tool
+                    val nextToolResult = executeTool(nextFunctionCall, onToolResult)
+                    
+                    // Recursively continue with next tool result
+                    val nextContinuation = continueWithToolResult(
+                        messages + listOf(
+                            Content(
+                                role = "model",
+                                parts = listOf(Part.TextPart(text = continuationResponse.text))
+                            )
+                        ),
+                        nextFunctionCall,
+                        nextToolResult,
+                        script,
+                        onChunk,
+                        onToolCall,
+                        onToolResult
+                    )
+                    
+                    // If there's another continuation, use it instead
+                    if (nextContinuation != null) {
+                        return nextContinuation
+                    }
+                }
+            } else {
+                // Emit text response as chunks
+                onChunk(continuationResponse.text)
+            }
+        }
+        
+        return continuationResponse
     }
     
     /**
