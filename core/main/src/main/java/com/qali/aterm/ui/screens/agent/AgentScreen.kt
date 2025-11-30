@@ -1920,17 +1920,22 @@ fun AgentScreen(
                     }
                 }
                 
-                items(messages) { message ->
+                items(
+                    items = messages,
+                    key = { message -> "${message.timestamp}-${message.text.take(50)}" }
+                ) { message ->
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         MessageBubble(message = message)
-                        // Show diff card if message has file diff
+                        // Show diff card if message has file diff - use key to prevent disappearing
                         message.fileDiff?.let { diff ->
-                            CodeDiffCard(
-                                fileDiff = diff,
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            )
+                            key("${message.timestamp}-${diff.filePath}") {
+                                CodeDiffCard(
+                                    fileDiff = diff,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                )
+                            }
                         }
                     }
                 }
