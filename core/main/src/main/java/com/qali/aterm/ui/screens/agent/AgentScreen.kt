@@ -41,6 +41,7 @@ import com.qali.aterm.agent.SessionMetadata
 import com.qali.aterm.agent.client.AgentClient
 import com.qali.aterm.agent.client.AgentEvent
 import com.qali.aterm.agent.client.OllamaClient
+import com.qali.aterm.agent.ppe.CliBasedAgentClient
 import com.qali.aterm.agent.tools.ToolResult
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.ui.screens.terminal.changeSession
@@ -1685,6 +1686,7 @@ fun AgentScreen(
             if (aiClient is AgentClient) {
                 aiClient.restoreHistoryFromMessages(loadedHistory)
             }
+            // CliBasedAgentClient doesn't need history restoration (uses script-based approach)
             android.util.Log.d("AgentScreen", "Loaded ${loadedHistory.size} messages for session $sessionId")
         } else {
             messages = emptyList()
@@ -1693,6 +1695,7 @@ fun AgentScreen(
             if (aiClient is AgentClient) {
                 aiClient.resetChat()
             }
+            // CliBasedAgentClient doesn't need reset (stateless)
         }
     }
     
@@ -1777,7 +1780,11 @@ fun AgentScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = if (useOllama) "Ollama AI Agent" else "Gemini AI Agent",
+                            text = when {
+                                useOllama -> "Ollama AI Agent"
+                                AgentService.isUsingCliAgent() -> "CLI-Based AI Agent"
+                                else -> "Gemini AI Agent"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1981,9 +1988,10 @@ fun AgentScreen(
                                         }
                                         
                                         try {
-                                            android.util.Log.d("AgentScreen", "Creating stream, useOllama: $useOllama")
-                                            val stream = if (useOllama) {
-                                                (aiClient as OllamaClient).sendMessage(
+                                            android.util.Log.d("AgentScreen", "Creating stream, useOllama: $useOllama, useCliAgent: ${AgentService.isUsingCliAgent()}")
+                                            val stream = when {
+                                                useOllama -> {
+                                                    (aiClient as OllamaClient).sendMessage(
                                                     userMessage = prompt,
                                                     onChunk = { chunk ->
                                                         // Update UI state on main dispatcher - launch coroutine since callback is not suspend
@@ -2020,8 +2028,45 @@ fun AgentScreen(
                                                         }
                                                     }
                                                 )
-                                            } else {
-                                                (aiClient as AgentClient).sendMessage(
+                                                }
+                                                aiClient is CliBasedAgentClient -> {
+                                                    (aiClient as CliBasedAgentClient).sendMessage(
+                                                        userMessage = prompt,
+                                                        onChunk = { chunk ->
+                                                            scope.launch(Dispatchers.Main) {
+                                                                currentResponseText += chunk
+                                                                val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                                                messages = currentMessages + AgentMessage(
+                                                                    text = currentResponseText,
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                            }
+                                                        },
+                                                        onToolCall = { functionCall ->
+                                                            scope.launch(Dispatchers.Main) {
+                                                                val toolMessage = AgentMessage(
+                                                                    text = "🔧 Calling tool: ${functionCall.name}",
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                                messages = messages + toolMessage
+                                                            }
+                                                        },
+                                                        onToolResult = { toolName, args ->
+                                                            scope.launch(Dispatchers.Main) {
+                                                                val resultMessage = AgentMessage(
+                                                                    text = "✅ Tool '$toolName' completed",
+                                                                    isUser = false,
+                                                                    timestamp = System.currentTimeMillis()
+                                                                )
+                                                                messages = messages + resultMessage
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                                else -> {
+                                                    (aiClient as AgentClient).sendMessage(
                                                     userMessage = prompt,
                                                     onChunk = { chunk ->
                                                         // Update UI state on main dispatcher - launch coroutine since callback is not suspend
@@ -2578,10 +2623,10 @@ fun AgentScreen(
                     messages = messages + loadingMessage
                     
                     // Get the AI client
-                    val aiClient = if (AgentService.isUsingOllama()) {
-                        AgentService.getOllamaClient()
-                    } else {
-                        AgentService.getClient()
+                    val aiClient = when {
+                        AgentService.isUsingOllama() -> AgentService.getOllamaClient()
+                        AgentService.isUsingCliAgent() -> AgentService.getCliClient()
+                        else -> AgentService.getClient()
                     }
                     
                     if (aiClient == null) {
@@ -2596,9 +2641,10 @@ fun AgentScreen(
                     
                     // Use continuation message to resume from chat history
                     currentResponseText = ""
-                    val stream = if (aiClient is OllamaClient) {
-                        (aiClient as OllamaClient).sendMessage(
-                            userMessage = "__CONTINUE__", // Special message to continue from chat history
+                    val stream = when {
+                        aiClient is OllamaClient -> {
+                            (aiClient as OllamaClient).sendMessage(
+                                userMessage = "__CONTINUE__", // Special message to continue from chat history
                             onChunk = { chunk ->
                                 currentResponseText += chunk
                                 val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
@@ -2625,9 +2671,11 @@ fun AgentScreen(
                                 messages = messages + resultMessage
                             }
                         )
-                    } else {
-                        (aiClient as AgentClient).sendMessage(
-                            userMessage = "__CONTINUE__", // Special message to continue from chat history
+                        }
+                        aiClient is CliBasedAgentClient -> {
+                            // CLI agent doesn't support continuation - just send a new message
+                            (aiClient as CliBasedAgentClient).sendMessage(
+                                userMessage = "Continue from previous conversation",
                             onChunk = { chunk ->
                                 currentResponseText += chunk
                                 val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages

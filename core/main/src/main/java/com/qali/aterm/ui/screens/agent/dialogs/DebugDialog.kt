@@ -241,8 +241,23 @@ fun DebugDialog(
             // Configuration
             appendLine("--- Configuration ---")
             val currentProvider = ApiProviderManager.selectedProvider
-            val providerName = if (useOllama) "Ollama" else currentProvider.displayName
-            appendLine("Provider: $providerName")
+            val useCliAgent = AgentService.isUsingCliAgent()
+            val providerName = when {
+                useOllama -> "Ollama"
+                useCliAgent -> "CLI-Based Agent (PPE)"
+                else -> currentProvider.displayName
+            }
+            appendLine("Agent Type: $providerName")
+            if (useCliAgent) {
+                appendLine("Agent Engine: Programmable Prompt Engine (PPE)")
+                appendLine("Script-Based: Yes")
+                val cliClient = AgentService.getCliClient()
+                if (cliClient != null) {
+                    cliClient.defaultScriptPath?.let {
+                        appendLine("Default Script: $it")
+                    } ?: appendLine("Default Script: Using inline default")
+                }
+            }
             if (useOllama) {
                 appendLine("Host: $ollamaHost")
                 appendLine("Port: $ollamaPort")
