@@ -689,179 +689,184 @@ class PpeExecutionEngine(
         
         val continuationResponse = result.getOrNull()
         
-        android.util.Log.d("PpeExecutionEngine", "continueWithToolResult: got continuation response - text length: ${continuationResponse?.text?.length ?: 0}, functionCalls: ${continuationResponse?.functionCalls?.size ?: 0}, recursionDepth: $recursionDepth")
+        android.util.Log.d("PpeExecutionEngine", "continueWithToolResult: got continuation response - text length: ${continuationResponse?.text?.length ?: 0}, functionCalls: ${continuationResponse?.functionCalls?.size ?: 0}, recursionDepth: $recursionDepth, tool: ${functionCall.name}")
+        
+        if (continuationResponse == null) {
+            android.util.Log.w("PpeExecutionEngine", "Continuation response is null - this should not happen")
+            return null
+        }
         
         // Emit continuation response chunks to UI
-        if (continuationResponse != null) {
-            // Always emit text first (even if there are function calls)
-            if (continuationResponse.text.isNotEmpty()) {
-                onChunk(continuationResponse.text)
-            } else if (continuationResponse.functionCalls.isNotEmpty()) {
-                // If no text but there are function calls, emit a brief message
-                onChunk("Continuing with next steps...\n")
-            } else {
-                // If response is empty and no function calls, the AI might have stopped
-                // This shouldn't happen often, but log it for debugging
-                android.util.Log.d("PpeExecutionEngine", "Continuation response is empty with no function calls")
-            }
-            
-            // Handle function calls from continuation response
-            android.util.Log.d("PpeExecutionEngine", "Checking continuation response - functionCalls size: ${continuationResponse.functionCalls.size}, isEmpty: ${continuationResponse.functionCalls.isEmpty()}")
-            if (continuationResponse.functionCalls.isNotEmpty()) {
-                android.util.Log.d("PpeExecutionEngine", "Continuation has ${continuationResponse.functionCalls.size} function calls - processing them")
-                var executedAnyCall = false
-                for (nextFunctionCall in continuationResponse.functionCalls) {
-                    // Skip write_todos if it was already called in recent messages
-                    val recentToolCalls = messages.takeLast(10).flatMap { content ->
-                        content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
-                    }
-                    val writeTodosCount = recentToolCalls.count { it == "write_todos" }
-                    
-                    if (nextFunctionCall.name == "write_todos" && writeTodosCount >= 1) {
-                        android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in continuation - already called")
-                        continue
-                    }
-                    
-                    executedAnyCall = true
-                    onToolCall(nextFunctionCall)
-                    
-                    // Execute tool
-                    val nextToolResult = executeTool(nextFunctionCall, onToolResult)
-                    
-                    // Add the continuation response text to messages before recursive call
-                    val updatedMessages = messages + listOf(
-                        Content(
-                            role = "model",
-                            parts = listOf(Part.TextPart(text = continuationResponse.text))
-                        )
-                    )
-                    
-                    // Recursively continue with next tool result (increment recursion depth)
-                    val nextContinuation = continueWithToolResult(
-                        updatedMessages,
-                        nextFunctionCall,
-                        nextToolResult,
-                        script,
-                        onChunk,
-                        onToolCall,
-                        onToolResult,
-                        recursionDepth + 1
-                    )
-                    
-                    // If there's another continuation, use it instead
-                    if (nextContinuation != null) {
-                        return nextContinuation
-                    }
-                }
-                
-                // If all function calls were skipped, make another API call to get a different response
-                if (!executedAnyCall) {
-                    android.util.Log.w("PpeExecutionEngine", "All function calls from continuation were skipped - making retry API call")
-                    val updatedMessages = messages + listOf(
-                        Content(
-                            role = "model",
-                            parts = listOf(Part.TextPart(text = continuationResponse.text))
-                        )
-                    )
-                    val retryMessages = updatedMessages + listOf(
-                        Content(
-                            role = "user",
-                            parts = listOf(Part.TextPart(text = "Do not call write_todos again. Start implementing the tasks by creating files. Use write_file, edit, or shell tools."))
-                        )
-                    )
-                    
-                    val retryResult = apiClient.callApi(
-                        messages = retryMessages,
-                        model = null,
-                        temperature = null,
-                        topP = null,
-                        topK = null,
-                        tools = if (toolRegistry.getAllTools().isNotEmpty()) {
-                            listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
-                        } else {
-                            null
-                        }
-                    )
-                    
-                    val retryResponse = retryResult.getOrNull()
-                    if (retryResponse != null) {
-                        if (retryResponse.text.isNotEmpty()) {
-                            onChunk(retryResponse.text)
-                        }
-                        
-                        if (retryResponse.functionCalls.isNotEmpty()) {
-                            for (retryFunctionCall in retryResponse.functionCalls) {
-                                if (retryFunctionCall.name == "write_todos") {
-                                    android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in retry")
-                                    continue
-                                }
-                                
-                                onToolCall(retryFunctionCall)
-                                val retryToolResult = executeTool(retryFunctionCall, onToolResult)
-                                
-                                val retryContinuation = continueWithToolResult(
-                                    retryMessages + listOf(
-                                        Content(
-                                            role = "model",
-                                            parts = listOf(Part.TextPart(text = retryResponse.text))
-                                        )
-                                    ),
-                                    retryFunctionCall,
-                                    retryToolResult,
-                                    script,
-                                    onChunk,
-                                    onToolCall,
-                                    onToolResult,
-                                    recursionDepth + 1
-                                )
-                                
-                                if (retryContinuation != null) {
-                                    return retryContinuation
-                                }
-                            }
-                        }
-                        
-                        return retryResponse
-                    }
-                }
-            } else {
-                // No function calls in continuation response - check if we should continue
-                android.util.Log.d("PpeExecutionEngine", "Continuation response has no function calls (text: '${continuationResponse.text.take(50)}...') - checking if should continue")
-                // Continue if: response is empty OR (response has text but we should prompt for next steps)
+        // Always emit text first (even if there are function calls)
+        if (continuationResponse.text.isNotEmpty()) {
+            onChunk(continuationResponse.text)
+        } else if (continuationResponse.functionCalls.isNotEmpty()) {
+            // If no text but there are function calls, emit a brief message
+            onChunk("Continuing with next steps...\n")
+        } else {
+            // If response is empty and no function calls, the AI might have stopped
+            // This shouldn't happen often, but log it for debugging
+            android.util.Log.d("PpeExecutionEngine", "Continuation response is empty with no function calls")
+        }
+        
+        // Handle function calls from continuation response
+        android.util.Log.d("PpeExecutionEngine", "Checking continuation response - functionCalls size: ${continuationResponse.functionCalls.size}, isEmpty: ${continuationResponse.functionCalls.isEmpty()}")
+        if (continuationResponse.functionCalls.isNotEmpty()) {
+            android.util.Log.d("PpeExecutionEngine", "Continuation has ${continuationResponse.functionCalls.size} function calls - processing them")
+            var executedAnyCall = false
+            for (nextFunctionCall in continuationResponse.functionCalls) {
+                // Skip write_todos if it was already called in recent messages
                 val recentToolCalls = messages.takeLast(10).flatMap { content ->
                     content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
                 }
-                val sameToolCallCount = recentToolCalls.count { it == functionCall.name }
-                android.util.Log.d("PpeExecutionEngine", "Recent tool calls: $recentToolCalls, sameToolCallCount: $sameToolCallCount")
+                val writeTodosCount = recentToolCalls.count { it == "write_todos" }
                 
-                // Continue if:
-                // 1. Response is empty (AI might be waiting for next instruction)
-                // 2. Response has text but no function calls (AI provided plan/explanation, should continue implementing)
-                // 3. We haven't exceeded recursion limits
-                // For write_file, allow more calls since we need multiple files for a complete project
-                val maxSameToolCalls = if (functionCall.name == "write_file") 10 else 3
-                val hasTextButNoCalls = continuationResponse.text.isNotEmpty() && continuationResponse.functionCalls.isEmpty()
-                val isEmpty = continuationResponse.text.isEmpty()
-                val shouldContinue = (isEmpty || hasTextButNoCalls) && 
-                    sameToolCallCount < maxSameToolCalls && 
-                    recursionDepth < 5
+                if (nextFunctionCall.name == "write_todos" && writeTodosCount >= 1) {
+                    android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in continuation - already called")
+                    continue
+                }
                 
-                Log.d("PpeExecutionEngine", "Continuation decision - tool: ${functionCall.name}, hasTextButNoCalls: $hasTextButNoCalls, isEmpty: $isEmpty, sameToolCallCount: $sameToolCallCount, maxSameToolCalls: $maxSameToolCalls, recursionDepth: $recursionDepth, shouldContinue: $shouldContinue")
+                executedAnyCall = true
+                onToolCall(nextFunctionCall)
                 
-                if (shouldContinue) {
-                    // Make another API call to prompt continuation
-                    val promptText = when {
-                        functionCall.name == "write_todos" -> "The todo list has been created. Now proceed with implementing the tasks. Start by creating the project files (package.json, server files, etc.) and continue until the task is complete. Do not call write_todos again."
-                        functionCall.name == "write_file" -> "Good progress! Continue creating the remaining files needed for the project. For a complete Node.js webapp, you typically need: package.json, HTML file, CSS file, and any additional JavaScript files. Keep creating files until the project is complete."
-                        hasTextButNoCalls -> "You've provided a plan or explanation. Now proceed with implementing it. Use the available tools to create files, run commands, and complete the task. Continue until finished."
-                        else -> "Please continue with the next steps to complete the task. Use the available tools to make progress."
+                // Execute tool
+                val nextToolResult = executeTool(nextFunctionCall, onToolResult)
+                
+                // Add the continuation response text to messages before recursive call
+                val updatedMessages = messages + listOf(
+                    Content(
+                        role = "model",
+                        parts = listOf(Part.TextPart(text = continuationResponse.text))
+                    )
+                )
+                
+                // Recursively continue with next tool result (increment recursion depth)
+                val nextContinuation = continueWithToolResult(
+                    updatedMessages,
+                    nextFunctionCall,
+                    nextToolResult,
+                    script,
+                    onChunk,
+                    onToolCall,
+                    onToolResult,
+                    recursionDepth + 1
+                )
+                
+                // If there's another continuation, use it instead
+                if (nextContinuation != null) {
+                    return nextContinuation
+                }
+            }
+            
+            // If all function calls were skipped, make another API call to get a different response
+            if (!executedAnyCall) {
+                android.util.Log.w("PpeExecutionEngine", "All function calls from continuation were skipped - making retry API call")
+                val updatedMessages = messages + listOf(
+                    Content(
+                        role = "model",
+                        parts = listOf(Part.TextPart(text = continuationResponse.text))
+                    )
+                )
+                val retryMessages = updatedMessages + listOf(
+                    Content(
+                        role = "user",
+                        parts = listOf(Part.TextPart(text = "Do not call write_todos again. Start implementing the tasks by creating files. Use write_file, edit, or shell tools."))
+                    )
+                )
+                
+                val retryResult = apiClient.callApi(
+                    messages = retryMessages,
+                    model = null,
+                    temperature = null,
+                    topP = null,
+                    topK = null,
+                    tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                        listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                    } else {
+                        null
+                    }
+                )
+                
+                val retryResponse = retryResult.getOrNull()
+                if (retryResponse != null) {
+                    if (retryResponse.text.isNotEmpty()) {
+                        onChunk(retryResponse.text)
                     }
                     
-                    Log.d("PpeExecutionEngine", "Prompting continuation with: ${promptText.take(100)}...")
+                    if (retryResponse.functionCalls.isNotEmpty()) {
+                        for (retryFunctionCall in retryResponse.functionCalls) {
+                            if (retryFunctionCall.name == "write_todos") {
+                                android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in retry")
+                                continue
+                            }
+                            
+                            onToolCall(retryFunctionCall)
+                            val retryToolResult = executeTool(retryFunctionCall, onToolResult)
+                            
+                            val retryContinuation = continueWithToolResult(
+                                retryMessages + listOf(
+                                    Content(
+                                        role = "model",
+                                        parts = listOf(Part.TextPart(text = retryResponse.text))
+                                    )
+                                ),
+                                retryFunctionCall,
+                                retryToolResult,
+                                script,
+                                onChunk,
+                                onToolCall,
+                                onToolResult,
+                                recursionDepth + 1
+                            )
+                            
+                            if (retryContinuation != null) {
+                                return retryContinuation
+                            }
+                        }
+                    }
                     
-                    // First add the continuation response text (e.g., the todo list) as model message
-                    // Then add the prompt as user message to guide next steps
-                    val promptMessages = messages + listOf(
+                    return retryResponse
+                }
+            }
+        } else {
+            // No function calls in continuation response - check if we should continue
+            val textPreview = if (continuationResponse.text.length > 50) continuationResponse.text.take(50) + "..." else continuationResponse.text
+            android.util.Log.d("PpeExecutionEngine", "Continuation response has no function calls (text length: ${continuationResponse.text.length}, text: '$textPreview') - checking if should continue for tool: ${functionCall.name}")
+            // Continue if: response is empty OR (response has text but we should prompt for next steps)
+            val recentToolCalls = messages.takeLast(10).flatMap { content ->
+                content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
+            }
+            val sameToolCallCount = recentToolCalls.count { it == functionCall.name }
+            android.util.Log.d("PpeExecutionEngine", "Recent tool calls: $recentToolCalls, sameToolCallCount: $sameToolCallCount")
+            
+            // Continue if:
+            // 1. Response is empty (AI might be waiting for next instruction)
+            // 2. Response has text but no function calls (AI provided plan/explanation, should continue implementing)
+            // 3. We haven't exceeded recursion limits
+            // For write_file, allow more calls since we need multiple files for a complete project
+            val maxSameToolCalls = if (functionCall.name == "write_file") 10 else 3
+            val hasTextButNoCalls = continuationResponse.text.isNotEmpty() && continuationResponse.functionCalls.isEmpty()
+            val isEmpty = continuationResponse.text.isEmpty()
+            val shouldContinue = (isEmpty || hasTextButNoCalls) && 
+                sameToolCallCount < maxSameToolCalls && 
+                recursionDepth < 5
+            
+            Log.d("PpeExecutionEngine", "Continuation decision - tool: ${functionCall.name}, hasTextButNoCalls: $hasTextButNoCalls, isEmpty: $isEmpty, sameToolCallCount: $sameToolCallCount, maxSameToolCalls: $maxSameToolCalls, recursionDepth: $recursionDepth, shouldContinue: $shouldContinue")
+            
+            if (shouldContinue) {
+                // Make another API call to prompt continuation
+                val promptText = when {
+                    functionCall.name == "write_todos" -> "The todo list has been created. Now proceed with implementing the tasks. Start by creating the project files (package.json, server files, etc.) and continue until the task is complete. Do not call write_todos again."
+                    functionCall.name == "write_file" -> "Good progress! Continue creating the remaining files needed for the project. For a complete Node.js webapp, you typically need: package.json, HTML file, CSS file, and any additional JavaScript files. Keep creating files until the project is complete."
+                    hasTextButNoCalls -> "You've provided a plan or explanation. Now proceed with implementing it. Use the available tools to create files, run commands, and complete the task. Continue until finished."
+                    else -> "Please continue with the next steps to complete the task. Use the available tools to make progress."
+                }
+                
+                Log.d("PpeExecutionEngine", "Prompting continuation with: ${promptText.take(100)}...")
+                
+                // First add the continuation response text (e.g., the todo list) as model message
+                // Then add the prompt as user message to guide next steps
+                val promptMessages = messages + listOf(
                         Content(
                             role = "model",
                             parts = listOf(Part.TextPart(text = continuationResponse.text))
