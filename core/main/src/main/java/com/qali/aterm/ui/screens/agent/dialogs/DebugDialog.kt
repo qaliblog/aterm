@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qali.aterm.api.ApiProviderManager
+import com.qali.aterm.agent.AgentService
 import com.qali.aterm.ui.screens.agent.models.AgentMessage
 import com.qali.aterm.ui.screens.agent.utils.readLogcatLogs
 import kotlinx.coroutines.Dispatchers
@@ -252,11 +253,9 @@ fun DebugDialog(
                 appendLine("Agent Engine: Programmable Prompt Engine (PPE)")
                 appendLine("Script-Based: Yes")
                 val cliClient = AgentService.getCliClient()
-                if (cliClient != null) {
-                    cliClient.defaultScriptPath?.let {
-                        appendLine("Default Script: $it")
-                    } ?: appendLine("Default Script: Using inline default")
-                }
+                cliClient?.defaultScriptPath?.let {
+                    appendLine("Default Script: $it")
+                } ?: appendLine("Default Script: Using inline default")
             }
             if (useOllama) {
                 appendLine("Host: $ollamaHost")

@@ -115,4 +115,7 @@ dependencies {
 
     api(project(":core:resources"))
     api(project(":core:components"))
+    
+    // YAML parsing for PPE scripts
+    api(libs.snakeyaml.engine)
 }

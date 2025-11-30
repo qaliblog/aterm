@@ -26,7 +26,7 @@ object PpeScriptParserEnhanced {
      */
     fun parse(content: String, sourcePath: String? = null): PpeScript {
         // Split content by --- or *** to separate front-matter from turns
-        val parts = content.split(Regex("^---|^\\*\\*\\*"), ignoreCase = false)
+        val parts = content.split(Regex("(^---|^\\*\\*\\*)"), RegexOption.MULTILINE)
         
         if (parts.isEmpty()) {
             return PpeScript(sourcePath = sourcePath)
@@ -675,50 +675,6 @@ object PpeScriptParserEnhanced {
             params[key] = value
         }
         return params
-    }
-    
-    /**
-     * Parse an instruction (e.g., $echo: "text" or $set: key=value)
-     */
-    private fun parseInstruction(instructionStr: String): PpeInstruction? {
-        val trimmed = instructionStr.substring(1).trim() // Remove $
-        
-        // Check for : separator (e.g., $echo: "text")
-        val colonIndex = trimmed.indexOf(':')
-        if (colonIndex > 0) {
-            val name = trimmed.substring(0, colonIndex).trim()
-            val value = trimmed.substring(colonIndex + 1).trim()
-            
-            // Check for ?= prefix (template variable reference)
-            val isTemplateRef = value.startsWith("?=")
-            val actualValue = if (isTemplateRef) {
-                value.substring(2).trim()
-            } else {
-                value.removeSurrounding("\"").removeSurrounding("'")
-            }
-            
-            return PpeInstruction(
-                name = name,
-                args = mapOf("value" to actualValue, "isTemplateRef" to isTemplateRef),
-                rawContent = value
-            )
-        }
-        
-        // Check for function call syntax (e.g., $fn(param1=value1))
-        val funcMatch = Regex("""^(\w+)(?:\((.*)\))?$""").find(trimmed)
-        if (funcMatch != null) {
-            val name = funcMatch.groupValues[1]
-            val paramsStr = funcMatch.groupValues.getOrNull(2) ?: ""
-            val args = if (paramsStr.isNotEmpty()) {
-                parseChainParams(paramsStr)
-            } else {
-                emptyMap()
-            }
-            return PpeInstruction(name = name, args = args)
-        }
-        
-        // Simple instruction name
-        return PpeInstruction(name = trimmed, args = emptyMap())
     }
     
     /**

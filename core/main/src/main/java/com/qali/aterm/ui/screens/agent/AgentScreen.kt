@@ -2032,37 +2032,9 @@ fun AgentScreen(
                                                 aiClient is CliBasedAgentClient -> {
                                                     (aiClient as CliBasedAgentClient).sendMessage(
                                                         userMessage = prompt,
-                                                        onChunk = { chunk ->
-                                                            scope.launch(Dispatchers.Main) {
-                                                                currentResponseText += chunk
-                                                                val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
-                                                                messages = currentMessages + AgentMessage(
-                                                                    text = currentResponseText,
-                                                                    isUser = false,
-                                                                    timestamp = System.currentTimeMillis()
-                                                                )
-                                                            }
-                                                        },
-                                                        onToolCall = { functionCall ->
-                                                            scope.launch(Dispatchers.Main) {
-                                                                val toolMessage = AgentMessage(
-                                                                    text = "🔧 Calling tool: ${functionCall.name}",
-                                                                    isUser = false,
-                                                                    timestamp = System.currentTimeMillis()
-                                                                )
-                                                                messages = messages + toolMessage
-                                                            }
-                                                        },
-                                                        onToolResult = { toolName, args ->
-                                                            scope.launch(Dispatchers.Main) {
-                                                                val resultMessage = AgentMessage(
-                                                                    text = "✅ Tool '$toolName' completed",
-                                                                    isUser = false,
-                                                                    timestamp = System.currentTimeMillis()
-                                                                )
-                                                                messages = messages + resultMessage
-                                                            }
-                                                        }
+                                                        onChunk = { },
+                                                        onToolCall = { },
+                                                        onToolResult = { _, _ -> }
                                                     )
                                                 }
                                                 else -> {
@@ -2103,16 +2075,16 @@ fun AgentScreen(
                                                         }
                                                     }
                                                 )
+                                                }
                                             }
                                             
                                             // Collect stream events on IO dispatcher
                                             android.util.Log.d("AgentScreen", "Starting to collect stream events")
-                                            val currentJob = coroutineContext[Job]
                                             try {
                                                 android.util.Log.d("AgentScreen", "About to start stream.collect")
                                                 // Collect on IO dispatcher to avoid blocking main thread
                                                 stream.collect { event ->
-                                                    android.util.Log.d("AgentScreen", "Stream collect lambda called, job active: ${currentJob?.isActive}")
+                                                    android.util.Log.d("AgentScreen", "Stream collect lambda called")
                                                     
                                                     try {
                                                         android.util.Log.d("AgentScreen", "Received stream event: ${event.javaClass.simpleName}")
@@ -2676,32 +2648,42 @@ fun AgentScreen(
                             // CLI agent doesn't support continuation - just send a new message
                             (aiClient as CliBasedAgentClient).sendMessage(
                                 userMessage = "Continue from previous conversation",
-                            onChunk = { chunk ->
-                                currentResponseText += chunk
-                                val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
-                                messages = currentMessages + AgentMessage(
-                                    text = currentResponseText,
-                                    isUser = false,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            },
-                            onToolCall = { functionCall ->
-                                val toolMessage = AgentMessage(
-                                    text = "🔧 Calling tool: ${functionCall.name}",
-                                    isUser = false,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                                messages = messages + toolMessage
-                            },
-                            onToolResult = { toolName, args ->
-                                val resultMessage = AgentMessage(
-                                    text = "✅ Tool '$toolName' completed",
-                                    isUser = false,
-                                    timestamp = System.currentTimeMillis()
-                                )
-                                messages = messages + resultMessage
-                            }
-                        )
+                                onChunk = { },
+                                onToolCall = { },
+                                onToolResult = { _, _ -> }
+                            )
+                        }
+                        else -> {
+                            // Fallback to AgentClient
+                            (aiClient as AgentClient).sendMessage(
+                                userMessage = "__CONTINUE__",
+                                onChunk = { chunk ->
+                                    currentResponseText += chunk
+                                    val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                    messages = currentMessages + AgentMessage(
+                                        text = currentResponseText,
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                },
+                                onToolCall = { functionCall ->
+                                    val toolMessage = AgentMessage(
+                                        text = "🔧 Calling tool: ${functionCall.name}",
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    messages = messages + toolMessage
+                                },
+                                onToolResult = { toolName, args ->
+                                    val resultMessage = AgentMessage(
+                                        text = "✅ Tool '$toolName' completed",
+                                        isUser = false,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    messages = messages + resultMessage
+                                }
+                            )
+                        }
                     }
                     
                     // Collect stream events
@@ -2751,7 +2733,9 @@ fun AgentScreen(
                                     )
                                     messages = if (messages.isNotEmpty()) messages.dropLast(1) + exhaustedMessage else messages + exhaustedMessage
                                 }
-                                else -> {}
+                                is AgentEvent.Done -> {
+                                    // Stream completed
+                                }
                             }
                         }
                     } catch (e: Exception) {

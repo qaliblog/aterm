@@ -4,6 +4,9 @@ import com.qali.aterm.api.ApiProviderManager
 import com.qali.aterm.api.ApiProviderManager.KeysExhaustedException
 import com.qali.aterm.agent.core.*
 import com.qali.aterm.agent.client.api.ApiRequestBuilder
+import com.qali.aterm.agent.client.api.ProviderAdapter
+import com.qali.aterm.agent.client.api.ApiResponseParser
+import com.qali.aterm.agent.tools.ToolResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -100,7 +103,6 @@ class PpeApiClient(
         topK: Int? = null
     ): PpeApiResponse {
         val providerType = ApiProviderManager.selectedProvider
-        val requestBuilder = ApiRequestBuilder()
         
         // Determine endpoint and convert request
         val (url, convertedRequestBody, headers) = when (providerType) {
@@ -111,7 +113,7 @@ class PpeApiClient(
             com.qali.aterm.api.ApiProviderType.OPENAI -> {
                 val url = "https://api.openai.com/v1/chat/completions"
                 val headers = mapOf("Authorization" to "Bearer $apiKey")
-                val convertedBody = requestBuilder.convertRequestToOpenAI(requestBody, model)
+                val convertedBody = ProviderAdapter.convertRequestToOpenAI(requestBody, model)
                 // Add parameters to OpenAI request
                 temperature?.let { convertedBody.put("temperature", it) }
                 topP?.let { convertedBody.put("top_p", it) }
@@ -123,7 +125,7 @@ class PpeApiClient(
                     "x-api-key" to apiKey,
                     "anthropic-version" to "2023-06-01"
                 )
-                val convertedBody = requestBuilder.convertRequestToAnthropic(requestBody, model)
+                val convertedBody = ProviderAdapter.convertRequestToAnthropic(requestBody, model)
                 // Add parameters to Anthropic request
                 temperature?.let { convertedBody.put("temperature", it) }
                 topP?.let { convertedBody.put("top_p", it) }
@@ -137,7 +139,7 @@ class PpeApiClient(
                         else -> "http://localhost:11434"
                     }
                     val url = "$baseUrl/api/chat"
-                    val convertedBody = requestBuilder.convertRequestToOllama(requestBody, model)
+                    val convertedBody = ProviderAdapter.convertRequestToOllama(requestBody, model)
                     Triple(url, convertedBody, emptyMap<String, String>())
                 } else {
                     Triple(apiKey, requestBody, emptyMap<String, String>())

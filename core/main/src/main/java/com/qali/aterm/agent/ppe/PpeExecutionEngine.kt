@@ -55,7 +55,7 @@ class PpeExecutionEngine(
                     val processedContent = PpeMessageProcessor.processMessage(
                         message,
                         currentVariables,
-                        this,
+                        this@PpeExecutionEngine,
                         script.sourcePath
                     )
                     
@@ -203,12 +203,12 @@ class PpeExecutionEngine(
                         // Auto-execute AI on the last user message
                         val lastUserMessage = turn.messages.lastOrNull { it.role == "user" }
                         if (lastUserMessage != null) {
-                            val processedContent = PpeMessageProcessor.processMessage(
-                                lastUserMessage,
-                                currentVariables,
-                                this,
-                                script.sourcePath
-                            )
+                        val processedContent = PpeMessageProcessor.processMessage(
+                            lastUserMessage,
+                            currentVariables,
+                            this@PpeExecutionEngine,
+                            script.sourcePath
+                        )
                             
                             // Create a message with AI placeholder
                             val autoMessage = lastUserMessage.copy(
@@ -332,7 +332,14 @@ class PpeExecutionEngine(
         }
         
         // Make API call (non-streaming) with all parameters
-        val result = apiClient.callApi(messages, model, temperature, topP, topK, tools)
+        val result = apiClient.callApi(
+            messages = messages,
+            model = model,
+            temperature = temperature,
+            topP = topP,
+            topK = topK,
+            tools = tools
+        )
         
         var apiResponse = result.getOrElse {
             throw Exception("API call failed: ${it.message}")
@@ -409,7 +416,7 @@ class PpeExecutionEngine(
         }
         
         // Validate and convert parameters
-        val params = tool.validateParams(functionCall.args)
+        val params = tool?.validateParams(functionCall.args)
         if (params == null) {
             return com.qali.aterm.agent.tools.ToolResult(
                 llmContent = "Invalid parameters for tool: ${functionCall.name}",
@@ -421,8 +428,14 @@ class PpeExecutionEngine(
         }
         
         // Create invocation and execute
-        val invocation = tool.createInvocation(params)
-        val result = invocation.execute()
+        val invocation = tool?.createInvocation(params)
+        val result = invocation?.execute() ?: com.qali.aterm.agent.tools.ToolResult(
+            llmContent = "Failed to execute tool: ${functionCall.name}",
+            error = com.qali.aterm.agent.tools.ToolError(
+                message = "Execution failed",
+                type = com.qali.aterm.agent.tools.ToolErrorType.EXECUTION_ERROR
+            )
+        )
         
         // Store result in queue for file diff extraction (FIFO)
         toolResultQueue.add(Pair(functionCall.name, result))

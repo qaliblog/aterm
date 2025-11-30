@@ -25,7 +25,7 @@ object PpeScriptParser {
      */
     fun parse(content: String, sourcePath: String? = null): PpeScript {
         // Split content by --- or *** to separate front-matter from turns
-        val parts = content.split(Regex("^---|^\\*\\*\\*"), ignoreCase = false)
+        val parts = content.split(Regex("(^---|^\\*\\*\\*)"), RegexOption.MULTILINE)
         
         if (parts.isEmpty()) {
             return PpeScript(sourcePath = sourcePath)

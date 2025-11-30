@@ -29,7 +29,7 @@ object PpeToolAdapter {
         }
         
         // Validate and convert parameters
-        val params = tool.validateParams(functionCall.args)
+        val params = tool?.validateParams(functionCall.args)
         if (params == null) {
             return ToolResult(
                 llmContent = "Invalid parameters for tool: ${functionCall.name}",
@@ -41,7 +41,13 @@ object PpeToolAdapter {
         }
         
         // Create invocation and execute
-        val invocation = tool.createInvocation(params)
-        return invocation.execute()
+        val invocation = tool?.createInvocation(params)
+        return invocation?.execute() ?: ToolResult(
+            llmContent = "Failed to execute tool: ${functionCall.name}",
+            error = com.qali.aterm.agent.tools.ToolError(
+                message = "Execution failed",
+                type = com.qali.aterm.agent.tools.ToolErrorType.EXECUTION_ERROR
+            )
+        )
     }
 }
