@@ -687,6 +687,8 @@ class PpeExecutionEngine(
         
         val continuationResponse = result.getOrNull()
         
+        android.util.Log.d("PpeExecutionEngine", "continueWithToolResult: got continuation response - text length: ${continuationResponse?.text?.length ?: 0}, functionCalls: ${continuationResponse?.functionCalls?.size ?: 0}, recursionDepth: $recursionDepth")
+        
         // Emit continuation response chunks to UI
         if (continuationResponse != null) {
             // Always emit text first (even if there are function calls)
@@ -703,6 +705,7 @@ class PpeExecutionEngine(
             
             // Handle function calls from continuation response
             if (continuationResponse.functionCalls.isNotEmpty()) {
+                android.util.Log.d("PpeExecutionEngine", "Continuation has ${continuationResponse.functionCalls.size} function calls - processing them")
                 var executedAnyCall = false
                 for (nextFunctionCall in continuationResponse.functionCalls) {
                     // Skip write_todos if it was already called in recent messages
@@ -820,11 +823,13 @@ class PpeExecutionEngine(
                 }
             } else {
                 // No function calls in continuation response - check if we should continue
+                android.util.Log.d("PpeExecutionEngine", "Continuation response has no function calls - checking if should continue")
                 // Continue if: response is empty OR (response has text but we should prompt for next steps)
                 val recentToolCalls = messages.takeLast(10).flatMap { content ->
                     content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
                 }
                 val sameToolCallCount = recentToolCalls.count { it == functionCall.name }
+                android.util.Log.d("PpeExecutionEngine", "Recent tool calls: $recentToolCalls, sameToolCallCount: $sameToolCallCount")
                 
                 // Continue if:
                 // 1. Response is empty (AI might be waiting for next instruction)
@@ -848,9 +853,15 @@ class PpeExecutionEngine(
                     
                     Log.d("PpeExecutionEngine", "Prompting continuation with: ${promptText.take(100)}...")
                     
+                    // First add the continuation response text (e.g., the todo list) as model message
+                    // Then add the prompt as user message to guide next steps
                     val promptMessages = messages + listOf(
                         Content(
                             role = "model",
+                            parts = listOf(Part.TextPart(text = continuationResponse.text))
+                        ),
+                        Content(
+                            role = "user",
                             parts = listOf(Part.TextPart(text = promptText))
                         )
                     )
