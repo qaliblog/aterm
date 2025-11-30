@@ -621,12 +621,14 @@ class PpeExecutionEngine(
         }
         
         // Check for repeated tool calls (prevent loops)
+        // Allow more calls for write_file since we need multiple files for a complete project
         val recentToolCalls = chatHistory.takeLast(10).flatMap { content ->
             content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
         }
         val sameToolCallCount = recentToolCalls.count { it == functionCall.name }
-        if (sameToolCallCount >= 2 && recursionDepth > 0) {
-            android.util.Log.w("PpeExecutionEngine", "Detected repeated calls to ${functionCall.name}, stopping recursion")
+        val maxRepeatedCalls = if (functionCall.name == "write_file") 15 else 2
+        if (sameToolCallCount >= maxRepeatedCalls && recursionDepth > 0) {
+            android.util.Log.w("PpeExecutionEngine", "Detected repeated calls to ${functionCall.name} (count: $sameToolCallCount), stopping recursion")
             // Don't emit a message that might trigger another call - just stop silently
             // The agent should have enough context to proceed
             return null
@@ -835,18 +837,21 @@ class PpeExecutionEngine(
                 // 1. Response is empty (AI might be waiting for next instruction)
                 // 2. Response has text but no function calls (AI provided plan/explanation, should continue implementing)
                 // 3. We haven't exceeded recursion limits
+                // For write_file, allow more calls since we need multiple files for a complete project
+                val maxSameToolCalls = if (functionCall.name == "write_file") 10 else 3
                 val hasTextButNoCalls = continuationResponse.text.isNotEmpty() && continuationResponse.functionCalls.isEmpty()
                 val isEmpty = continuationResponse.text.isEmpty()
                 val shouldContinue = (isEmpty || hasTextButNoCalls) && 
-                    sameToolCallCount < 3 && 
+                    sameToolCallCount < maxSameToolCalls && 
                     recursionDepth < 5
                 
-                Log.d("PpeExecutionEngine", "Continuation decision - hasTextButNoCalls: $hasTextButNoCalls, isEmpty: $isEmpty, sameToolCallCount: $sameToolCallCount, recursionDepth: $recursionDepth, shouldContinue: $shouldContinue")
+                Log.d("PpeExecutionEngine", "Continuation decision - tool: ${functionCall.name}, hasTextButNoCalls: $hasTextButNoCalls, isEmpty: $isEmpty, sameToolCallCount: $sameToolCallCount, maxSameToolCalls: $maxSameToolCalls, recursionDepth: $recursionDepth, shouldContinue: $shouldContinue")
                 
                 if (shouldContinue) {
                     // Make another API call to prompt continuation
                     val promptText = when {
                         functionCall.name == "write_todos" -> "The todo list has been created. Now proceed with implementing the tasks. Start by creating the project files (package.json, server files, etc.) and continue until the task is complete. Do not call write_todos again."
+                        functionCall.name == "write_file" -> "Good progress! Continue creating the remaining files needed for the project. For a complete Node.js webapp, you typically need: package.json, HTML file, CSS file, and any additional JavaScript files. Keep creating files until the project is complete."
                         hasTextButNoCalls -> "You've provided a plan or explanation. Now proceed with implementing it. Use the available tools to create files, run commands, and complete the task. Continue until finished."
                         else -> "Please continue with the next steps to complete the task. Use the available tools to make progress."
                     }
