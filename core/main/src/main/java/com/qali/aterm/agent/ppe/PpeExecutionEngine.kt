@@ -703,7 +703,20 @@ class PpeExecutionEngine(
             
             // Handle function calls from continuation response
             if (continuationResponse.functionCalls.isNotEmpty()) {
+                var executedAnyCall = false
                 for (nextFunctionCall in continuationResponse.functionCalls) {
+                    // Skip write_todos if it was already called in recent messages
+                    val recentToolCalls = messages.takeLast(10).flatMap { content ->
+                        content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
+                    }
+                    val writeTodosCount = recentToolCalls.count { it == "write_todos" }
+                    
+                    if (nextFunctionCall.name == "write_todos" && writeTodosCount >= 1) {
+                        android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in continuation - already called")
+                        continue
+                    }
+                    
+                    executedAnyCall = true
                     onToolCall(nextFunctionCall)
                     
                     // Execute tool
@@ -732,6 +745,77 @@ class PpeExecutionEngine(
                     // If there's another continuation, use it instead
                     if (nextContinuation != null) {
                         return nextContinuation
+                    }
+                }
+                
+                // If all function calls were skipped, make another API call to get a different response
+                if (!executedAnyCall) {
+                    android.util.Log.w("PpeExecutionEngine", "All function calls from continuation were skipped - making retry API call")
+                    val updatedMessages = messages + listOf(
+                        Content(
+                            role = "model",
+                            parts = listOf(Part.TextPart(text = continuationResponse.text))
+                        )
+                    )
+                    val retryMessages = updatedMessages + listOf(
+                        Content(
+                            role = "user",
+                            parts = listOf(Part.TextPart(text = "Do not call write_todos again. Start implementing the tasks by creating files. Use write_file, edit, or shell tools."))
+                        )
+                    )
+                    
+                    val retryResult = apiClient.callApi(
+                        messages = retryMessages,
+                        model = null,
+                        temperature = null,
+                        topP = null,
+                        topK = null,
+                        tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                            listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                        } else {
+                            null
+                        }
+                    )
+                    
+                    val retryResponse = retryResult.getOrNull()
+                    if (retryResponse != null) {
+                        if (retryResponse.text.isNotEmpty()) {
+                            onChunk(retryResponse.text)
+                        }
+                        
+                        if (retryResponse.functionCalls.isNotEmpty()) {
+                            for (retryFunctionCall in retryResponse.functionCalls) {
+                                if (retryFunctionCall.name == "write_todos") {
+                                    android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in retry")
+                                    continue
+                                }
+                                
+                                onToolCall(retryFunctionCall)
+                                val retryToolResult = executeTool(retryFunctionCall, onToolResult)
+                                
+                                val retryContinuation = continueWithToolResult(
+                                    retryMessages + listOf(
+                                        Content(
+                                            role = "model",
+                                            parts = listOf(Part.TextPart(text = retryResponse.text))
+                                        )
+                                    ),
+                                    retryFunctionCall,
+                                    retryToolResult,
+                                    script,
+                                    onChunk,
+                                    onToolCall,
+                                    onToolResult,
+                                    recursionDepth + 1
+                                )
+                                
+                                if (retryContinuation != null) {
+                                    return retryContinuation
+                                }
+                            }
+                        }
+                        
+                        return retryResponse
                     }
                 }
             } else {
@@ -793,6 +877,7 @@ class PpeExecutionEngine(
                         
                         // Handle function calls from the continuation
                         if (continueResponse.functionCalls.isNotEmpty()) {
+                            var executedAnyCall = false
                             for (nextFunctionCall in continueResponse.functionCalls) {
                                 // Skip write_todos if it was just called
                                 if (nextFunctionCall.name == "write_todos" && sameToolCallCount >= 1) {
@@ -800,6 +885,7 @@ class PpeExecutionEngine(
                                     continue
                                 }
                                 
+                                executedAnyCall = true
                                 onToolCall(nextFunctionCall)
                                 val nextToolResult = executeTool(nextFunctionCall, onToolResult)
                                 
@@ -821,6 +907,76 @@ class PpeExecutionEngine(
                                 
                                 if (nextContinuation != null) {
                                     return nextContinuation
+                                }
+                            }
+                            
+                            // If all function calls were skipped, prompt again to get a different response
+                            if (!executedAnyCall) {
+                                android.util.Log.w("PpeExecutionEngine", "All function calls were skipped - prompting again for different response")
+                                val retryPromptMessages = promptMessages + listOf(
+                                    Content(
+                                        role = "model",
+                                        parts = listOf(Part.TextPart(text = continueResponse.text))
+                                    ),
+                                    Content(
+                                        role = "user",
+                                        parts = listOf(Part.TextPart(text = "Do not call write_todos again. Instead, start implementing the tasks by creating files and writing code. Use write_file, edit, or shell tools."))
+                                    )
+                                )
+                                
+                                val retryResult = apiClient.callApi(
+                                    messages = retryPromptMessages,
+                                    model = null,
+                                    temperature = null,
+                                    topP = null,
+                                    topK = null,
+                                    tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                                        listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                                    } else {
+                                        null
+                                    }
+                                )
+                                
+                                val retryResponse = retryResult.getOrNull()
+                                if (retryResponse != null) {
+                                    if (retryResponse.text.isNotEmpty()) {
+                                        onChunk(retryResponse.text)
+                                    }
+                                    
+                                    if (retryResponse.functionCalls.isNotEmpty()) {
+                                        for (retryFunctionCall in retryResponse.functionCalls) {
+                                            // Still skip write_todos
+                                            if (retryFunctionCall.name == "write_todos") {
+                                                android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in retry response")
+                                                continue
+                                            }
+                                            
+                                            onToolCall(retryFunctionCall)
+                                            val retryToolResult = executeTool(retryFunctionCall, onToolResult)
+                                            
+                                            val retryContinuation = continueWithToolResult(
+                                                retryPromptMessages + listOf(
+                                                    Content(
+                                                        role = "model",
+                                                        parts = listOf(Part.TextPart(text = retryResponse.text))
+                                                    )
+                                                ),
+                                                retryFunctionCall,
+                                                retryToolResult,
+                                                script,
+                                                onChunk,
+                                                onToolCall,
+                                                onToolResult,
+                                                recursionDepth + 1
+                                            )
+                                            
+                                            if (retryContinuation != null) {
+                                                return retryContinuation
+                                            }
+                                        }
+                                    }
+                                    
+                                    return retryResponse
                                 }
                             }
                         }
