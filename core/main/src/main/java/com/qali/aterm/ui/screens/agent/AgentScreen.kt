@@ -1897,8 +1897,11 @@ fun AgentScreen(
         
         // Messages list
         // Calculate file changes outside LazyColumn content lambda
-        val fileDiffs = remember(messages) { messages.mapNotNull { it.fileDiff } }
-        val hasFileChanges = fileDiffs.isNotEmpty()
+        // Use derivedStateOf to ensure stable reference and prevent unnecessary recomposition
+        val fileDiffs = remember(messages) { 
+            messages.mapNotNull { it.fileDiff }.distinctBy { it.filePath }
+        }
+        val hasFileChanges = remember(fileDiffs) { fileDiffs.isNotEmpty() }
         
         LazyColumn(
             state = listState,
@@ -1914,14 +1917,13 @@ fun AgentScreen(
                 }
             } else {
                 // Show file changes summary at the top if there are any file changes
-                // Use stable key to prevent disappearing when new messages arrive
-                if (hasFileChanges) {
-                    item(key = "file-changes-summary") {
-                        FileChangesSummaryCard(
-                            messages = messages,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                    }
+                // Always include the item with stable key to prevent disappearing
+                // The FileChangesSummaryCard itself handles empty state (returns early if no changes)
+                item(key = "file-changes-summary") {
+                    FileChangesSummaryCard(
+                        messages = messages,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
                 }
                 
                 items(
