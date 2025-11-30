@@ -53,6 +53,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
 import android.os.Build
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -1995,7 +1997,7 @@ fun AgentScreen(
                                             val warningIntervalMs = 30000L // Warn every 30 seconds
                                             var lastWarningTime = messageStartTime
                                             
-                                            while (!execState.doneEventReceived && coroutineContext.isActive) {
+                                            while (!execState.doneEventReceived && isActive) {
                                                 delay(5000) // Check every 5 seconds
                                                 val now = System.currentTimeMillis()
                                                 val timeSinceStart = now - messageStartTime
