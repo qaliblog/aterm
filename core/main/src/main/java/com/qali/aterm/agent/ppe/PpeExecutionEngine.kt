@@ -521,6 +521,77 @@ class PpeExecutionEngine(
                         return nextContinuation
                     }
                 }
+            } else {
+                // No function calls in continuation response - check if we should continue
+                // If response is empty or very short after a tool call, prompt to continue
+                val shouldContinue = continuationResponse.text.isEmpty() || 
+                    (continuationResponse.text.length < 50 && functionCall.name == "write_todos")
+                
+                if (shouldContinue && recursionDepth < 3) {
+                    // Make another API call to prompt continuation
+                    val promptText = when (functionCall.name) {
+                        "write_todos" -> "Todos have been created. Now proceed with implementing the tasks from the todo list."
+                        else -> "Please continue with the next steps to complete the task."
+                    }
+                    
+                    val promptMessages = messages + listOf(
+                        Content(
+                            role = "model",
+                            parts = listOf(Part.TextPart(text = continuationResponse.text.ifEmpty { promptText }))
+                        )
+                    )
+                    
+                    val continueResult = apiClient.callApi(
+                        messages = promptMessages,
+                        model = null,
+                        temperature = null,
+                        topP = null,
+                        topK = null,
+                        tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                            listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                        } else {
+                            null
+                        }
+                    )
+                    
+                    val continueResponse = continueResult.getOrNull()
+                    if (continueResponse != null) {
+                        // Emit the continuation response
+                        if (continueResponse.text.isNotEmpty()) {
+                            onChunk(continueResponse.text)
+                        }
+                        
+                        // Handle function calls from the continuation
+                        if (continueResponse.functionCalls.isNotEmpty()) {
+                            for (nextFunctionCall in continueResponse.functionCalls) {
+                                onToolCall(nextFunctionCall)
+                                val nextToolResult = executeTool(nextFunctionCall, onToolResult)
+                                
+                                val nextContinuation = continueWithToolResult(
+                                    promptMessages + listOf(
+                                        Content(
+                                            role = "model",
+                                            parts = listOf(Part.TextPart(text = continueResponse.text))
+                                        )
+                                    ),
+                                    nextFunctionCall,
+                                    nextToolResult,
+                                    script,
+                                    onChunk,
+                                    onToolCall,
+                                    onToolResult,
+                                    recursionDepth + 1
+                                )
+                                
+                                if (nextContinuation != null) {
+                                    return nextContinuation
+                                }
+                            }
+                        }
+                        
+                        return continueResponse
+                    }
+                }
             }
         }
         
