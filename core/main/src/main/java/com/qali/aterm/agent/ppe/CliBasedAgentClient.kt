@@ -6,6 +6,10 @@ import com.qali.aterm.agent.tools.ToolRegistry
 import com.qali.aterm.agent.ppe.models.PpeScript
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.consumeEach
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import android.util.Log
 import java.io.File
 
@@ -41,6 +45,10 @@ class CliBasedAgentClient(
         var toolCallCount = 0
         var toolResultCount = 0
         var chunkCount = 0
+        
+        // Use a channel to collect events from callbacks (which are not suspend functions)
+        // Declare outside try block so it's accessible in catch blocks
+        val eventChannel = Channel<AgentEvent>(Channel.UNLIMITED)
         
         try {
             Log.d("CliBasedAgentClient", "Starting sendMessage for: ${userMessage.take(50)}...")
@@ -89,7 +97,19 @@ class CliBasedAgentClient(
             
             Log.d("CliBasedAgentClient", "Starting script execution")
             
-            // Execute script and emit events in real-time (not queued)
+            // Launch a coroutine to emit events from the channel
+            coroutineScope {
+                launch {
+                    try {
+                        eventChannel.consumeEach { event ->
+                            emit(event)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("CliBasedAgentClient", "Error emitting events from channel", e)
+                    }
+                }
+                
+                // Execute script and send events to channel in real-time
             executionEngine.executeScript(
                 script = script,
                 inputParams = inputParams,
@@ -100,8 +120,12 @@ class CliBasedAgentClient(
                     eventCount++
                     Log.d("CliBasedAgentClient", "Chunk received (count: $chunkCount, size: ${chunk.length}, time since start: ${now - startTime}ms)")
                     onChunk(chunk)
-                    // Emit immediately instead of queuing
-                    emit(AgentEvent.Chunk(chunk))
+                    // Send to channel (non-blocking, can be called from non-suspend context)
+                    try {
+                        eventChannel.trySend(AgentEvent.Chunk(chunk))
+                    } catch (e: Exception) {
+                        Log.e("CliBasedAgentClient", "Error sending chunk to channel", e)
+                    }
                 },
                 onToolCall = { functionCall ->
                     val now = System.currentTimeMillis()
@@ -110,8 +134,12 @@ class CliBasedAgentClient(
                     eventCount++
                     Log.d("CliBasedAgentClient", "Tool call received (count: $toolCallCount, tool: ${functionCall.name}, time since start: ${now - startTime}ms)")
                     onToolCall(functionCall)
-                    // Emit immediately instead of queuing
-                    emit(AgentEvent.ToolCall(functionCall))
+                    // Send to channel
+                    try {
+                        eventChannel.trySend(AgentEvent.ToolCall(functionCall))
+                    } catch (e: Exception) {
+                        Log.e("CliBasedAgentClient", "Error sending tool call to channel", e)
+                    }
                 },
                 onToolResult = { toolName, args ->
                     val now = System.currentTimeMillis()
@@ -124,9 +152,13 @@ class CliBasedAgentClient(
                     // Get tool result from execution engine (FIFO queue)
                     val toolResult = executionEngine.getNextToolResult(toolName)
                     if (toolResult != null) {
-                        Log.d("CliBasedAgentClient", "Emitting tool result for: $toolName")
-                        // Emit tool result immediately - AgentScreen will extract file diffs from this
-                        emit(AgentEvent.ToolResult(toolName, toolResult))
+                        Log.d("CliBasedAgentClient", "Sending tool result to channel for: $toolName")
+                        // Send to channel - AgentScreen will extract file diffs from this
+                        try {
+                            eventChannel.trySend(AgentEvent.ToolResult(toolName, toolResult))
+                        } catch (e: Exception) {
+                            Log.e("CliBasedAgentClient", "Error sending tool result to channel", e)
+                        }
                     } else {
                         Log.w("CliBasedAgentClient", "Tool result not found in queue for: $toolName")
                     }
@@ -142,28 +174,34 @@ class CliBasedAgentClient(
                 if (result.success) {
                     // Emit final result if any
                     if (result.finalResult.isNotEmpty()) {
-                        Log.d("CliBasedAgentClient", "Emitting final result (length: ${result.finalResult.length})")
-                        emit(AgentEvent.Chunk(result.finalResult))
+                        Log.d("CliBasedAgentClient", "Sending final result to channel (length: ${result.finalResult.length})")
+                        eventChannel.trySend(AgentEvent.Chunk(result.finalResult))
                         onChunk(result.finalResult)
                     } else {
-                        Log.d("CliBasedAgentClient", "No final result to emit")
+                        Log.d("CliBasedAgentClient", "No final result to send")
                     }
-                    Log.d("CliBasedAgentClient", "Emitting Done event")
-                    emit(AgentEvent.Done)
+                    Log.d("CliBasedAgentClient", "Sending Done event to channel")
+                    eventChannel.trySend(AgentEvent.Done)
                 } else {
                     val errorMsg = result.error ?: "Script execution failed"
                     Log.e("CliBasedAgentClient", "Script execution failed: $errorMsg")
-                    emit(AgentEvent.Error(errorMsg))
+                    eventChannel.trySend(AgentEvent.Error(errorMsg))
                 }
                 
                 Log.d("CliBasedAgentClient", "Script execution completed successfully (total time: ${totalTime}ms)")
+                
+                // Close the channel to signal completion
+                eventChannel.close()
             }
+            } // end coroutineScope
             
         } catch (e: kotlinx.coroutines.CancellationException) {
             val totalTime = System.currentTimeMillis() - startTime
             val timeSinceLastEvent = System.currentTimeMillis() - lastEventTime
             Log.w("CliBasedAgentClient", "Script execution cancelled (total time: ${totalTime}ms, time since last event: ${timeSinceLastEvent}ms, events: $eventCount)")
             Log.w("CliBasedAgentClient", "Cancellation details - Chunks: $chunkCount, ToolCalls: $toolCallCount, ToolResults: $toolResultCount")
+            // Close channel on cancellation
+            eventChannel.close()
             throw e // Re-throw cancellation
         } catch (e: Exception) {
             val totalTime = System.currentTimeMillis() - startTime
@@ -172,7 +210,9 @@ class CliBasedAgentClient(
             Log.e("CliBasedAgentClient", "Error details - Events: $eventCount, Chunks: $chunkCount, ToolCalls: $toolCallCount, ToolResults: $toolResultCount")
             Log.e("CliBasedAgentClient", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
             e.printStackTrace()
-            emit(AgentEvent.Error(e.message ?: "Unknown error: ${e.javaClass.simpleName}"))
+            // Send error to channel and close
+            eventChannel.trySend(AgentEvent.Error(e.message ?: "Unknown error: ${e.javaClass.simpleName}"))
+            eventChannel.close()
         }
     }
     

@@ -1990,12 +1990,12 @@ fun AgentScreen(
                                         android.util.Log.d("AgentScreen", "Starting message send for: ${prompt.take(50)}...")
                                         
                                         // Start timeout monitoring coroutine
-                                        val timeoutMonitor = scope.launch(Dispatchers.IO) {
+                                        val timeoutMonitorJob = scope.launch(Dispatchers.IO) {
                                             val timeoutMs = 300000L // 5 minutes
                                             val warningIntervalMs = 30000L // Warn every 30 seconds
                                             var lastWarningTime = messageStartTime
                                             
-                                            while (!execState.doneEventReceived && isActive) {
+                                            while (!execState.doneEventReceived && timeoutMonitorJob.isActive) {
                                                 delay(5000) // Check every 5 seconds
                                                 val now = System.currentTimeMillis()
                                                 val timeSinceStart = now - messageStartTime
@@ -2213,7 +2213,7 @@ fun AgentScreen(
                                                             }
                                                             is AgentEvent.Done -> {
                                                                 execState.doneEventReceived = true
-                                                                timeoutMonitor.cancel()
+                                                                timeoutMonitorJob.cancel()
                                                                 val totalTime = System.currentTimeMillis() - messageStartTime
                                                                 android.util.Log.d("AgentScreen", "Stream completed (Done event) - Total time: ${totalTime}ms")
                                                                 android.util.Log.d("AgentScreen", "Event summary - Total: ${execState.eventCount}, Chunks: ${execState.chunkCount}, ToolCalls: ${execState.toolCallCount}, ToolResults: ${execState.toolResultCount}")
@@ -2256,7 +2256,7 @@ fun AgentScreen(
                                                     }
                                                 } // closes collect lambda
                                             } catch (e: kotlinx.coroutines.CancellationException) {
-                                                timeoutMonitor.cancel()
+                                                timeoutMonitorJob.cancel()
                                                 val totalTime = System.currentTimeMillis() - messageStartTime
                                                 val timeSinceLastEvent = System.currentTimeMillis() - execState.lastEventTime
                                                 android.util.Log.d("AgentScreen", "Stream collection cancelled: ${e.message}")
@@ -2271,7 +2271,7 @@ fun AgentScreen(
                                                 }
                                                 throw e
                                             } catch (e: Exception) {
-                                                timeoutMonitor.cancel()
+                                                timeoutMonitorJob.cancel()
                                                 val totalTime = System.currentTimeMillis() - messageStartTime
                                                 val timeSinceLastEvent = System.currentTimeMillis() - execState.lastEventTime
                                                 android.util.Log.e("AgentScreen", "Error in stream collection", e)
@@ -2282,7 +2282,7 @@ fun AgentScreen(
                                                 // Fall through to outer catch block
                                                 throw e
                                             }
-                                            timeoutMonitor.cancel()
+                                            timeoutMonitorJob.cancel()
                                             val totalTime = System.currentTimeMillis() - messageStartTime
                                             android.util.Log.d("AgentScreen", "Finished collecting stream events - Total time: ${totalTime}ms")
                                             android.util.Log.d("AgentScreen", "Final event summary - Total: ${execState.eventCount}, Chunks: ${execState.chunkCount}, ToolCalls: ${execState.toolCallCount}, ToolResults: ${execState.toolResultCount}, Done received: ${execState.doneEventReceived}")
