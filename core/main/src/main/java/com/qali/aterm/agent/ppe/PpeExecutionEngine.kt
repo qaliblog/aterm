@@ -139,6 +139,93 @@ class PpeExecutionEngine(
                                             parts = listOf(Part.TextPart(text = continuationResponse.text))
                                         )
                                     )
+                                    
+                                    // Check if response is empty or has no function calls - might need fallback continuation
+                                    val needsFallback = continuationResponse.text.isEmpty() && 
+                                        continuationResponse.functionCalls.isEmpty() && 
+                                        functionCall.name == "write_todos"
+                                    
+                                    if (needsFallback) {
+                                        // Make fallback continuation attempt
+                                        val promptMessages = (chatHistory + turnMessages).toMutableList()
+                                        promptMessages.add(
+                                            Content(
+                                                role = "model",
+                                                parts = listOf(Part.TextPart(text = "The todo list has been created. Now proceed with implementing the first task. Start by creating the project files (package.json, server.js, etc.). Do not call write_todos again."))
+                                            )
+                                        )
+                                        
+                                        val fallbackResult = apiClient.callApi(
+                                            messages = promptMessages,
+                                            model = null,
+                                            temperature = null,
+                                            topP = null,
+                                            topK = null,
+                                            tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                                                listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                                            } else {
+                                                null
+                                            }
+                                        )
+                                        
+                                        val fallbackResponse = fallbackResult.getOrNull()
+                                        if (fallbackResponse != null) {
+                                            if (fallbackResponse.text.isNotEmpty()) {
+                                                onChunk(fallbackResponse.text)
+                                            }
+                                            
+                                            // Handle function calls from fallback
+                                            if (fallbackResponse.functionCalls.isNotEmpty()) {
+                                                for (nextFunctionCall in fallbackResponse.functionCalls) {
+                                                    // Skip write_todos
+                                                    if (nextFunctionCall.name == "write_todos") {
+                                                        android.util.Log.w("PpeExecutionEngine", "Skipping write_todos in fallback")
+                                                        continue
+                                                    }
+                                                    
+                                                    onToolCall(nextFunctionCall)
+                                                    val nextToolResult = executeTool(nextFunctionCall, onToolResult)
+                                                    
+                                                    val nextContinuation = continueWithToolResult(
+                                                        promptMessages + listOf(
+                                                            Content(
+                                                                role = "model",
+                                                                parts = listOf(Part.TextPart(text = fallbackResponse.text))
+                                                            )
+                                                        ),
+                                                        nextFunctionCall,
+                                                        nextToolResult,
+                                                        script,
+                                                        onChunk,
+                                                        onToolCall,
+                                                        onToolResult,
+                                                        recursionDepth = 0
+                                                    )
+                                                    
+                                                    if (nextContinuation != null) {
+                                                        currentVariables["LatestResult"] = nextContinuation.text
+                                                        currentVariables["RESPONSE"] = nextContinuation.text
+                                                        turnMessages.add(
+                                                            Content(
+                                                                role = "model",
+                                                                parts = listOf(Part.TextPart(text = nextContinuation.text))
+                                                            )
+                                                        )
+                                                    }
+                                                }
+                                            } else {
+                                                // Update variables with fallback response
+                                                currentVariables["LatestResult"] = fallbackResponse.text
+                                                currentVariables["RESPONSE"] = fallbackResponse.text
+                                                turnMessages.add(
+                                                    Content(
+                                                        role = "model",
+                                                        parts = listOf(Part.TextPart(text = fallbackResponse.text))
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
                                 } else if (functionCall.name == "write_todos") {
                                     // If continuation returned null (possibly due to repeated calls), 
                                     // make one more attempt to prompt continuation
