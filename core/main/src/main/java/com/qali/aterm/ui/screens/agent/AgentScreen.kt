@@ -1118,8 +1118,9 @@ fun DebugDialog(
             val finalTestInfo = try {
                 val messagesSnapshot = withContext(Dispatchers.Main) { messages }
                 val testInfoBuilder = StringBuilder()
-                val toolCalls = messagesSnapshot.filter { !it.isUser && it.text.contains("Tool") }
-                val toolResults = messagesSnapshot.filter { !it.isUser && (it.text.contains("completed") || it.text.contains("Error")) }
+                // Count actual tool calls and results more reliably
+                val toolCalls = messagesSnapshot.filter { !it.isUser && (it.text.contains("🔧 Calling tool:") || it.text.contains("Tool call:") || it.text.contains("Calling tool")) }
+                val toolResults = messagesSnapshot.filter { !it.isUser && (it.text.contains("✅ Tool") || it.text.contains("Tool '") || it.text.contains("completed:") || (it.text.contains("Error") && it.text.contains("Tool"))) }
                 val testCommands = messagesSnapshot.filter { !it.isUser && (it.text.contains("test") || it.text.contains("npm test") || it.text.contains("pytest") || it.text.contains("cargo test") || it.text.contains("go test") || it.text.contains("mvn test") || it.text.contains("gradle test")) }
                 
                 testInfoBuilder.appendLine("Tool Calls: ${toolCalls.size}")
@@ -1390,8 +1391,9 @@ fun DebugDialog(
                                 val messagesSnapshot = withContext(Dispatchers.Main) { messages }
                                 val logsSnapshot = withContext(Dispatchers.Main) { logcatLogs }
                                 val testInfoBuilder = StringBuilder()
-                                val toolCalls = messagesSnapshot.filter { !it.isUser && it.text.contains("Tool") }
-                                val toolResults = messagesSnapshot.filter { !it.isUser && (it.text.contains("completed") || it.text.contains("Error")) }
+                                // Count actual tool calls and results more reliably
+                                val toolCalls = messagesSnapshot.filter { !it.isUser && (it.text.contains("🔧 Calling tool:") || it.text.contains("Tool call:") || it.text.contains("Calling tool")) }
+                                val toolResults = messagesSnapshot.filter { !it.isUser && (it.text.contains("✅ Tool") || it.text.contains("Tool '") || it.text.contains("completed:") || (it.text.contains("Error") && it.text.contains("Tool"))) }
                                 val testCommands = messagesSnapshot.filter { !it.isUser && (it.text.contains("test") || it.text.contains("npm test") || it.text.contains("pytest") || it.text.contains("cargo test") || it.text.contains("go test") || it.text.contains("mvn test") || it.text.contains("gradle test")) }
                                 
                                 testInfoBuilder.appendLine("Tool Calls: ${toolCalls.size}")
