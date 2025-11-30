@@ -139,6 +139,88 @@ class PpeExecutionEngine(
                                             parts = listOf(Part.TextPart(text = continuationResponse.text))
                                         )
                                     )
+                                } else if (functionCall.name == "write_todos") {
+                                    // If continuation returned null (possibly due to repeated calls), 
+                                    // make one more attempt to prompt continuation
+                                    val promptMessages = (chatHistory + turnMessages).toMutableList()
+                                    promptMessages.add(
+                                        Content(
+                                            role = "model",
+                                            parts = listOf(Part.TextPart(text = "The todo list has been created. Now proceed with implementing the first task. Start by creating the project files (package.json, server.js, etc.). Do not call write_todos again."))
+                                        )
+                                    )
+                                    
+                                    val finalContinueResult = apiClient.callApi(
+                                        messages = promptMessages,
+                                        model = null,
+                                        temperature = null,
+                                        topP = null,
+                                        topK = null,
+                                        tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                                            listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                                        } else {
+                                            null
+                                        }
+                                    )
+                                    
+                                    val finalContinueResponse = finalContinueResult.getOrNull()
+                                    if (finalContinueResponse != null) {
+                                        if (finalContinueResponse.text.isNotEmpty()) {
+                                            onChunk(finalContinueResponse.text)
+                                        }
+                                        
+                                        // Handle function calls
+                                        if (finalContinueResponse.functionCalls.isNotEmpty()) {
+                                            for (nextFunctionCall in finalContinueResponse.functionCalls) {
+                                                // Skip write_todos if it was just called
+                                                if (nextFunctionCall.name == "write_todos") {
+                                                    android.util.Log.w("PpeExecutionEngine", "Skipping write_todos - already called")
+                                                    continue
+                                                }
+                                                
+                                                onToolCall(nextFunctionCall)
+                                                val nextToolResult = executeTool(nextFunctionCall, onToolResult)
+                                                
+                                                // Continue recursively but with limited depth
+                                                val nextContinuation = continueWithToolResult(
+                                                    promptMessages + listOf(
+                                                        Content(
+                                                            role = "model",
+                                                            parts = listOf(Part.TextPart(text = finalContinueResponse.text))
+                                                        )
+                                                    ),
+                                                    nextFunctionCall,
+                                                    nextToolResult,
+                                                    script,
+                                                    onChunk,
+                                                    onToolCall,
+                                                    onToolResult,
+                                                    recursionDepth = 0 // Start fresh recursion depth
+                                                )
+                                                
+                                                if (nextContinuation != null) {
+                                                    currentVariables["LatestResult"] = nextContinuation.text
+                                                    currentVariables["RESPONSE"] = nextContinuation.text
+                                                    turnMessages.add(
+                                                        Content(
+                                                            role = "model",
+                                                            parts = listOf(Part.TextPart(text = nextContinuation.text))
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            // No function calls but we have text - add it to history
+                                            currentVariables["LatestResult"] = finalContinueResponse.text
+                                            currentVariables["RESPONSE"] = finalContinueResponse.text
+                                            turnMessages.add(
+                                                Content(
+                                                    role = "model",
+                                                    parts = listOf(Part.TextPart(text = finalContinueResponse.text))
+                                                )
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
