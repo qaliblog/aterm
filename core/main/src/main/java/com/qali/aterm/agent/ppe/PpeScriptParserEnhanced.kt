@@ -37,13 +37,13 @@ object PpeScriptParserEnhanced {
         val frontMatterText = parts[0].trim()
         val frontMatter = if (frontMatterText.isNotEmpty()) {
             try {
-                yamlLoader.loadFromString(frontMatterText) as? Map<*, *> ?: emptyMap()
+                yamlLoader.loadFromString(frontMatterText) as? Map<*, *> ?: emptyMap<Any, Any>()
             } catch (e: Exception) {
                 android.util.Log.w("PpeScriptParser", "Failed to parse front-matter: ${e.message}")
-                emptyMap()
+                emptyMap<Any, Any>()
             }
         } else {
-            emptyMap()
+            emptyMap<Any, Any>()
         }
         
         // Extract all front-matter fields
