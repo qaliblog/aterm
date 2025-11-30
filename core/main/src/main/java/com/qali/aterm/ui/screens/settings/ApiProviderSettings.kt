@@ -55,9 +55,8 @@ fun ApiProviderSettings() {
             }
         }
         
-        // Model Selection (hidden for AutoAgent - it has its own settings)
-        if (selectedProvider != ApiProviderType.AUTOAGENT) {
-            PreferenceGroup(heading = "Model Configuration") {
+        // Model Selection
+        PreferenceGroup(heading = "Model Configuration") {
                 var currentModel by remember { mutableStateOf(ApiProviderManager.getCurrentModel()) }
                 var showModelDialog by remember { mutableStateOf(false) }
                 
@@ -85,9 +84,8 @@ fun ApiProviderSettings() {
             }
         }
         
-        // API Keys Management (hidden for AutoAgent as it doesn't need API keys)
-        if (selectedProvider != ApiProviderType.AUTOAGENT) {
-            PreferenceGroup(heading = "API Keys for ${selectedProvider.displayName}") {
+        // API Keys Management
+        PreferenceGroup(heading = "API Keys for ${selectedProvider.displayName}") {
                 val currentProvider = providers[selectedProvider] ?: ApiProvider(selectedProvider)
                 val apiKeys = currentProvider.apiKeys
                 
@@ -141,7 +139,6 @@ fun ApiProviderSettings() {
                 }
             }
         }
-    }
     
     // Add Key Dialog
     if (showAddKeyDialog) {

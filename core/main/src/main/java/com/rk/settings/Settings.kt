@@ -104,11 +104,6 @@ object Settings {
         get() = Preference.getString(key = "ollama_model", default = "llama3.2")
         set(value) = Preference.setString(key = "ollama_model", value)
     
-    // Agent Settings
-    var enable_streaming
-        get() = Preference.getBoolean(key = "enable_streaming", default = true)
-        set(value) = Preference.setBoolean(key = "enable_streaming", value)
-    
     // Search Settings
     var use_api_search
         get() = Preference.getBoolean(key = "use_api_search", default = true)

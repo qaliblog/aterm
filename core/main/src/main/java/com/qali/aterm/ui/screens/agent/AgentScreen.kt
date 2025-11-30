@@ -35,15 +35,13 @@ import androidx.compose.ui.unit.sp
 import com.qali.aterm.api.ApiProviderManager
 import com.qali.aterm.api.ApiProviderManager.KeysExhaustedException
 import com.qali.aterm.api.ApiProviderType
-import com.qali.aterm.autogent.AutoAgentLogger
-import com.qali.aterm.autogent.AutoAgentLearningService
-import com.qali.aterm.gemini.GeminiService
-import com.qali.aterm.gemini.HistoryPersistenceService
-import com.qali.aterm.gemini.SessionMetadata
-import com.qali.aterm.gemini.client.GeminiClient
-import com.qali.aterm.gemini.client.GeminiStreamEvent
-import com.qali.aterm.gemini.client.OllamaClient
-import com.qali.aterm.gemini.tools.ToolResult
+import com.qali.aterm.agent.AgentService
+import com.qali.aterm.agent.HistoryPersistenceService
+import com.qali.aterm.agent.SessionMetadata
+import com.qali.aterm.agent.client.AgentClient
+import com.qali.aterm.agent.client.AgentEvent
+import com.qali.aterm.agent.client.OllamaClient
+import com.qali.aterm.agent.tools.ToolResult
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.ui.screens.terminal.changeSession
 import com.rk.settings.Settings
@@ -954,12 +952,12 @@ suspend fun readLogcatLogs(maxLines: Int = 200): String = withContext(Dispatcher
         var line: String?
         var lineCount = 0
         
-        // Relevant tags to filter for (including streaming and shell execution)
+        // Relevant tags to filter for (including agent and shell execution)
         val relevantTags = listOf(
-            "GeminiClient", "OllamaClient", "AgentScreen", "ApiProviderManager",
-            "GeminiService", "OkHttp", "Okio", "AndroidRuntime", "ApiProvider",
+            "AgentClient", "OllamaClient", "AgentScreen", "ApiProviderManager",
+            "AgentService", "OkHttp", "Okio", "AndroidRuntime", "ApiProvider",
             "OkHttpClient", "OkHttp3", "Okio", "System.err", "ShellTool",
-            "sendMessageStream", "sendMessageStreamInternal", "makeApiCall",
+            "sendMessage", "sendMessageInternal", "makeApiCall",
             "ToolInvocation", "executeToolSync", "LanguageLinterTool"
         )
         
@@ -979,7 +977,7 @@ suspend fun readLogcatLogs(maxLines: Int = 200): String = withContext(Dispatcher
                         logLine.contains("HTTP", ignoreCase = true) ||
                         logLine.contains("Failed", ignoreCase = true) ||
                         logLine.contains("Timeout", ignoreCase = true) ||
-                        logLine.contains("streamGenerateContent", ignoreCase = true) ||
+                        logLine.contains("generateContent", ignoreCase = true) ||
                         logLine.contains("generativelanguage", ignoreCase = true) ||
                         logLine.contains("API", ignoreCase = true) ||
                         logLine.contains("api", ignoreCase = true)
@@ -1033,7 +1031,6 @@ fun DebugDialog(
     var isLoadingLogs by remember { mutableStateOf(false) }
     var systemInfo by remember { mutableStateOf<String?>(null) }
     var testInfo by remember { mutableStateOf<String?>(null) }
-    var autoAgentDebugInfo by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     
     // Load all debug information when dialog opens
@@ -1227,103 +1224,9 @@ fun DebugDialog(
                 isLoadingLogs = false
             }
         }
-        
-        // Always load AutoAgent learning info (even when other providers are active)
-        // This allows monitoring AutoAgent learning in the background
-        scope.launch(Dispatchers.IO) {
-            try {
-                val debugInfo = if (ApiProviderManager.selectedProvider == ApiProviderType.AUTOAGENT) {
-                    // Full debug info when AutoAgent is selected
-                    AutoAgentLogger.getDebugInfo()
-                } else {
-                    // Learning-focused info when other providers are active
-                    buildString {
-                        appendLine("=== AutoAgent Learning (Background) ===")
-                        appendLine("Note: AutoAgent is learning from your interactions even though another provider is active.")
-                        appendLine()
-                        
-                        // Learning Statistics
-                        appendLine("--- Learning Statistics ---")
-                        try {
-                            val stats = AutoAgentLearningService.getLearningStats()
-                            val codeSnippetType = com.qali.aterm.autogent.LearnedDataType.CODE_SNIPPET
-                            val apiUsageType = com.qali.aterm.autogent.LearnedDataType.API_USAGE
-                            val fixPatchType = com.qali.aterm.autogent.LearnedDataType.FIX_PATCH
-                            val metadataType = com.qali.aterm.autogent.LearnedDataType.METADATA_TRANSFORMATION
-                            
-                            appendLine("Code Snippets: ${stats.typeCounts[codeSnippetType] ?: 0}")
-                            appendLine("API Usage: ${stats.typeCounts[apiUsageType] ?: 0}")
-                            appendLine("Fix Patches: ${stats.typeCounts[fixPatchType] ?: 0}")
-                            appendLine("Metadata Transformations: ${stats.typeCounts[metadataType] ?: 0}")
-                            appendLine("Total Score: ${stats.totalScore}")
-                        } catch (e: Exception) {
-                            appendLine("Error loading stats: ${e.message}")
-                        }
-                        appendLine()
-                        
-                        // Recent Learning Activity
-                        appendLine("--- Recent Learning Activity ---")
-                        val learningLogs = AutoAgentLogger.getLogsByCategory("AutoAgentLearning")
-                            .takeLast(20)
-                        if (learningLogs.isNotEmpty()) {
-                            val dateFormat = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                            learningLogs.forEach { entry ->
-                                val timeStr = dateFormat.format(java.util.Date(entry.timestamp))
-                                appendLine("[$timeStr] ${entry.message}")
-                                entry.metadata?.forEach { (key, value) ->
-                                    appendLine("  $key: $value")
-                                }
-                            }
-                        } else {
-                            appendLine("No recent learning activity")
-                        }
-                        appendLine()
-                        
-                        // Enhanced Learning Activity
-                        val enhancedLogs = AutoAgentLogger.getLogsByCategory("EnhancedLearning")
-                            .takeLast(10)
-                        if (enhancedLogs.isNotEmpty()) {
-                            appendLine("--- Enhanced Learning Activity (last 10) ---")
-                            val dateFormat = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                            enhancedLogs.forEach { entry ->
-                                val timeStr = dateFormat.format(java.util.Date(entry.timestamp))
-                                appendLine("[$timeStr] ${entry.message}")
-                            }
-                            appendLine()
-                        }
-                        
-                        // Learning Events Summary
-                        val allLearningLogs = AutoAgentLogger.getAllLogs()
-                            .filter { it.category.contains("Learning", ignoreCase = true) }
-                        appendLine("--- Learning Summary ---")
-                        appendLine("Total Learning Events: ${allLearningLogs.size}")
-                        appendLine("Recent (last hour): ${allLearningLogs.count { 
-                            System.currentTimeMillis() - it.timestamp < 3600000 
-                        }}")
-                        appendLine("Today: ${allLearningLogs.count { 
-                            val today = java.util.Calendar.getInstance()
-                            today.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                            today.set(java.util.Calendar.MINUTE, 0)
-                            today.set(java.util.Calendar.SECOND, 0)
-                            it.timestamp >= today.timeInMillis
-                        }}")
-                    }
-                }
-                
-                // Update UI state on Main dispatcher
-                withContext(Dispatchers.Main) {
-                    autoAgentDebugInfo = debugInfo
-                }
-            } catch (e: Exception) {
-                // Update UI state on Main dispatcher
-                withContext(Dispatchers.Main) {
-                    autoAgentDebugInfo = "Error loading AutoAgent learning info: ${e.message}"
-                }
-            }
-        }
     }
     
-    val debugInfo = remember(useOllama, ollamaHost, ollamaPort, ollamaModel, ollamaUrl, workspaceRoot, messages, logcatLogs, systemInfo, testInfo, autoAgentDebugInfo, ApiProviderManager.selectedProvider) {
+    val debugInfo = remember(useOllama, ollamaHost, ollamaPort, ollamaModel, ollamaUrl, workspaceRoot, messages, logcatLogs, systemInfo, testInfo, ApiProviderManager.selectedProvider) {
         buildString {
             appendLine("=== Agent Debug Information ===")
             appendLine()
@@ -1331,26 +1234,13 @@ fun DebugDialog(
             // Configuration
             appendLine("--- Configuration ---")
             val currentProvider = ApiProviderManager.selectedProvider
-            val providerName = when {
-                currentProvider == ApiProviderType.AUTOAGENT -> "AutoAgent"
-                useOllama -> "Ollama"
-                else -> currentProvider.displayName
-            }
+            val providerName = if (useOllama) "Ollama" else currentProvider.displayName
             appendLine("Provider: $providerName")
             if (useOllama) {
                 appendLine("Host: $ollamaHost")
                 appendLine("Port: $ollamaPort")
                 appendLine("Model: $ollamaModel")
                 appendLine("URL: $ollamaUrl")
-            } else if (currentProvider == ApiProviderType.AUTOAGENT) {
-                val autoAgentModel = com.qali.aterm.autogent.ClassificationModelManager.getAutoAgentModelName()
-                val selectedModel = com.qali.aterm.autogent.ClassificationModelManager.getSelectedModel()
-                appendLine("Model: $autoAgentModel")
-                if (selectedModel != null) {
-                    appendLine("Classification Model: ${selectedModel.name} (${selectedModel.id})")
-                    appendLine("Model Type: ${selectedModel.modelType}")
-                    appendLine("Model Ready: ${com.qali.aterm.autogent.ClassificationModelManager.isModelReady()}")
-                }
             } else {
                 val model = com.qali.aterm.api.ApiProviderManager.getCurrentModel()
                 appendLine("Model: $model")
@@ -1391,19 +1281,6 @@ fun DebugDialog(
             appendLine("--- Recent Logcat (filtered) ---")
             appendLine(logcatLogs ?: "Loading...")
             appendLine()
-            
-            // AutoAgent Debug Information
-            if (ApiProviderManager.selectedProvider == ApiProviderType.AUTOAGENT) {
-                appendLine("--- AutoAgent Debug Information ---")
-                appendLine(autoAgentDebugInfo ?: "Loading AutoAgent debug info...")
-            } else if (autoAgentDebugInfo != null) {
-                // Show learning info when other providers are active
-                appendLine("--- AutoAgent Learning (Background) ---")
-                appendLine("AutoAgent is learning from your interactions in the background.")
-                appendLine("Switch to AutoAgent provider to use the learned knowledge.")
-                appendLine()
-                appendLine(autoAgentDebugInfo)
-            }
         }
     }
     
@@ -1437,7 +1314,7 @@ fun DebugDialog(
         },
         confirmButton = {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Button(
@@ -1622,10 +1499,10 @@ fun DebugDialog(
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Refresh", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("Refresh", fontSize = 11.sp)
                 }
                 Button(
                     onClick = {
@@ -1637,14 +1514,14 @@ fun DebugDialog(
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("Copy", fontSize = 11.sp)
                 }
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.weight(0.8f)
+                    modifier = Modifier.weight(1f)
                 ) {
                     Text("Close", fontSize = 12.sp)
                 }
@@ -1703,7 +1580,7 @@ fun AgentScreen(
     
     // Initialize client - use sessionId in key to ensure per-session clients
     val aiClient = remember(sessionId, workspaceRoot, useOllama, ollamaHost, ollamaPort, ollamaModel) {
-        GeminiService.initialize(workspaceRoot, useOllama, ollamaUrl, ollamaModel, sessionId, mainActivity)
+        AgentService.initialize(workspaceRoot, useOllama, ollamaUrl, ollamaModel, sessionId, mainActivity)
     }
     
     // Ensure agent session exists when AgentScreen opens
@@ -1805,7 +1682,7 @@ fun AgentScreen(
             messages = loadedHistory
             messageHistory = loadedHistory
             // Restore history to client for context in API calls
-            if (aiClient is GeminiClient) {
+            if (aiClient is AgentClient) {
                 aiClient.restoreHistoryFromMessages(loadedHistory)
             }
             android.util.Log.d("AgentScreen", "Loaded ${loadedHistory.size} messages for session $sessionId")
@@ -1813,7 +1690,7 @@ fun AgentScreen(
             messages = emptyList()
             messageHistory = emptyList()
             // Clear client history if no saved history
-            if (aiClient is GeminiClient) {
+            if (aiClient is AgentClient) {
                 aiClient.resetChat()
             }
         }
@@ -2106,7 +1983,7 @@ fun AgentScreen(
                                         try {
                                             android.util.Log.d("AgentScreen", "Creating stream, useOllama: $useOllama")
                                             val stream = if (useOllama) {
-                                                (aiClient as OllamaClient).sendMessageStream(
+                                                (aiClient as OllamaClient).sendMessage(
                                                     userMessage = prompt,
                                                     onChunk = { chunk ->
                                                         // Update UI state on main dispatcher - launch coroutine since callback is not suspend
@@ -2144,7 +2021,7 @@ fun AgentScreen(
                                                     }
                                                 )
                                             } else {
-                                                (aiClient as GeminiClient).sendMessageStream(
+                                                (aiClient as AgentClient).sendMessage(
                                                     userMessage = prompt,
                                                     onChunk = { chunk ->
                                                         // Update UI state on main dispatcher - launch coroutine since callback is not suspend
@@ -2196,7 +2073,7 @@ fun AgentScreen(
                                                         android.util.Log.d("AgentScreen", "Received stream event: ${event.javaClass.simpleName}")
                                                         // All state updates must happen on Main dispatcher to avoid Compose snapshot lock issues
                                                         when (event) {
-                                                            is GeminiStreamEvent.Chunk -> {
+                                                            is AgentEvent.Chunk -> {
                                                                 withContext(Dispatchers.Main) {
                                                                     currentResponseText += event.text
                                                                     val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
@@ -2207,7 +2084,7 @@ fun AgentScreen(
                                                                     )
                                                                 }
                                                             }
-                                                            is GeminiStreamEvent.ToolCall -> {
+                                                            is AgentEvent.ToolCall -> {
                                                                 // Store tool call args in queue for file diff extraction
                                                                 if (event.functionCall.name == "edit" || event.functionCall.name == "write_file") {
                                                                     toolCallQueue.add(Pair(event.functionCall.name, event.functionCall.args))
@@ -2221,7 +2098,7 @@ fun AgentScreen(
                                                                     messages = messages + toolMessage
                                                                 }
                                                             }
-                                                            is GeminiStreamEvent.ToolResult -> {
+                                                            is AgentEvent.ToolResult -> {
                                                                 // Try to extract file diff from tool result
                                                                 // Find matching tool call from queue
                                                                 val toolCallIndex = toolCallQueue.indexOfFirst { it.first == event.toolName }
@@ -2243,7 +2120,7 @@ fun AgentScreen(
                                                                     messages = messages + resultMessage
                                                                 }
                                                             }
-                                                            is GeminiStreamEvent.Error -> {
+                                                            is AgentEvent.Error -> {
                                                                 withContext(Dispatchers.Main) {
                                                                     val errorMessage = AgentMessage(
                                                                         text = "❌ Error: ${event.message}",
@@ -2253,7 +2130,7 @@ fun AgentScreen(
                                                                     messages = if (messages.isNotEmpty()) messages.dropLast(1) + errorMessage else messages + errorMessage
                                                                 }
                                                             }
-                                                            is GeminiStreamEvent.KeysExhausted -> {
+                                                            is AgentEvent.KeysExhausted -> {
                                                                 withContext(Dispatchers.Main) {
                                                                     lastFailedPrompt = prompt
                                                                     showKeysExhaustedDialog = true
@@ -2265,7 +2142,7 @@ fun AgentScreen(
                                                                     messages = if (messages.isNotEmpty()) messages.dropLast(1) + exhaustedMessage else messages + exhaustedMessage
                                                                 }
                                                             }
-                                                            is GeminiStreamEvent.Done -> {
+                                                            is AgentEvent.Done -> {
                                                                 android.util.Log.d("AgentScreen", "Stream completed (Done event)")
                                                                 withContext(Dispatchers.Main) {
                                                                     // Final cleanup: ensure loading message is replaced with final response if there's any text
@@ -2570,7 +2447,7 @@ fun AgentScreen(
                             currentResponseText = ""
                             
                             // Clear client history
-                            if (aiClient is GeminiClient) {
+                            if (aiClient is AgentClient) {
                                 aiClient.resetChat()
                             }
                             
@@ -2647,7 +2524,7 @@ fun AgentScreen(
                             messageHistory = emptyList()
                             
                             // Clear client history
-                            if (aiClient is GeminiClient) {
+                            if (aiClient is AgentClient) {
                                 aiClient.resetChat()
                             }
                             
@@ -2701,10 +2578,10 @@ fun AgentScreen(
                     messages = messages + loadingMessage
                     
                     // Get the AI client
-                    val aiClient = if (GeminiService.isUsingOllama()) {
-                        GeminiService.getOllamaClient()
+                    val aiClient = if (AgentService.isUsingOllama()) {
+                        AgentService.getOllamaClient()
                     } else {
-                        GeminiService.getClient()
+                        AgentService.getClient()
                     }
                     
                     if (aiClient == null) {
@@ -2720,7 +2597,7 @@ fun AgentScreen(
                     // Use continuation message to resume from chat history
                     currentResponseText = ""
                     val stream = if (aiClient is OllamaClient) {
-                        (aiClient as OllamaClient).sendMessageStream(
+                        (aiClient as OllamaClient).sendMessage(
                             userMessage = "__CONTINUE__", // Special message to continue from chat history
                             onChunk = { chunk ->
                                 currentResponseText += chunk
@@ -2749,7 +2626,7 @@ fun AgentScreen(
                             }
                         )
                     } else {
-                        (aiClient as GeminiClient).sendMessageStream(
+                        (aiClient as AgentClient).sendMessage(
                             userMessage = "__CONTINUE__", // Special message to continue from chat history
                             onChunk = { chunk ->
                                 currentResponseText += chunk
@@ -2783,7 +2660,7 @@ fun AgentScreen(
                     try {
                         stream.collect { event ->
                             when (event) {
-                                is GeminiStreamEvent.Chunk -> {
+                                is AgentEvent.Chunk -> {
                                     currentResponseText += event.text
                                     val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
                                     messages = currentMessages + AgentMessage(
@@ -2792,7 +2669,7 @@ fun AgentScreen(
                                         timestamp = System.currentTimeMillis()
                                     )
                                 }
-                                is GeminiStreamEvent.ToolCall -> {
+                                is AgentEvent.ToolCall -> {
                                     val toolMessage = AgentMessage(
                                         text = "🔧 Calling tool: ${event.functionCall.name}",
                                         isUser = false,
@@ -2800,7 +2677,7 @@ fun AgentScreen(
                                     )
                                     messages = messages + toolMessage
                                 }
-                                is GeminiStreamEvent.ToolResult -> {
+                                is AgentEvent.ToolResult -> {
                                     val resultMessage = AgentMessage(
                                         text = "✅ Tool '${event.toolName}' completed: ${event.result.returnDisplay}",
                                         isUser = false,
@@ -2808,7 +2685,7 @@ fun AgentScreen(
                                     )
                                     messages = messages + resultMessage
                                 }
-                                is GeminiStreamEvent.Error -> {
+                                is AgentEvent.Error -> {
                                     val errorMessage = AgentMessage(
                                         text = "❌ Error: ${event.message}",
                                         isUser = false,
@@ -2816,7 +2693,7 @@ fun AgentScreen(
                                     )
                                     messages = if (messages.isNotEmpty()) messages.dropLast(1) + errorMessage else messages + errorMessage
                                 }
-                                is GeminiStreamEvent.KeysExhausted -> {
+                                is AgentEvent.KeysExhausted -> {
                                     lastFailedPrompt = null // Clear since we're continuing, not restarting
                                     showKeysExhaustedDialog = true
                                     val exhaustedMessage = AgentMessage(

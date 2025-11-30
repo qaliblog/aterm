@@ -285,17 +285,5 @@ private fun getSuggestedModels(providerType: ApiProviderType): List<ModelSuggest
             )
         )
         ApiProviderType.CUSTOM -> emptyList()
-        ApiProviderType.AUTOAGENT -> listOf(
-            ModelSuggestion(
-                name = "aTerm Offline (Default)",
-                value = "aterm-offline",
-                description = "Default database for offline learned knowledge from successful code generations."
-            ),
-            ModelSuggestion(
-                name = "Offline Learned (Legacy)",
-                value = "offline-learned",
-                description = "Legacy database name. Uses only offline learned knowledge."
-            )
-        )
     }
 }

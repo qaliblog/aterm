@@ -11,48 +11,10 @@ import com.rk.settings.Settings
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentSettings() {
-    var enableStreaming by remember { mutableStateOf(Settings.enable_streaming) }
     var useApiSearch by remember { mutableStateOf(Settings.use_api_search) }
     var recursiveCurls by remember { mutableStateOf(Settings.custom_search_recursive_curls) }
     
     PreferenceGroup(heading = "Agent Settings") {
-        SettingsCard(
-            title = { Text("Enable Streaming Mode") },
-            description = { 
-                Column {
-                    Text(
-                        if (enableStreaming) {
-                            "Streaming Mode: Responses appear in real-time as they're generated. Faster feedback, better for interactive tasks."
-                        } else {
-                            "Non-Streaming Mode: Complete responses after full generation. Better for complex projects requiring full context. May show duplicate info messages."
-                        },
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    if (!enableStreaming) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Note: In non-streaming mode, you may see duplicate information messages. This is expected behavior.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            },
-            startWidget = {
-                Switch(
-                    checked = enableStreaming,
-                    onCheckedChange = {
-                        enableStreaming = it
-                        Settings.enable_streaming = it
-                    }
-                )
-            },
-            onClick = {
-                enableStreaming = !enableStreaming
-                Settings.enable_streaming = enableStreaming
-            }
-        )
-        
         SettingsCard(
             title = { Text("Use API Search") },
             description = { 
