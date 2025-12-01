@@ -2276,12 +2276,39 @@ class PpeExecutionEngine(
                     updatedChatHistory,
                     script
                 )
-
+                
                 // Avoid using 'continue' inside inline lambda (requires newer language version)
-                val fileCode = fileCodeResult.getOrNull()
+                var fileCode = fileCodeResult.getOrNull()
                 if (fileCode == null) {
-                    onChunk("✗ Failed to generate code for ${file.path}: ${fileCodeResult.exceptionOrNull()?.message}\n")
-                    continue
+                    val errorMsg = fileCodeResult.exceptionOrNull()?.message ?: "unknown error"
+                    // If the model returned empty code, retry once with a simplified prompt
+                    if (errorMsg.contains("Generated code is empty")) {
+                        onChunk("↻ Generated code was empty for ${file.path}. Retrying once with a simplified prompt...\n")
+                        Log.w("PpeExecutionEngine", "Empty code for ${file.path}, retrying once")
+                        
+                        val simplifiedFile = file.copy(
+                            description = if (file.description.isNotBlank()) {
+                                "${file.description} (simple, minimal working version)"
+                            } else {
+                                "Simple, minimal working version of ${file.path}"
+                            }
+                        )
+                        val retryResult = generateFileCode(
+                            simplifiedFile,
+                            blueprint,
+                            userMessage,
+                            updatedChatHistory,
+                            script
+                        )
+                        fileCode = retryResult.getOrNull()
+                        if (fileCode == null) {
+                            onChunk("✗ Still failed to generate code for ${file.path}: ${retryResult.exceptionOrNull()?.message}\n")
+                            continue
+                        }
+                    } else {
+                        onChunk("✗ Failed to generate code for ${file.path}: $errorMsg\n")
+                        continue
+                    }
                 }
                 
                 // Use write_file tool to create the file

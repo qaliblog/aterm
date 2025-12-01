@@ -310,54 +310,16 @@ fun parseFileDiffFromToolResult(
         } 
         // For write_file, we only have new content (creates new file or overwrites)
         else if (toolName == "write_file") {
-            // Try to get content from toolArgs first, then try to read from file
-            val newContent = if (toolArgs != null) {
-                toolArgs["content"] as? String ?: ""
-            } else {
-                // If toolArgs is null, try to read the file that was written
-                // The file path should have been extracted from llmContent above
-                try {
-                    val workspaceDir = java.io.File(workspaceRoot)
-                    val file = java.io.File(workspaceDir, filePath)
-                    if (file.exists()) {
-                        file.readText()
-                    } else {
-                        "" // File doesn't exist yet, but we have a path - return empty to indicate new file
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.w("AgentScreen", "Failed to read file for diff: ${e.message}")
-                    ""
-                }
-            }
-            
-            // Check if file exists to determine if it's new
-            val workspaceDir = java.io.File(workspaceRoot)
-            val file = java.io.File(workspaceDir, filePath)
-            val isNewFile = !file.exists()
-            val oldContent = if (isNewFile) {
-                ""
-            } else {
-                try {
-                    // For existing files, we need to read the old content before the write
-                    // But since the write already happened, we can't get the old content
-                    // So we'll just use empty string and show the new content
-                    ""
-                } catch (e: Exception) {
-                    ""
-                }
-            }
-            
-            // Only create FileDiff if we have content or file path is valid
-            if (newContent.isNotEmpty() || filePath.isNotEmpty()) {
-                FileDiff(
-                    filePath = filePath,
-                    oldContent = oldContent,
-                    newContent = newContent,
-                    isNewFile = isNewFile
-                )
-            } else {
-                null
-            }
+            // For robustness, always synthesize a FileDiff from toolArgs without touching the filesystem.
+            // This guarantees we show a diff card even if reads fail or the file does not yet exist on disk.
+            val newContent = (toolArgs?.get("content") as? String) ?: ""
+            val isNewFile = true // write_file from the agent is always treated as creating/overwriting a file
+            FileDiff(
+                filePath = filePath,
+                oldContent = "",
+                newContent = newContent,
+                isNewFile = isNewFile
+            )
         } else {
             null
         }
