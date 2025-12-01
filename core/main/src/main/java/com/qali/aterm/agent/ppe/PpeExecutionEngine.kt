@@ -2285,11 +2285,14 @@ class PpeExecutionEngine(
                 }
                 
                 // Use write_file tool to create the file
+                // Note: WriteFileTool expects parameters: file_path, content, modified_by_user, ai_proposed_content
                 val writeFileCall = FunctionCall(
                     name = "write_file",
                     args = mapOf(
                         "file_path" to file.path,
-                        "file_contents" to fileCode
+                        "content" to fileCode,
+                        "modified_by_user" to false,
+                        "ai_proposed_content" to fileCode
                     )
                 )
                 
@@ -2532,10 +2535,84 @@ JSON Blueprint:
         
         // Validate JSON is not empty
         if (jsonText.isEmpty() || !jsonText.trim().startsWith("{")) {
-            throw Exception("Invalid blueprint JSON: empty or not a JSON object")
+            Log.w("PpeExecutionEngine", "Invalid blueprint JSON from API (empty or not an object). Falling back to default blueprint.")
+            return createDefaultBlueprintJson(userMessage, projectType)
         }
         
         return jsonText
+    }
+
+    /**
+     * Fallback blueprint when the model returns invalid or empty JSON.
+     * Keeps things simple and lets later phases generate actual code.
+     */
+    private fun createDefaultBlueprintJson(
+        userMessage: String,
+        projectType: ProjectStartupDetector.ProjectType?
+    ): String {
+        val type = projectType?.name?.lowercase() ?: "unknown"
+
+        // For now we special‑case nodejs since it's common for web apps
+        return if (type == "nodejs") {
+            """
+            {
+              "projectType": "nodejs",
+              "files": [
+                {
+                  "path": "package.json",
+                  "type": "config",
+                  "dependencies": [],
+                  "description": "Node.js project configuration for: ${userMessage.take(80)}"
+                },
+                {
+                  "path": "src/server.js",
+                  "type": "code",
+                  "dependencies": ["package.json"],
+                  "description": "Express server entry point"
+                },
+                {
+                  "path": "public/index.html",
+                  "type": "code",
+                  "dependencies": ["package.json"],
+                  "description": "Main HTML page"
+                },
+                {
+                  "path": "public/styles.css",
+                  "type": "style",
+                  "dependencies": ["public/index.html"],
+                  "description": "Styles for the web UI"
+                },
+                {
+                  "path": "public/app.js",
+                  "type": "code",
+                  "dependencies": ["public/index.html"],
+                  "description": "Frontend logic (e.g. tic tac toe game)"
+                }
+              ]
+            }
+            """.trimIndent()
+        } else {
+            // Generic minimal blueprint for other project types
+            """
+            {
+              "projectType": "$type",
+              "files": [
+                {
+                  "path": "README.md",
+                  "type": "docs",
+                  "dependencies": [],
+                  "description": "Project overview and setup instructions for: ${userMessage.take(80)}"
+                },
+                {
+                  "path": "main.${if (type == "python") "py" else "txt"}",
+                  "type": "code",
+                  "dependencies": [],
+                  "description": "Main entry point file"
+                }
+              ]
+            }
+            """.trimIndent()
+        }
     }
     
     /**
