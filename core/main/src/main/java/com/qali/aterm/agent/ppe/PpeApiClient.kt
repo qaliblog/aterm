@@ -53,7 +53,8 @@ class PpeApiClient(
         temperature: Double? = null,
         topP: Double? = null,
         topK: Int? = null,
-        tools: List<Tool>? = null
+        tools: List<Tool>? = null,
+        disableTools: Boolean = false // When true, ensures no tools are included in request
     ): Result<PpeApiResponse> {
         return withContext(Dispatchers.IO) {
             val startTime = System.currentTimeMillis()
@@ -83,7 +84,8 @@ class PpeApiClient(
                     val requestBuilder = ApiRequestBuilder(toolRegistry)
                     val requestBody = requestBuilder.buildRequest(
                         chatHistory = messages,
-                        model = actualModel
+                        model = actualModel,
+                        includeTools = !disableTools // Don't include tools if disableTools is true
                     )
                     
                     // Add generation config parameters (temperature, topP, topK) if provided
@@ -141,7 +143,8 @@ class PpeApiClient(
                 val requestBuilder = ApiRequestBuilder(toolRegistry)
                 val requestBody = requestBuilder.buildRequest(
                     chatHistory = messages,
-                    model = actualModel
+                    model = actualModel,
+                    includeTools = !disableTools // Don't include tools if disableTools is true
                 )
                 
                 // Add generation config parameters (temperature, topP, topK) if provided

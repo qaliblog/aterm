@@ -23,7 +23,8 @@ class ApiRequestBuilder(
      */
     fun buildRequest(
         chatHistory: List<Content>,
-        model: String
+        model: String,
+        includeTools: Boolean = true // When false, tools are not added to the request
     ): JSONObject {
         val request = JSONObject()
         request.put("contents", JSONArray().apply {
@@ -76,20 +77,27 @@ class ApiRequestBuilder(
             }
         })
         
-        // Add tools
-        val tools = JSONArray()
-        val toolObj = JSONObject()
-        val functionDeclarations = JSONArray()
-        toolRegistry.getFunctionDeclarations().forEach { decl ->
-            val declObj = JSONObject()
-            declObj.put("name", decl.name)
-            declObj.put("description", decl.description)
-            declObj.put("parameters", functionParametersToJson(decl.parameters))
-            functionDeclarations.put(declObj)
+        // Add tools only if includeTools is true
+        if (includeTools) {
+            val tools = JSONArray()
+            val toolObj = JSONObject()
+            val functionDeclarations = JSONArray()
+            toolRegistry.getFunctionDeclarations().forEach { decl ->
+                val declObj = JSONObject()
+                declObj.put("name", decl.name)
+                declObj.put("description", decl.description)
+                declObj.put("parameters", functionParametersToJson(decl.parameters))
+                functionDeclarations.put(declObj)
+            }
+            toolObj.put("functionDeclarations", functionDeclarations)
+            tools.put(toolObj)
+            request.put("tools", tools)
+        } else {
+            // Explicitly set toolChoice to "none" for Gemini API to prevent tool calls
+            request.put("toolChoice", JSONObject().apply {
+                put("none", JSONObject())
+            })
         }
-        toolObj.put("functionDeclarations", functionDeclarations)
-        tools.put(toolObj)
-        request.put("tools", tools)
         
         // Add system instruction to guide planning behavior
         // This matches the comprehensive system prompt from the original gemini-cli TypeScript implementation

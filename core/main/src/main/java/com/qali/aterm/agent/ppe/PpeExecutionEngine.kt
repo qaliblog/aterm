@@ -2452,7 +2452,8 @@ Return ONLY the raw code content. No markdown, no explanations, no code blocks. 
                             temperature = getOptimalTemperature(ModelTemperatureConfig.TaskType.CODE_GENERATION),
                             topP = null,
                             topK = null,
-                            tools = null
+                            tools = null,
+                            disableTools = true // Force disable tools for retry as well
                         )
                         
                         val retryResponse = retryResult.getOrNull()
@@ -2924,6 +2925,11 @@ JSON Blueprint:
             appendLine("9. Ensure the code is production-ready and follows best practices")
             appendLine("10. Include all necessary functionality")
             appendLine("")
+            appendLine("IMPORTANT: You MUST NOT return any function calls or tool calls.")
+            appendLine("Any output starting with '{' or '[' must be treated as raw file content, not a tool invocation.")
+            appendLine("This applies to ALL files including JSON files like package.json or config files.")
+            appendLine("Return ONLY plain text code content - no tool wrappers, no function calls, no JSON tool invocations.")
+            appendLine("")
             appendLine("EXAMPLE FORMAT:")
             when {
                 file.path.endsWith(".json") -> appendLine("If this were package.json, you would return: {\"name\": \"my-app\", \"version\": \"1.0.0\"}")
@@ -2959,7 +2965,8 @@ JSON Blueprint:
             temperature = getOptimalTemperature(ModelTemperatureConfig.TaskType.CODE_GENERATION),
             topP = null,
             topK = null,
-            tools = null // Don't use tools for code generation
+            tools = null, // Don't use tools for code generation
+            disableTools = true // Force disable tools to prevent any tool calls
         )
         
         val response = result.getOrElse {
@@ -2967,19 +2974,70 @@ JSON Blueprint:
             throw Exception("File code generation failed for ${file.path}: ${it.message}", it)
         }
         
-        // Check if response has function calls instead of text (shouldn't happen with tools=null, but check anyway)
-        if (response.text.isEmpty() && response.functionCalls.isNotEmpty()) {
-            Log.w("PpeExecutionEngine", "Response has function calls but no text for ${file.path}. This shouldn't happen with tools=null.")
-            throw Exception("Model returned function calls instead of code for ${file.path}. Please retry.")
+        // Check if response has function calls instead of text - retry if detected
+        val finalResponse = if (response.functionCalls.isNotEmpty()) {
+            Log.w("PpeExecutionEngine", "Response has function calls for ${file.path} even though tools are disabled. Retrying with enforced text-only mode.")
+            // Retry with an even more explicit prompt
+            val retryPrompt = buildString {
+                appendLine("You attempted to return a tool call, but this is NOT allowed.")
+                appendLine("You MUST return ONLY the raw file content as plain text.")
+                appendLine("")
+                appendLine("For ${file.path}, return ONLY the code content starting with:")
+                when {
+                    file.path.endsWith(".json") -> appendLine("'{' (the opening brace of JSON)")
+                    file.path.endsWith(".html") -> appendLine("'<!DOCTYPE' or '<html'")
+                    file.path.endsWith(".js") -> appendLine("'const', 'function', 'import', or 'export'")
+                    file.path.endsWith(".css") -> appendLine("CSS rules (e.g., 'body {', '@media', etc.)")
+                    else -> appendLine("the first character of the actual code")
+                }
+                appendLine("")
+                appendLine("DO NOT return any JSON tool calls. DO NOT return function calls.")
+                appendLine("Return ONLY the raw file content as plain text.")
+            }
+            
+            val retryMessages = messages.toMutableList()
+            retryMessages.add(
+                Content(
+                    role = "user",
+                    parts = listOf(Part.TextPart(text = retryPrompt))
+                )
+            )
+            
+            rateLimiter.acquire()
+            
+            val retryResult = apiClient.callApi(
+                messages = retryMessages,
+                model = null,
+                temperature = getOptimalTemperature(ModelTemperatureConfig.TaskType.CODE_GENERATION),
+                topP = null,
+                topK = null,
+                tools = null,
+                disableTools = true
+            )
+            
+            val retryResponse = retryResult.getOrElse {
+                throw Exception("Retry failed for ${file.path}: ${it.message}", it)
+            }
+            
+            if (retryResponse.functionCalls.isNotEmpty()) {
+                Log.e("PpeExecutionEngine", "Retry also returned function calls for ${file.path}. This is a critical error.")
+                throw Exception("Model persistently returns function calls instead of code for ${file.path}. Cannot generate file.")
+            }
+            
+            if (retryResponse.text.isEmpty()) {
+                throw Exception("Retry returned empty text for ${file.path}")
+            }
+            
+            retryResponse
+        } else {
+            if (response.text.isEmpty()) {
+                Log.e("PpeExecutionEngine", "Response text is empty for ${file.path}. Full response: functionCalls=${response.functionCalls.size}, text length=${response.text.length}")
+            }
+            response
         }
         
         // Extract code from response (remove markdown if present)
-        var code = response.text.trim()
-        
-        // If response text is empty, log the full response for debugging
-        if (code.isEmpty()) {
-            Log.e("PpeExecutionEngine", "Response text is empty for ${file.path}. Full response: functionCalls=${response.functionCalls.size}, text length=${response.text.length}")
-        }
+        var code = finalResponse.text.trim()
         
         Log.d("PpeExecutionEngine", "Raw response for ${file.path} (length: ${code.length}): ${code.take(200)}")
         
