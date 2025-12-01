@@ -2254,7 +2254,7 @@ fun AgentScreen(
                                                                             text = "🔧 Tool requires approval: ${event.functionCall.name}",
                                                                             isUser = false,
                                                                             timestamp = System.currentTimeMillis(),
-                                                                            pendingToolCall = com.qali.aterm.ui.screens.agent.models.PendingToolCall(
+                                                                            pendingToolCall = PendingToolCall(
                                                                                 functionCall = event.functionCall,
                                                                                 requiresApproval = true,
                                                                                 reason = reason

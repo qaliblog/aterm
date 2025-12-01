@@ -51,7 +51,7 @@ data class IssueLocation(
     val line: Int?,
     val column: Int?,
     val function: String?,
-    val class: String?
+    val clazz: String?
 )
 
 data class ReviewSummary(

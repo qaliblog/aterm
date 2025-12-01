@@ -285,7 +285,7 @@ class VariableInspectorToolInvocation(
                     message = "New value is required",
                     type = ToolErrorType.INVALID_PARAMETERS
                 )
-            }
+            )
         }
         
         val oldValue = state.variables[variableName]

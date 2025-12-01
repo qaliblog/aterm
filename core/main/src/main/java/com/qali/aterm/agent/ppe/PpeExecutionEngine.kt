@@ -3380,9 +3380,6 @@ Plan:
 
                 if (waitTimeMs > 0) {
                     delay(waitTimeMs)
-                } else {
-                    // No need to wait, loop will try again
-                    yield()
                 }
             }
         }
