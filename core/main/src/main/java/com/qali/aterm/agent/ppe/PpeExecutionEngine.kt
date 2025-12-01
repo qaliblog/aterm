@@ -1075,6 +1075,16 @@ class PpeExecutionEngine(
         // Build messages with tool result for continuation
         val messages = chatHistory.toMutableList()
         
+        // Detect missing module errors and add prompt to create missing files
+        val missingFile = detectMissingModule(toolResult, functionCall)
+        var missingFilePrompt = ""
+        if (missingFile != null) {
+            android.util.Log.d("PpeExecutionEngine", "Detected missing module/file: $missingFile")
+            onChunk("🔍 Detected missing module: $missingFile\n")
+            onChunk("⚠️ The file '$missingFile' is missing and needs to be created. Please use write_file to create it with appropriate content.\n")
+            missingFilePrompt = "\n\n⚠️ IMPORTANT: A missing file was detected: '$missingFile'. You MUST create this file using write_file tool immediately. The error indicates this file is required for the application to work."
+        }
+        
         // Add tool result to messages (as function response)
         // Format the response to be clear and actionable
         val responseContent = when {
@@ -1143,6 +1153,16 @@ class PpeExecutionEngine(
                 Content(
                     role = "user",
                     parts = listOf(Part.TextPart(text = coherenceConstraint))
+                )
+            )
+        }
+        
+        // Add missing file prompt if a missing file was detected
+        if (missingFilePrompt.isNotEmpty()) {
+            messages.add(
+                Content(
+                    role = "user",
+                    parts = listOf(Part.TextPart(text = missingFilePrompt))
                 )
             )
         }
@@ -2626,7 +2646,7 @@ JSON Blueprint:
         script: PpeScript
     ): Result<String> {
         return retryWithBackoff(
-            maxRetries = 10,
+            maxRetries = 20,
             isRetryable = ::isRetryableException
         ) {
             generateFileCodeInternal(file, blueprint, sanitizeForPrompt(userMessage), chatHistory, script)
@@ -2951,7 +2971,9 @@ JSON Response:
                 val reason = fileObj.optString("reason", "")
                 
                 if (path.isNotEmpty()) {
-                    fileRequests.add(FileReadRequest(path, offset, limit, reason))
+                    // Normalize path - convert absolute paths to relative paths
+                    val normalizedPath = normalizeFilePath(path, workspaceRoot)
+                    fileRequests.add(FileReadRequest(normalizedPath, offset, limit, reason))
                 }
             }
             
@@ -2974,17 +2996,20 @@ JSON Response:
         val fileContents = mutableMapOf<String, String>()
         
         for (request in plan.files) {
+            // Normalize path first (in case it's an absolute path)
+            val normalizedPath = normalizeFilePath(request.path, workspaceRoot)
+            
             // Validate path
-            if (!validateFilePath(request.path, workspaceRoot)) {
-                onChunk("⚠ Invalid file path: ${request.path}\n")
+            if (!validateFilePath(normalizedPath, workspaceRoot)) {
+                onChunk("⚠ Invalid file path: ${request.path} (normalized: $normalizedPath)\n")
                 continue
             }
             
-            onChunk("Reading ${request.path}${if (request.offset != null && request.limit != null) " (lines ${request.offset + 1}-${request.offset + request.limit})" else ""}...\n")
+            onChunk("Reading $normalizedPath${if (request.offset != null && request.limit != null) " (lines ${request.offset + 1}-${request.offset + request.limit})" else ""}...\n")
             
-            val file = File(workspaceRoot, request.path)
+            val file = File(workspaceRoot, normalizedPath)
             if (!file.exists() || !file.isFile) {
-                onChunk("⚠ File not found: ${request.path}\n")
+                onChunk("⚠ File not found: $normalizedPath (original: ${request.path})\n")
                 continue
             }
             
@@ -3014,11 +3039,11 @@ JSON Response:
                     }
                 }
                 
-                fileContents[request.path] = content
-                onChunk("✓ Read ${request.path}\n")
+                fileContents[normalizedPath] = content
+                onChunk("✓ Read $normalizedPath\n")
             } catch (e: Exception) {
-                onChunk("✗ Failed to read ${request.path}: ${e.message}\n")
-                Log.e("PpeExecutionEngine", "Failed to read file ${request.path}", e)
+                onChunk("✗ Failed to read $normalizedPath: ${e.message}\n")
+                Log.e("PpeExecutionEngine", "Failed to read file $normalizedPath", e)
             }
         }
         
@@ -3433,6 +3458,125 @@ Plan:
     // ==================== Validation Utilities ====================
     
     /**
+     * Normalize file path - convert absolute paths to relative paths based on workspace root
+     */
+    private fun normalizeFilePath(path: String, workspaceRoot: String): String {
+        // If path is already relative, return as-is
+        if (!path.startsWith("/")) {
+            return path
+        }
+        
+        try {
+            val workspaceFile = File(workspaceRoot)
+            val workspaceCanonical = workspaceFile.canonicalPath
+            
+            // Try to resolve the absolute path
+            val absoluteFile = File(path)
+            val absoluteCanonical = try {
+                absoluteFile.canonicalPath
+            } catch (e: Exception) {
+                // File doesn't exist, use the path as-is for pattern matching
+                path
+            }
+            
+            // If the absolute path is within the workspace, convert to relative
+            if (absoluteCanonical is String && absoluteCanonical.startsWith(workspaceCanonical)) {
+                val relativePath = absoluteCanonical.substring(workspaceCanonical.length)
+                return relativePath.removePrefix("/").removePrefix("\\")
+            }
+            
+            // Handle virtual paths that map to workspace root
+            // Common patterns: /home/blog/file.js -> file.js (when workspace is .../home/blog)
+            //                  /home/blog/src/file.js -> src/file.js
+            val virtualPathPatterns = listOf(
+                Regex("""^/home/blog/(.+)$"""),  // /home/blog/... -> ...
+                Regex("""^/home/([^/]+)/(.+)$"""),  // /home/username/... -> ... (if workspace ends with username)
+            )
+            
+            for (pattern in virtualPathPatterns) {
+                val match = pattern.find(path)
+                if (match != null) {
+                    val relativePart = match.groupValues.last()
+                    // Verify this makes sense by checking if workspace ends with the base part
+                    val basePart = if (match.groupValues.size > 2) match.groupValues[1] else "blog"
+                    if (workspaceCanonical.endsWith("/$basePart") || workspaceCanonical.endsWith("\\$basePart") ||
+                        workspaceCanonical.endsWith("/$basePart/") || workspaceCanonical.endsWith("\\$basePart\\")) {
+                        Log.d("PpeExecutionEngine", "Normalized virtual path: $path -> $relativePart (workspace: $workspaceCanonical)")
+                        return relativePart
+                    }
+                }
+            }
+            
+            // Special case: if workspace ends with /home/blog or /home/blog/, extract from /home/blog/ paths
+            // Also check if workspace contains /home/blog anywhere (for Alpine Linux paths)
+            val workspaceContainsHomeBlog = workspaceCanonical.contains("/home/blog") || workspaceCanonical.contains("\\home\\blog")
+            if (workspaceContainsHomeBlog || workspaceCanonical.endsWith("/home/blog") || workspaceCanonical.endsWith("\\home\\blog") ||
+                workspaceCanonical.endsWith("/home/blog/") || workspaceCanonical.endsWith("\\home\\blog\\")) {
+                val homeBlogPattern = Regex("""^/home/blog/(.+)$""")
+                val match = homeBlogPattern.find(path)
+                if (match != null) {
+                    val relativePart = match.groupValues[1]
+                    Log.d("PpeExecutionEngine", "Normalized /home/blog path: $path -> $relativePart (workspace: $workspaceCanonical)")
+                    return relativePart
+                }
+            }
+            
+            // If path starts with workspace root path components, extract relative part
+            val workspaceParts = workspaceCanonical.split(File.separator).filter { it.isNotEmpty() }
+            if (absoluteCanonical is String) {
+                val pathParts = absoluteCanonical.split(File.separator).filter { it.isNotEmpty() }
+                
+                // Find where workspace path ends in the absolute path
+                var workspaceIndex = -1
+                for (i in pathParts.indices) {
+                    if (i < workspaceParts.size && pathParts[i] == workspaceParts[i]) {
+                        workspaceIndex = i
+                    } else {
+                        break
+                    }
+                }
+                
+                if (workspaceIndex >= 0 && workspaceIndex < pathParts.size - 1) {
+                    // Extract relative path
+                    val relativeParts = pathParts.subList(workspaceIndex + 1, pathParts.size)
+                    val relativePath = relativeParts.joinToString(File.separator)
+                    Log.d("PpeExecutionEngine", "Normalized by workspace matching: $path -> $relativePath")
+                    return relativePath
+                }
+            }
+            
+            // Last resort: if path starts with /home/blog/, extract the relative part
+            // This handles cases where the file doesn't exist yet and workspace contains /home/blog
+            // This is a common pattern in Alpine Linux environments where /home/blog is a virtual path
+            val homeBlogPattern = Regex("""^/home/blog/(.+)$""")
+            val match = homeBlogPattern.find(path)
+            if (match != null) {
+                val relativePart = match.groupValues[1]
+                // Always extract if workspace contains /home/blog (common in Alpine/Proot environments)
+                if (workspaceCanonical.contains("/home/blog") || workspaceCanonical.contains("\\home\\blog")) {
+                    Log.d("PpeExecutionEngine", "Normalized /home/blog path (last resort): $path -> $relativePart (workspace contains /home/blog)")
+                    return relativePart
+                }
+            }
+            
+            // If we can't normalize, return the original path (validation will catch it if invalid)
+            Log.w("PpeExecutionEngine", "Could not normalize absolute path: $path (workspace: $workspaceCanonical)")
+            return path
+        } catch (e: Exception) {
+            Log.w("PpeExecutionEngine", "Error normalizing path $path: ${e.message}")
+            // If normalization fails, try simple pattern matching
+            val homeBlogPattern = Regex("""^/home/blog/(.+)$""")
+            val match = homeBlogPattern.find(path)
+            if (match != null) {
+                val relativePart = match.groupValues[1]
+                Log.d("PpeExecutionEngine", "Normalized /home/blog path (fallback): $path -> $relativePart")
+                return relativePart
+            }
+            return path
+        }
+    }
+    
+    /**
      * Validate file path to prevent path traversal attacks
      */
     private fun validateFilePath(path: String, workspaceRoot: String): Boolean {
@@ -3641,6 +3785,70 @@ Plan:
             e is java.net.UnknownHostException -> true
             else -> false
         }
+    }
+    
+    /**
+     * Detect missing module errors in tool results
+     * Returns the file path if a missing file was detected, null otherwise
+     */
+    private fun detectMissingModule(
+        toolResult: com.qali.aterm.agent.tools.ToolResult,
+        functionCall: FunctionCall
+    ): String? {
+        // Check shell command results and read tool results for missing module errors
+        if (functionCall.name != "shell" && functionCall.name != "read") {
+            return null
+        }
+        
+        // Get error message from tool result
+        val errorMessage = toolResult.error?.message ?: ""
+        val outputContent = if (toolResult.llmContent is String) {
+            toolResult.llmContent as String
+        } else {
+            ""
+        }
+        
+        // Combine error and output to check for missing module errors
+        val combinedText = "$errorMessage $outputContent"
+        
+        // Check for "Cannot find module" errors
+        val cannotFindModulePattern = Regex(
+            """Cannot find module\s+['"]([^'"]+)['"]""",
+            RegexOption.IGNORE_CASE
+        )
+        val match = cannotFindModulePattern.find(combinedText)
+        
+        if (match == null) {
+            return null
+        }
+        
+        val missingModule = match.groupValues[1]
+        android.util.Log.d("PpeExecutionEngine", "Detected missing module: $missingModule")
+        
+        // Convert module path to file path
+        // Handle both relative paths (./middleware/auth) and module names (middleware/auth)
+        val filePath = when {
+            missingModule.startsWith("./") -> missingModule.substring(2)
+            missingModule.startsWith("../") -> missingModule
+            missingModule.startsWith("/") -> missingModule.substring(1)
+            else -> missingModule
+        }.let { path ->
+            // Add .js extension if not present and it's a JavaScript module
+            if (!path.contains(".") && (combinedText.contains(".js") || combinedText.contains("node") || combinedText.contains("require"))) {
+                "$path.js"
+            } else {
+                path
+            }
+        }
+        
+        // Check if file already exists
+        val file = File(workspaceRoot, filePath)
+        if (file.exists()) {
+            android.util.Log.d("PpeExecutionEngine", "File already exists: $filePath")
+            return null
+        }
+        
+        return filePath
     }
     
     /**

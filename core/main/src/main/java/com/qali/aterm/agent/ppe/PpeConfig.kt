@@ -47,7 +47,7 @@ object PpeConfig {
     // ==================== Retry Configuration ====================
     
     /** Maximum retry attempts */
-    const val MAX_RETRIES = 10
+    const val MAX_RETRIES = 20
     
     /** Initial retry delay in milliseconds */
     const val RETRY_INITIAL_DELAY_MS = 1000L
