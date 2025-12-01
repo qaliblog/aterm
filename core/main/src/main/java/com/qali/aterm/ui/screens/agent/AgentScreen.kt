@@ -2152,16 +2152,6 @@ fun AgentScreen(
                                                     }
                                                 )
                                                 }
-                                                aiClient is CliBasedAgentClient -> {
-                                                    (aiClient as CliBasedAgentClient).sendMessage(
-                                                        userMessage = prompt,
-                                                        onChunk = { },
-                                                        onToolCall = { },
-                                                        onToolResult = { _, _ -> },
-                                                        memory = memory,
-                                                        systemContext = systemContext
-                                                    )
-                                                }
                                                 else -> {
                                                     (aiClient as AgentClient).sendMessage(
                                                     userMessage = prompt,
