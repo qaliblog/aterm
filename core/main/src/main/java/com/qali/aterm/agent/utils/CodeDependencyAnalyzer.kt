@@ -343,6 +343,124 @@ object CodeDependencyAnalyzer {
     }
     
     /**
+     * Generate comprehensive blueprint by analyzing all files in workspace
+     * This should be called first to build the complete dependency matrix
+     */
+    fun generateComprehensiveBlueprint(workspaceRoot: String): String {
+        val matrix = getDependencyMatrix(workspaceRoot)
+        
+        return buildString {
+            appendLine("## Code Dependency Matrix Blueprint - Complete Project Analysis")
+            appendLine()
+            appendLine("**PHASE 1: Blueprint Generation**")
+            appendLine("This blueprint contains all file names, locations, functions, imports, and exports from existing files.")
+            appendLine("Use this to maintain code coherence when writing new files.")
+            appendLine()
+            
+            if (matrix.files.isEmpty()) {
+                appendLine("**No existing files found.** This is a new project. You should:")
+                appendLine("1. First, suggest the file structure (file names, locations, and order to write them)")
+                appendLine("2. Suggest which files should be referenced/tagged when writing each main file")
+                appendLine("3. Then write files one by one, each with a separate prompt using this blueprint")
+            } else {
+                appendLine("**Existing Files Analysis:**")
+                appendLine()
+                
+                matrix.files.forEach { (filePath, metadata) ->
+                    appendLine("### File: $filePath")
+                    appendLine("  - **Language:** ${metadata.language}")
+                    if (metadata.imports.isNotEmpty()) {
+                        appendLine("  - **Imports:** ${metadata.imports.joinToString(", ")}")
+                    }
+                    if (metadata.exports.isNotEmpty()) {
+                        appendLine("  - **Exports:** ${metadata.exports.joinToString(", ")}")
+                    }
+                    if (metadata.functions.isNotEmpty()) {
+                        appendLine("  - **Functions:** ${metadata.functions.joinToString(", ")}")
+                    }
+                    if (metadata.classes.isNotEmpty()) {
+                        appendLine("  - **Classes:** ${metadata.classes.joinToString(", ")}")
+                    }
+                    
+                    // Show dependencies
+                    val deps = matrix.dependencies[filePath]
+                    if (deps != null && deps.isNotEmpty()) {
+                        appendLine("  - **Depends on:** ${deps.joinToString(", ")}")
+                    }
+                    
+                    // Show dependents
+                    val dependents = matrix.dependencies.filter { it.value.contains(filePath) }.keys
+                    if (dependents.isNotEmpty()) {
+                        appendLine("  - **Used by:** ${dependents.joinToString(", ")}")
+                    }
+                    
+                    appendLine()
+                }
+                
+                appendLine("**Dependency Graph:**")
+                matrix.dependencies.forEach { (file, deps) ->
+                    if (deps.isNotEmpty()) {
+                        appendLine("  - $file → ${deps.joinToString(", ")}")
+                    }
+                }
+                appendLine()
+            }
+            
+            appendLine("**Instructions for AI:**")
+            appendLine("1. After reviewing this blueprint, suggest:")
+            appendLine("   - File names and locations in the best format and order to write them")
+            appendLine("   - Which files should be referenced/tagged when writing each main file for better code coherence")
+            appendLine("2. Then write files one by one, each with a separate prompt")
+            appendLine("3. Each file writing prompt should include:")
+            appendLine("   - The blueprint metadata for that specific file")
+            appendLine("   - Related files and their exports/functions/classes")
+            appendLine("   - Instructions to use ONLY the names/imports from the blueprint")
+        }
+    }
+    
+    /**
+     * Generate file writing plan with suggested order and related files
+     */
+    fun generateFileWritingPlan(targetFiles: List<String>, workspaceRoot: String): String {
+        val matrix = getDependencyMatrix(workspaceRoot)
+        
+        return buildString {
+            appendLine("## File Writing Plan")
+            appendLine()
+            appendLine("**Suggested File Order (based on dependencies):**")
+            
+            // Sort files by dependency order (files with no dependencies first)
+            val sortedFiles = targetFiles.sortedBy { filePath ->
+                val deps = matrix.dependencies[filePath]?.size ?: 0
+                deps
+            }
+            
+            sortedFiles.forEachIndexed { index, filePath ->
+                val metadata = matrix.files[filePath]
+                val deps = matrix.dependencies[filePath] ?: emptySet()
+                val dependents = matrix.dependencies.filter { it.value.contains(filePath) }.keys
+                
+                appendLine("${index + 1}. **$filePath**")
+                if (deps.isNotEmpty()) {
+                    appendLine("   - Depends on: ${deps.joinToString(", ")}")
+                    appendLine("   - **Suggested files to reference:** ${deps.joinToString(", ")}")
+                } else {
+                    appendLine("   - No dependencies (can be written first)")
+                }
+                if (dependents.isNotEmpty()) {
+                    appendLine("   - Will be used by: ${dependents.joinToString(", ")}")
+                }
+                if (metadata != null) {
+                    if (metadata.exports.isNotEmpty()) {
+                        appendLine("   - Exports: ${metadata.exports.joinToString(", ")}")
+                    }
+                }
+                appendLine()
+            }
+        }
+    }
+    
+    /**
      * Generate a coherence constraint prompt for a specific file being written
      * This enforces using only names/imports from the dependency matrix
      */
@@ -395,6 +513,64 @@ object CodeDependencyAnalyzer {
             appendLine("- Do NOT use function/class names that aren't exported from related files")
             appendLine("- If you need something that doesn't exist, create it first, then use it")
             appendLine("- Maintain code coherence by following the dependency matrix")
+            
+            // Add suggested files to reference
+            if (relatedFiles.isNotEmpty()) {
+                appendLine()
+                appendLine("**Suggested Files to Reference/Tag:**")
+                appendLine("When writing this file, reference these related files to ensure coherence:")
+                relatedFiles.forEach { relatedFile ->
+                    appendLine("  - $relatedFile")
+                }
+            }
         }
+    }
+    
+    /**
+     * Scan all code files in workspace and build comprehensive blueprint
+     * This should be called before writing files to analyze existing codebase
+     */
+    fun scanAndBuildBlueprint(workspaceRoot: String): String {
+        val file = java.io.File(workspaceRoot)
+        if (!file.exists() || !file.isDirectory) {
+            return "Workspace root does not exist or is not a directory: $workspaceRoot"
+        }
+        
+        val codeFiles = mutableListOf<Pair<String, String>>()
+        
+        // Scan for code files
+        file.walkTopDown().forEach { fileEntry ->
+            if (fileEntry.isFile) {
+                val fileName = fileEntry.name
+                val relativePath = fileEntry.relativeTo(file).path
+                
+                when {
+                    fileName.endsWith(".js") || fileName.endsWith(".mjs") ||
+                    fileName.endsWith(".ts") || fileName.endsWith(".tsx") ||
+                    fileName.endsWith(".py") ||
+                    fileName.endsWith(".java") || fileName.endsWith(".kt") -> {
+                        try {
+                            val content = fileEntry.readText()
+                            codeFiles.add(relativePath to content)
+                        } catch (e: Exception) {
+                            android.util.Log.w("CodeDependencyAnalyzer", "Failed to read file $relativePath: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Analyze all files and build matrix
+        codeFiles.forEach { (filePath, content) ->
+            try {
+                val metadata = analyzeFile(filePath, content, workspaceRoot)
+                updateDependencyMatrix(workspaceRoot, metadata)
+            } catch (e: Exception) {
+                android.util.Log.w("CodeDependencyAnalyzer", "Failed to analyze file $filePath: ${e.message}")
+            }
+        }
+        
+        // Generate comprehensive blueprint
+        return generateComprehensiveBlueprint(workspaceRoot)
     }
 }

@@ -572,8 +572,16 @@ class PpeExecutionEngine(
         val constrainedCount = message.constrainedCount
         val constrainedRandom = message.constrainedRandom
         
-        // Add code coherence blueprint if dependency matrix exists
-        // This ensures AI uses only existing imports/exports/functions from the matrix
+        // Phase 1: Generate comprehensive blueprint by scanning all files first
+        // This should be done at the start to build the complete dependency matrix
+        val comprehensiveBlueprint = try {
+            CodeDependencyAnalyzer.scanAndBuildBlueprint(workspaceRoot)
+        } catch (e: Exception) {
+            android.util.Log.w("PpeExecutionEngine", "Failed to scan and build blueprint: ${e.message}")
+            ""
+        }
+        
+        // Also get the existing coherence blueprint (for backward compatibility)
         val coherenceBlueprint = try {
             CodeDependencyAnalyzer.generateCoherenceBlueprint(workspaceRoot)
         } catch (e: Exception) {
@@ -591,8 +599,11 @@ class PpeExecutionEngine(
             finalMessageContent += "\n\nYou must choose from these options only: $optionsText$countText$randomText"
         }
         
-        // Add coherence blueprint to message if available
-        if (coherenceBlueprint.isNotEmpty()) {
+        // Add comprehensive blueprint first (Phase 1: Blueprint Generation)
+        if (comprehensiveBlueprint.isNotEmpty()) {
+            finalMessageContent += "\n\n$comprehensiveBlueprint"
+        } else if (coherenceBlueprint.isNotEmpty()) {
+            // Fallback to existing blueprint if comprehensive scan failed
             finalMessageContent += "\n\n$coherenceBlueprint"
         }
         
@@ -710,12 +721,23 @@ class PpeExecutionEngine(
             else -> mapOf("output" to "Tool execution succeeded.")
         }
         
-        // Add code coherence constraint for write_file operations
+        // Add code coherence constraint for write_file operations (Phase 2: File Writing)
         val coherenceConstraint = if (functionCall.name == "write_file") {
             val filePath = functionCall.args["file_path"] as? String
             if (filePath != null) {
                 try {
-                    CodeDependencyAnalyzer.generateCoherenceConstraintForFile(filePath, workspaceRoot)
+                    val constraint = CodeDependencyAnalyzer.generateCoherenceConstraintForFile(filePath, workspaceRoot)
+                    
+                    // Also add file writing plan if this is part of a multi-file project
+                    val matrix = CodeDependencyAnalyzer.getDependencyMatrix(workspaceRoot)
+                    val allFiles = matrix.files.keys.toList()
+                    val plan = if (allFiles.size > 1) {
+                        "\n\n" + CodeDependencyAnalyzer.generateFileWritingPlan(allFiles, workspaceRoot)
+                    } else {
+                        ""
+                    }
+                    
+                    constraint + plan
                 } catch (e: Exception) {
                     android.util.Log.w("PpeExecutionEngine", "Failed to generate coherence constraint: ${e.message}")
                     ""
@@ -1014,7 +1036,7 @@ class PpeExecutionEngine(
                     ),
                     Content(
                         role = "user",
-                        parts = listOf(Part.TextPart(text = "You must continue creating files. The project needs more files: index.html, style.css (or styles.css), and the JavaScript game logic file (app.js, script.js, or client.js). The game logic file is REQUIRED. Use write_file to create each file. IMPORTANT: Check the code relativeness information from previous write_file results. Only use imports/exports that exist in related files."))
+                        parts = listOf(Part.TextPart(text = "You must continue creating files. The project needs more files: package.json (if not created), server.js (if not created), index.html, style.css (or styles.css), and the JavaScript game logic file (app.js, script.js, or client.js). The game logic file is REQUIRED. Use write_file to create each file. Do not stop until all files are created. IMPORTANT: Check the code relativeness information from previous write_file results. Only use imports/exports that exist in related files."))
                     )
                 )
                 
