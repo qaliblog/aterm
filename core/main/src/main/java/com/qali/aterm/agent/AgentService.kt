@@ -5,10 +5,12 @@ import com.qali.aterm.agent.client.AgentClient
 import com.qali.aterm.agent.client.AgentEvent
 import com.qali.aterm.agent.client.OllamaClient
 import com.qali.aterm.agent.ppe.CliBasedAgentClient
+import com.qali.aterm.agent.debug.DebugLogger
 import com.qali.aterm.agent.tools.*
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.io.File
 
 /**
  * Service for initializing and managing agent client with tools (supports multiple API providers)
@@ -25,6 +27,16 @@ object AgentService {
     private var currentOllamaModel: String? = null
     
     fun initialize(workspaceRoot: String = alpineDir().absolutePath, useOllama: Boolean = false, ollamaUrl: String = "http://localhost:11434", ollamaModel: String = "llama3.2", sessionId: String? = null, mainActivity: MainActivity? = null): Any {
+        // Initialize debug logger if not already initialized
+        val logDir = File(workspaceRoot, ".aterm/logs")
+        DebugLogger.initialize(
+            logLevel = DebugLogger.LogLevel.INFO,
+            enableFileLogging = true,
+            logDir = logDir,
+            maxFileSize = 10 * 1024 * 1024, // 10 MB
+            maxFiles = 5
+        )
+        
         val workspaceChanged = currentWorkspaceRoot != workspaceRoot
         val useOllamaChanged = this.useOllama != useOllama
         val ollamaConfigChanged = this.currentOllamaUrl != ollamaUrl || this.currentOllamaModel != ollamaModel
@@ -33,6 +45,13 @@ object AgentService {
         this.useOllama = useOllama
         this.currentOllamaUrl = if (useOllama) ollamaUrl else null
         this.currentOllamaModel = if (useOllama) ollamaModel else null
+        
+        DebugLogger.i("AgentService", "Initializing agent service", mapOf(
+            "workspace" to workspaceRoot,
+            "use_ollama" to useOllama,
+            "ollama_url" to (ollamaUrl.takeIf { useOllama } ?: "none"),
+            "ollama_model" to (ollamaModel.takeIf { useOllama } ?: "none")
+        ))
         
         if (useOllama) {
             // Use CLI-based agent for Ollama too (non-streaming flow)
@@ -125,6 +144,36 @@ object AgentService {
         toolRegistry.registerTool(SyntaxErrorDetectionTool(workspaceRoot))
         toolRegistry.registerTool(SyntaxFixTool(workspaceRoot))
         toolRegistry.registerTool(LanguageLinterTool(workspaceRoot))
+        // Debug tool for inspecting execution state
+        toolRegistry.registerTool(DebugTool())
+        // Test execution tool
+        toolRegistry.registerTool(TestExecutionTool(workspaceRoot))
+        // Code coverage analysis tool
+        toolRegistry.registerTool(CoverageAnalysisTool(workspaceRoot))
+        // Project analysis tool
+        toolRegistry.registerTool(ProjectAnalysisTool(workspaceRoot))
+        // Dependency management tool
+        toolRegistry.registerTool(DependencyManagementTool(workspaceRoot))
+        // Architecture analysis tool
+        toolRegistry.registerTool(ArchitectureAnalysisTool(workspaceRoot))
+        // Code quality metrics tool
+        toolRegistry.registerTool(CodeQualityMetricsTool(workspaceRoot))
+        // Performance profiling tool
+        toolRegistry.registerTool(PerformanceProfilingTool(workspaceRoot))
+        // Execution trace tool
+        toolRegistry.registerTool(ExecutionTraceTool(workspaceRoot))
+        // Variable inspector tool
+        toolRegistry.registerTool(VariableInspectorTool(workspaceRoot))
+        // Command history tool
+        toolRegistry.registerTool(CommandHistoryTool(workspaceRoot))
+        // Interactive shell tool
+        toolRegistry.registerTool(InteractiveShellTool(workspaceRoot, mainActivity))
+        // Document analysis tool
+        toolRegistry.registerTool(DocumentAnalysisTool(workspaceRoot))
+        // Code review tool
+        toolRegistry.registerTool(CodeReviewTool(workspaceRoot))
+        // Documentation generation tool
+        toolRegistry.registerTool(DocumentationGenerationTool(workspaceRoot))
     }
     
     fun getClient(): AgentClient? = client

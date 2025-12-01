@@ -4,17 +4,23 @@ import com.rk.libcommons.alpineDir
 import com.qali.aterm.agent.core.FunctionDeclaration
 import com.qali.aterm.agent.core.FunctionParameters
 import com.qali.aterm.agent.core.PropertySchema
+import com.qali.aterm.agent.debug.DebugLogger
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.service.TabType
 import com.termux.terminal.TerminalSession
 import java.io.File
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
+import org.json.JSONObject
+import org.json.JSONArray
 
 data class ShellToolParams(
     val command: String,
     val description: String? = null,
-    val dir_path: String? = null
+    val dir_path: String? = null,
+    val timeout: Long? = null, // Timeout in seconds (default: 60)
+    val background: Boolean = false, // Run command in background
+    val parseOutput: Boolean = true // Attempt to parse structured output (JSON, YAML)
 )
 
 class ShellToolInvocation(
@@ -132,8 +138,9 @@ class ShellToolInvocation(
             }
             
             // Use withContext to ensure we're on the right thread for process operations
-            // Add timeout to prevent hanging (60 seconds max)
-            val result = kotlinx.coroutines.withTimeoutOrNull(60000L) {
+            // Add timeout to prevent hanging (configurable, default 60 seconds)
+            val timeoutMs = (params.timeout ?: 60) * 1000L
+            val result = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     try {
                         android.util.Log.d("ShellTool", "Executing command: ${params.command}")
@@ -317,24 +324,100 @@ class ShellToolInvocation(
                 }
             } ?: run {
                 // Timeout occurred
-                android.util.Log.e("ShellTool", "Command timed out after 60 seconds: ${params.command}")
-                Pair(-1, "Command timed out after 60 seconds")
+                val timeoutSeconds = params.timeout ?: 60
+                android.util.Log.e("ShellTool", "Command timed out after $timeoutSeconds seconds: ${params.command}")
+                Pair(-1, "Command timed out after $timeoutSeconds seconds")
             }
             
             val (exitCode, output) = result
             
+            // Record command in history
+            CommandHistoryManager.addCommand(
+                command = params.command,
+                exitCode = exitCode,
+                output = if (output.length > 10000) output.take(10000) + "..." else output,
+                workingDir = finalWorkingDir.absolutePath
+            )
+            
+            // Parse structured output if enabled
+            val parsedOutput = if (params.parseOutput && exitCode == 0) {
+                parseStructuredOutput(output)
+            } else {
+                null
+            }
+            
+            // Extract error messages if command failed
+            val errorInfo = if (exitCode != 0) {
+                extractErrorInfo(output, exitCode)
+            } else {
+                null
+            }
+            
             if (exitCode == 0) {
+                val resultContent = if (parsedOutput != null) {
+                    buildString {
+                        appendLine("# Command Output (Parsed)")
+                        appendLine()
+                        appendLine("## Structured Data")
+                        appendLine()
+                        appendLine("```json")
+                        appendLine(parsedOutput)
+                        appendLine("```")
+                        appendLine()
+                        appendLine("## Raw Output")
+                        appendLine()
+                        appendLine("```")
+                        appendLine(output)
+                        appendLine("```")
+                    }
+                } else {
+                    output
+                }
+                
                 updateOutput?.invoke(output)
+                
+                DebugLogger.i("ShellTool", "Command executed successfully", mapOf(
+                    "command" to params.command.take(100),
+                    "exit_code" to exitCode,
+                    "output_length" to output.length,
+                    "parsed" to (parsedOutput != null)
+                ))
+                
                 ToolResult(
-                    llmContent = output,
-                    returnDisplay = "Command executed successfully"
+                    llmContent = resultContent,
+                    returnDisplay = "Command executed successfully${if (parsedOutput != null) " (parsed)" else ""}"
                 )
             } else {
+                val errorContent = buildString {
+                    appendLine("# Command Failed")
+                    appendLine()
+                    appendLine("**Exit Code:** $exitCode")
+                    if (errorInfo != null) {
+                        appendLine("**Error Type:** ${errorInfo.type}")
+                        appendLine("**Error Message:** ${errorInfo.message}")
+                        if (errorInfo.suggestion != null) {
+                            appendLine("**Suggestion:** ${errorInfo.suggestion}")
+                        }
+                        appendLine()
+                    }
+                    appendLine("## Output")
+                    appendLine()
+                    appendLine("```")
+                    appendLine(output)
+                    appendLine("```")
+                }
+                
+                DebugLogger.w("ShellTool", "Command failed", mapOf(
+                    "command" to params.command.take(100),
+                    "exit_code" to exitCode,
+                    "error_type" to (errorInfo?.type ?: "unknown")
+                ))
+                
                 ToolResult(
-                    llmContent = "Command failed with exit code $exitCode:\n$output",
-                    returnDisplay = "Error: Exit code $exitCode",
+                    llmContent = errorContent,
+                    returnDisplay = "Error: Exit code $exitCode${if (errorInfo != null) " (${errorInfo.type})" else ""}",
                     error = ToolError(
-                        message = "Command failed with exit code $exitCode",
+                        message = errorInfo?.message ?: "Command failed with exit code $exitCode",
                         type = ToolErrorType.EXECUTION_ERROR
                     )
                 )
@@ -374,6 +457,136 @@ class ShellToolInvocation(
             )
         }
     }
+    
+    /**
+     * Parse structured output (JSON, YAML, etc.)
+     */
+    private fun parseStructuredOutput(output: String): String? {
+        val trimmed = output.trim()
+        
+        // Try JSON parsing
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return try {
+                if (trimmed.startsWith("{")) {
+                    JSONObject(trimmed).toString(2)
+                } else {
+                    JSONArray(trimmed).toString(2)
+                }
+            } catch (e: Exception) {
+                null // Not valid JSON
+            }
+        }
+        
+        // Try YAML-like parsing (basic detection)
+        if (trimmed.contains(":") && trimmed.lines().any { it.matches(Regex("^\\s*\\w+:\\s*.*")) }) {
+            // Basic YAML detection - could be enhanced
+            return null // For now, just detect but don't parse
+        }
+        
+        return null
+    }
+    
+    /**
+     * Extract error information from command output
+     */
+    private fun extractErrorInfo(output: String, exitCode: Int): ErrorInfo? {
+        val lines = output.lines()
+        val errorMessages = mutableListOf<String>()
+        var errorType = "unknown"
+        var suggestion: String? = null
+        
+        // Common error patterns
+        lines.forEach { line ->
+            val lowerLine = line.lowercase()
+            
+            when {
+                // File not found
+                lowerLine.contains("no such file") ||
+                lowerLine.contains("file not found") ||
+                lowerLine.contains("cannot find") -> {
+                    errorType = "file_not_found"
+                    errorMessages.add(line)
+                    suggestion = "Check if the file or directory exists and the path is correct"
+                }
+                
+                // Permission denied
+                lowerLine.contains("permission denied") ||
+                lowerLine.contains("access denied") ||
+                lowerLine.contains("not permitted") -> {
+                    errorType = "permission_denied"
+                    errorMessages.add(line)
+                    suggestion = "Check file permissions or run with appropriate privileges"
+                }
+                
+                // Command not found
+                lowerLine.contains("command not found") ||
+                lowerLine.contains("not found") && lowerLine.contains("command") -> {
+                    errorType = "command_not_found"
+                    errorMessages.add(line)
+                    suggestion = "Install the required command or check if it's in PATH"
+                }
+                
+                // Network errors
+                lowerLine.contains("connection refused") ||
+                lowerLine.contains("network") ||
+                lowerLine.contains("timeout") && lowerLine.contains("connect") -> {
+                    errorType = "network_error"
+                    errorMessages.add(line)
+                    suggestion = "Check network connectivity and server availability"
+                }
+                
+                // Syntax errors
+                lowerLine.contains("syntax error") ||
+                lowerLine.contains("parse error") -> {
+                    errorType = "syntax_error"
+                    errorMessages.add(line)
+                    suggestion = "Check command syntax and parameters"
+                }
+                
+                // Dependency missing
+                lowerLine.contains("dependency") ||
+                lowerLine.contains("package not found") ||
+                lowerLine.contains("module not found") -> {
+                    errorType = "dependency_missing"
+                    errorMessages.add(line)
+                    suggestion = "Install missing dependencies or packages"
+                }
+                
+                // Generic error indicators
+                lowerLine.contains("error:") ||
+                lowerLine.contains("fatal:") ||
+                lowerLine.contains("failed") -> {
+                    if (errorType == "unknown") {
+                        errorType = "execution_error"
+                    }
+                    errorMessages.add(line)
+                }
+            }
+        }
+        
+        // If no specific error found, use last few lines
+        if (errorMessages.isEmpty() && lines.isNotEmpty()) {
+            errorMessages.addAll(lines.takeLast(3))
+        }
+        
+        return if (errorMessages.isNotEmpty()) {
+            ErrorInfo(
+                type = errorType,
+                message = errorMessages.joinToString("; "),
+                suggestion = suggestion,
+                exitCode = exitCode
+            )
+        } else {
+            null
+        }
+    }
+    
+    data class ErrorInfo(
+        val type: String,
+        val message: String,
+        val suggestion: String?,
+        val exitCode: Int
+    )
 }
 
 class ShellTool(
@@ -400,6 +613,18 @@ class ShellTool(
             "dir_path" to PropertySchema(
                 type = "string",
                 description = "Optional directory path to execute the command in."
+            ),
+            "timeout" to PropertySchema(
+                type = "integer",
+                description = "Timeout in seconds (default: 60). Commands exceeding this will be terminated."
+            ),
+            "background" to PropertySchema(
+                type = "boolean",
+                description = "Run command in background (default: false). Note: output may be limited for background processes."
+            ),
+            "parseOutput" to PropertySchema(
+                type = "boolean",
+                description = "Attempt to parse structured output (JSON, YAML) automatically (default: true)."
             )
         ),
         required = listOf("command")
@@ -432,7 +657,10 @@ class ShellTool(
         return ShellToolParams(
             command = command,
             description = params["description"] as? String,
-            dir_path = params["dir_path"] as? String
+            dir_path = params["dir_path"] as? String,
+            timeout = (params["timeout"] as? Number)?.toLong(),
+            background = params["background"] as? Boolean ?: false,
+            parseOutput = params["parseOutput"] as? Boolean ?: true
         )
     }
 }

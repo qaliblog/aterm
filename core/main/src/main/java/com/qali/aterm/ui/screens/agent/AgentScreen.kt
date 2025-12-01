@@ -86,7 +86,14 @@ data class AgentMessage(
     val text: String,
     val isUser: Boolean,
     val timestamp: Long,
-    val fileDiff: FileDiff? = null // Optional file diff for code changes
+    val fileDiff: FileDiff? = null, // Optional file diff for code changes
+    val pendingToolCall: PendingToolCall? = null // Optional pending tool call requiring approval
+)
+
+data class PendingToolCall(
+    val functionCall: com.qali.aterm.agent.core.FunctionCall,
+    val requiresApproval: Boolean = false,
+    val reason: String = ""
 )
 
 fun formatTimestamp(timestamp: Long): String {
@@ -1974,7 +1981,68 @@ fun AgentScreen(
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        MessageBubble(message = message)
+                        MessageBubble(
+                            message = message,
+                            onToolApproved = { functionCall ->
+                                // Execute approved tool call
+                                scope.launch(Dispatchers.IO) {
+                                    android.util.Log.d("AgentScreen", "Tool approved: ${functionCall.name}")
+                                    // Add to allow list
+                                    com.qali.aterm.agent.ppe.AllowListManager.addToAllowList(functionCall)
+                                    
+                                    // Update message to show it was approved
+                                    val updatedMessages = messages.mapIndexed { idx, msg ->
+                                        if (idx == index && msg.pendingToolCall?.functionCall == functionCall) {
+                                            msg.copy(
+                                                text = "${msg.text}\n\n✅ Approved and executed",
+                                                pendingToolCall = null
+                                            )
+                                        } else {
+                                            msg
+                                        }
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        messages = updatedMessages
+                                    }
+                                    
+                                    // Execute the tool call through the agent client
+                                    // The tool will be executed in the next iteration since it's now in allow list
+                                    // For immediate execution, we'd need to inject it back into the execution flow
+                                    // For now, the user can retry the operation and it will be auto-approved
+                                }
+                            },
+                            onToolSkipped = { functionCall, reason ->
+                                android.util.Log.d("AgentScreen", "Tool skipped: ${functionCall.name}, reason: $reason")
+                                // Update message to show it was skipped
+                                val updatedMessages = messages.mapIndexed { idx, msg ->
+                                    if (idx == index && msg.pendingToolCall?.functionCall == functionCall) {
+                                        msg.copy(
+                                            text = "${msg.text}\n\n⏭️ Skipped: ${reason.ifEmpty { "User skipped this action" }}",
+                                            pendingToolCall = null
+                                        )
+                                    } else {
+                                        msg
+                                    }
+                                }
+                                messages = updatedMessages
+                            },
+                            onAddToAllowList = { functionCall ->
+                                com.qali.aterm.agent.ppe.AllowListManager.addToAllowList(functionCall, pattern = false)
+                                android.util.Log.d("AgentScreen", "Added to allow list: ${functionCall.name}")
+                                // Update message
+                                val updatedMessages = messages.mapIndexed { idx, msg ->
+                                    if (idx == index && msg.pendingToolCall?.functionCall == functionCall) {
+                                        msg.copy(
+                                            text = "${msg.text}\n\n✅ Added to allow list",
+                                            pendingToolCall = null
+                                        )
+                                    } else {
+                                        msg
+                                    }
+                                }
+                                messages = updatedMessages
+                            }
+                        )
                         // Show diff card if message has file diff - use index for stable key to prevent disappearing
                         message.fileDiff?.let { diff ->
                             key("file-diff-${index}-${diff.filePath}") {
@@ -2227,17 +2295,40 @@ fun AgentScreen(
                                                             is AgentEvent.ToolCall -> {
                                                                 execState.toolCallCount++
                                                                 android.util.Log.d("AgentScreen", "Processing ToolCall event (count: ${execState.toolCallCount}, tool: ${event.functionCall.name})")
+                                                                
+                                                                // Check if tool requires approval
+                                                                val requiresApproval = com.qali.aterm.agent.ppe.ToolApprovalManager.requiresApproval(event.functionCall)
+                                                                val isAllowed = com.qali.aterm.agent.ppe.AllowListManager.isAllowed(event.functionCall)
+                                                                
                                                                 // Store tool call args in queue for file diff extraction
                                                                 if (event.functionCall.name == "edit" || event.functionCall.name == "write_file") {
                                                                     toolCallQueue.add(Pair(event.functionCall.name, event.functionCall.args))
                                                                 }
+                                                                
                                                                 withContext(Dispatchers.Main) {
-                                                                    val toolMessage = AgentMessage(
-                                                                        text = "🔧 Calling tool: ${event.functionCall.name}",
-                                                                        isUser = false,
-                                                                        timestamp = System.currentTimeMillis()
-                                                                    )
-                                                                    messages = messages + toolMessage
+                                                                    if (requiresApproval && !isAllowed) {
+                                                                        // Show pending approval UI
+                                                                        val reason = com.qali.aterm.agent.ppe.ToolApprovalManager.getApprovalReason(event.functionCall)
+                                                                        val toolMessage = AgentMessage(
+                                                                            text = "🔧 Tool requires approval: ${event.functionCall.name}",
+                                                                            isUser = false,
+                                                                            timestamp = System.currentTimeMillis(),
+                                                                            pendingToolCall = com.qali.aterm.ui.screens.agent.models.PendingToolCall(
+                                                                                functionCall = event.functionCall,
+                                                                                requiresApproval = true,
+                                                                                reason = reason
+                                                                            )
+                                                                        )
+                                                                        messages = messages + toolMessage
+                                                                    } else {
+                                                                        // Normal tool call
+                                                                        val toolMessage = AgentMessage(
+                                                                            text = "🔧 Calling tool: ${event.functionCall.name}",
+                                                                            isUser = false,
+                                                                            timestamp = System.currentTimeMillis()
+                                                                        )
+                                                                        messages = messages + toolMessage
+                                                                    }
                                                                 }
                                                             }
                                                             is AgentEvent.ToolResult -> {

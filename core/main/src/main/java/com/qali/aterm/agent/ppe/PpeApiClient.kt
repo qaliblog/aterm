@@ -7,7 +7,9 @@ import com.qali.aterm.agent.client.api.ApiRequestBuilder
 import com.qali.aterm.agent.client.api.ProviderAdapter
 import com.qali.aterm.agent.client.api.ApiResponseParser
 import com.qali.aterm.agent.tools.ToolResult
+import com.qali.aterm.agent.debug.DebugLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import android.util.Log
@@ -27,10 +29,17 @@ class PpeApiClient(
     private val ollamaUrl: String? = null,
     private val ollamaModel: String? = null
 ) {
+    // Separate client for Ollama with longer timeouts (some models are very slow, especially large models)
+    private val ollamaClient = OkHttpClient.Builder()
+        .connectTimeout(PpeConfig.OLLAMA_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(PpeConfig.OLLAMA_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .writeTimeout(PpeConfig.OLLAMA_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .build()
+    
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(PpeConfig.DEFAULT_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(PpeConfig.DEFAULT_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .writeTimeout(PpeConfig.DEFAULT_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
     
     /**
@@ -47,10 +56,28 @@ class PpeApiClient(
         tools: List<Tool>? = null
     ): Result<PpeApiResponse> {
         return withContext(Dispatchers.IO) {
+            val startTime = System.currentTimeMillis()
+            val callId = "api-call-${System.currentTimeMillis()}"
+            
             try {
+                DebugLogger.d("PpeApiClient", "Starting API call", mapOf(
+                    "call_id" to callId,
+                    "model" to (model ?: "default"),
+                    "messages_count" to messages.size,
+                    "has_tools" to (tools != null && tools.isNotEmpty()),
+                    "temperature" to (temperature ?: "default"),
+                    "streaming" to false
+                ))
+                
                 // If Ollama is configured, use it directly (bypass ApiProviderManager)
                 if (ollamaUrl != null && ollamaModel != null) {
                     val actualModel = model ?: ollamaModel
+                    
+                    DebugLogger.d("PpeApiClient", "Using Ollama provider", mapOf(
+                        "call_id" to callId,
+                        "ollama_url" to ollamaUrl,
+                        "model" to actualModel
+                    ))
                     
                     // Build request using existing ApiRequestBuilder
                     val requestBuilder = ApiRequestBuilder(toolRegistry)
@@ -73,11 +100,42 @@ class PpeApiClient(
                     
                     // Make direct Ollama API call (non-streaming)
                     val response = makeDirectOllamaCall(ollamaUrl, actualModel, convertedBody, temperature, topP, topK)
+                    
+                    val duration = System.currentTimeMillis() - startTime
+                    
+                    // Record API call metrics
+                    val estimatedTokens = ContextWindowManager.estimateTokens(messages) + 
+                                         ContextWindowManager.estimateTokens(listOf(
+                                             Content(role = "model", parts = listOf(Part.TextPart(text = response.text)))
+                                         ))
+                    val cost = Observability.estimateCost(actualModel, estimatedTokens)
+                    Observability.recordApiCall("current-operation", estimatedTokens, cost)
+                    
+                    // Log API call
+                    DebugLogger.logApiCall(
+                        tag = "PpeApiClient",
+                        provider = "Ollama",
+                        model = actualModel,
+                        requestSize = requestBody.toString().length,
+                        responseSize = response.text.length,
+                        duration = duration,
+                        success = true,
+                        sanitizedRequest = sanitizeRequest(requestBody.toString()),
+                        sanitizedResponse = sanitizeResponse(response.text)
+                    )
+                    
                     return@withContext Result.success(response)
                 }
                 
                 // Otherwise, use ApiProviderManager (existing flow)
                 val actualModel = model ?: ApiProviderManager.getCurrentModel()
+                val providerType = ApiProviderManager.selectedProvider.name
+                
+                DebugLogger.d("PpeApiClient", "Using ApiProviderManager", mapOf(
+                    "call_id" to callId,
+                    "provider" to providerType,
+                    "model" to actualModel
+                ))
                 
                 // Build request using existing ApiRequestBuilder
                 val requestBuilder = ApiRequestBuilder(toolRegistry)
@@ -111,21 +169,143 @@ class PpeApiClient(
                     }
                 }
                 
-                if (result.isSuccess) {
-                    Result.success(result.getOrNull()!!)
+                val duration = System.currentTimeMillis() - startTime
+                
+                val finalResult = if (result.isSuccess) {
+                    val response = result.getOrNull()!!
+                    
+                    // Record API call metrics
+                    val estimatedTokens = ContextWindowManager.estimateTokens(messages) + 
+                                         ContextWindowManager.estimateTokens(listOf(
+                                             Content(role = "model", parts = listOf(Part.TextPart(text = response.text)))
+                                         ))
+                    val cost = Observability.estimateCost(actualModel, estimatedTokens)
+                    Observability.recordApiCall("current-operation", estimatedTokens, cost)
+                    
+                    // Log successful API call
+                    DebugLogger.logApiCall(
+                        tag = "PpeApiClient",
+                        provider = providerType,
+                        model = actualModel,
+                        requestSize = requestBody.toString().length,
+                        responseSize = response.text.length,
+                        duration = duration,
+                        success = true,
+                        sanitizedRequest = sanitizeRequest(requestBody.toString()),
+                        sanitizedResponse = sanitizeResponse(response.text)
+                    )
+                    
+                    Result.success(response)
                 } else {
                     val error = result.exceptionOrNull()
-                    Result.failure(error ?: Exception("Unknown API error"))
+                    val errorMessage = error?.message ?: "Unknown API error"
+                    
+                    // Classify error and get recovery information
+                    val errorContext = mapOf(
+                        "provider" to providerType,
+                        "model" to actualModel,
+                        "call_id" to callId,
+                        "duration_ms" to duration
+                    )
+                    val classification = if (error != null) {
+                        ErrorRecoveryManager.classifyError(error, errorContext)
+                    } else {
+                        ErrorRecoveryManager.ErrorClassification(
+                            category = ErrorRecoveryManager.ErrorCategory.UNKNOWN,
+                            severity = "medium",
+                            isRetryable = false,
+                            retryDelay = 0,
+                            maxRetries = 0,
+                            recoverySuggestion = "Unknown error occurred",
+                            context = errorContext
+                        )
+                    }
+                    
+                    // Generate error report
+                    val errorReport = if (error != null) {
+                        ErrorRecoveryManager.generateErrorReport(error, classification, errorContext)
+                    } else {
+                        "Error: $errorMessage"
+                    }
+                    
+                    // Log failed API call with enhanced error information
+                    DebugLogger.logApiCall(
+                        tag = "PpeApiClient",
+                        provider = providerType,
+                        model = actualModel,
+                        requestSize = requestBody.toString().length,
+                        responseSize = 0,
+                        duration = duration,
+                        success = false,
+                        error = errorMessage,
+                        sanitizedRequest = sanitizeRequest(requestBody.toString())
+                    )
+                    
+                    // Log error classification
+                    DebugLogger.e("PpeApiClient", "API call failed with classification", mapOf(
+                        "call_id" to callId,
+                        "category" to classification.category.name,
+                        "severity" to classification.severity,
+                        "retryable" to classification.isRetryable,
+                        "recovery_suggestion" to (classification.recoverySuggestion ?: "none")
+                    ), error)
+                    
+                    Result.failure(error ?: Exception(errorMessage))
                 }
+                
+                return@withContext finalResult
             } catch (e: Exception) {
-                Log.e("PpeApiClient", "API call failed", e)
+                val duration = System.currentTimeMillis() - startTime
+                
+                // Classify error and get recovery information
+                val errorContext = mapOf(
+                    "call_id" to callId,
+                    "duration_ms" to duration,
+                    "model" to (model ?: "default")
+                )
+                val classification = ErrorRecoveryManager.classifyError(e, errorContext)
+                
+                // Generate error report
+                val errorReport = ErrorRecoveryManager.generateErrorReport(e, classification, errorContext)
+                
+                Log.e("PpeApiClient", "API call failed: ${classification.category}", e)
+                DebugLogger.e("PpeApiClient", "API call exception with classification", mapOf(
+                    "call_id" to callId,
+                    "duration_ms" to duration,
+                    "error" to (e.message ?: "Unknown error"),
+                    "category" to classification.category.name,
+                    "severity" to classification.severity,
+                    "retryable" to classification.isRetryable,
+                    "recovery_suggestion" to (classification.recoverySuggestion ?: "none")
+                ), e)
+                
                 Result.failure(e)
             }
         }
     }
     
     /**
+     * Sanitize request for logging (remove sensitive data)
+     */
+    private fun sanitizeRequest(request: String): String {
+        // Remove API keys and sensitive tokens
+        return request
+            .replace(Regex("""["']?key["']?\s*[:=]\s*["']?[^"']+["']?"""), "\"key\": \"***\"")
+            .replace(Regex("""["']?api[_-]?key["']?\s*[:=]\s*["']?[^"']+["']?"""), "\"api_key\": \"***\"")
+            .replace(Regex("""["']?token["']?\s*[:=]\s*["']?[^"']+["']?"""), "\"token\": \"***\"")
+            .take(1000) // Limit length
+    }
+    
+    /**
+     * Sanitize response for logging
+     */
+    private fun sanitizeResponse(response: String): String {
+        return response.take(500) // Limit length
+    }
+    
+    /**
      * Make direct Ollama API call (non-streaming)
+     * Retries without tools if tools are not supported by the model
      */
     private suspend fun makeDirectOllamaCall(
         ollamaUrl: String,
@@ -144,6 +324,43 @@ class PpeApiClient(
         topP?.let { requestBody.put("top_p", it) }
         topK?.let { requestBody.put("top_k", it) }
         
+        // Check if request has tools
+        val hasTools = requestBody.has("tools") && !requestBody.isNull("tools")
+        val originalTools = if (hasTools) requestBody.optJSONArray("tools") else null
+        
+        // Try with tools first (if available)
+        if (hasTools && originalTools != null && originalTools.length() > 0) {
+            try {
+                return makeOllamaRequest(ollamaClient, url, requestBody, model)
+            } catch (e: Exception) {
+                val errorMsg = e.message?.lowercase() ?: ""
+                // If tools are not supported, retry without tools
+                if (errorMsg.contains("tool") || errorMsg.contains("function") || 
+                    errorMsg.contains("not support") || errorMsg.contains("unsupported")) {
+                    Log.w("PpeApiClient", "Ollama model $model does not support tools, retrying without tools")
+                    // Remove tools from request
+                    requestBody.remove("tools")
+                    // Continue to make request without tools
+                } else {
+                    // Re-throw if it's a different error (timeout, network, etc.)
+                    throw e
+                }
+            }
+        }
+        
+        // Make request (without tools or if tools were removed)
+        return makeOllamaRequest(ollamaClient, url, requestBody, model)
+    }
+    
+    /**
+     * Make actual Ollama HTTP request
+     */
+    private suspend fun makeOllamaRequest(
+        httpClient: OkHttpClient,
+        url: String,
+        requestBody: JSONObject,
+        model: String
+    ): PpeApiResponse {
         // Make HTTP request (non-streaming)
         val requestBodyString = requestBody.toString()
         val httpRequest = Request.Builder()
@@ -151,11 +368,26 @@ class PpeApiClient(
             .post(requestBodyString.toRequestBody("application/json".toMediaType()))
             .build()
         
-        val response = client.newCall(httpRequest).execute()
+        val response = httpClient.newCall(httpRequest).execute()
         
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: "Unknown error"
-            throw IOException("Ollama API call failed: ${response.code} - $errorBody")
+            val error = IOException("Ollama API call failed: ${response.code} - $errorBody")
+            
+            // Classify error for better error reporting
+            val classification = ErrorRecoveryManager.classifyError(error, mapOf(
+                "http_code" to response.code,
+                "model" to model,
+                "error_body" to errorBody.take(200)
+            ))
+            
+            DebugLogger.e("PpeApiClient", "Ollama API call failed", mapOf(
+                "http_code" to response.code,
+                "category" to classification.category.name,
+                "recovery_suggestion" to (classification.recoverySuggestion ?: "none")
+            ), error)
+            
+            throw error
         }
         
         val bodyString = response.body?.string() ?: ""
@@ -282,7 +514,24 @@ class PpeApiClient(
         
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: "Unknown error"
-            throw IOException("API call failed: ${response.code} - $errorBody")
+            val error = IOException("API call failed: ${response.code} - $errorBody")
+            
+            // Classify error for better error reporting
+            val classification = ErrorRecoveryManager.classifyError(error, mapOf(
+                "http_code" to response.code,
+                "provider" to providerType.name,
+                "model" to model,
+                "error_body" to errorBody.take(200)
+            ))
+            
+            DebugLogger.e("PpeApiClient", "API call failed", mapOf(
+                "http_code" to response.code,
+                "provider" to providerType.name,
+                "category" to classification.category.name,
+                "recovery_suggestion" to (classification.recoverySuggestion ?: "none")
+            ), error)
+            
+            throw error
         }
         
         val bodyString = response.body?.string() ?: ""

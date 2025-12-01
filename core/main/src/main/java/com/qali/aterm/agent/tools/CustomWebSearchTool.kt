@@ -1,6 +1,5 @@
 package com.qali.aterm.agent.tools
 
-import com.rk.settings.Settings
 import com.qali.aterm.api.ApiProviderManager
 import com.qali.aterm.agent.client.AgentClient
 import com.qali.aterm.agent.core.*
@@ -19,16 +18,50 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 data class CustomWebSearchToolParams(
-    val query: String
+    val query: String,
+    /**
+     * Preferred search engines.
+     * Supported values (case-insensitive): "duckduckgo", "bing", "google".
+     * When null or empty, a sensible default ordering is used:
+     * DuckDuckGo -> Bing (if API key configured) -> Google (if API key configured).
+     */
+    val engines: List<String>? = null,
+    /**
+     * Maximum number of results to return after aggregation and ranking.
+     * Defaults to 20.
+     */
+    val maxResults: Int? = null,
+    /**
+     * Time range filter for results, engine-dependent.
+     * Common values: "day", "week", "month", "year", "any".
+     */
+    val timeRange: String? = null,
+    /**
+     * Language filter (e.g., "en", "de", "fr").
+     */
+    val language: String? = null,
+    /**
+     * Region filter (e.g., "us", "uk", "de").
+     */
+    val region: String? = null
 )
 
 data class SearchResult(
     val title: String,
     val url: String,
-    val snippet: String
+    val snippet: String,
+    /**
+     * Originating search engine (e.g., "duckduckgo", "bing", "google").
+     */
+    val source: String,
+    /**
+     * Optional relevance score used for ranking.
+     */
+    val score: Double = 0.0
 )
 
 class CustomWebSearchToolInvocation(
@@ -66,14 +99,22 @@ class CustomWebSearchToolInvocation(
         
         return withContext(Dispatchers.IO) {
             try {
-                val maxRecursiveCurls = Settings.custom_search_recursive_curls
+                // Limit recursion depth defensively, keep behaviour similar to previous Settings-based value
+                val maxRecursiveCurls = 2
                 val searchGoal = params.query
                 
                 updateOutput?.invoke("🔍 Starting custom web search (max $maxRecursiveCurls recursive searches)...")
                 
-                // Step 1: Initial Google Search (using DuckDuckGo as it doesn't require API key)
-                updateOutput?.invoke("📡 Performing initial search...")
-                val initialResults = performDuckDuckGoSearch(searchGoal)
+                // Step 1: Initial multi-engine search (DuckDuckGo + optional Bing/Google)
+                updateOutput?.invoke("📡 Performing initial search (multi-engine)...")
+                val initialResults = performAggregatedSearch(
+                    query = searchGoal,
+                    engines = params.engines,
+                    maxResults = params.maxResults ?: 20,
+                    timeRange = params.timeRange,
+                    language = params.language,
+                    region = params.region
+                )
                 
                 if (initialResults.isEmpty()) {
                     return@withContext ToolResult(
@@ -105,7 +146,14 @@ class CustomWebSearchToolInvocation(
                     // Perform searches for suggested queries
                     for (suggestedQuery in suggestedQueries.take(2)) { // Limit to 2 queries per level
                         if (signal?.isAborted() == true) break
-                        val additionalResults = performDuckDuckGoSearch(suggestedQuery)
+                        val additionalResults = performAggregatedSearch(
+                            query = suggestedQuery,
+                            engines = params.engines,
+                            maxResults = (params.maxResults ?: 20),
+                            timeRange = params.timeRange,
+                            language = params.language,
+                            region = params.region
+                        )
                         additionalResults.forEach { result ->
                             if (!visitedUrls.contains(result.url)) {
                                 allCollectedInfo.add(result)
@@ -124,7 +172,9 @@ class CustomWebSearchToolInvocation(
                                     allCollectedInfo.add(SearchResult(
                                         title = extractTitleFromUrl(url),
                                         url = url,
-                                        snippet = content.take(500)
+                                        snippet = content.take(500),
+                                        source = "fetch",
+                                        score = 0.0
                                     ))
                                     visitedUrls.add(url)
                                 }
@@ -169,7 +219,87 @@ class CustomWebSearchToolInvocation(
         }
     }
     
-    private fun performDuckDuckGoSearch(query: String): List<SearchResult> {
+    /**
+     * Aggregate results from multiple engines, apply simple ranking and de-duplication.
+     */
+    private fun performAggregatedSearch(
+        query: String,
+        engines: List<String>?,
+        maxResults: Int,
+        timeRange: String?,
+        language: String?,
+        region: String?
+    ): List<SearchResult> {
+        val normalizedEngines = (engines?.takeIf { it.isNotEmpty() }
+            ?: listOf("duckduckgo", "bing", "google"))
+            .map { it.lowercase(Locale.ROOT) }
+
+        val results = mutableListOf<SearchResult>()
+
+        if ("duckduckgo" in normalizedEngines) {
+            results += performDuckDuckGoSearch(query, language, region)
+        }
+        if ("bing" in normalizedEngines) {
+            results += performBingSearch(query, language, region, timeRange)
+        }
+        if ("google" in normalizedEngines) {
+            results += performGoogleSearch(query, language, region, timeRange)
+        }
+
+        if (results.isEmpty()) return emptyList()
+
+        // Rank and de-duplicate
+        val ranked = rankAndDeduplicateResults(query, results)
+        return ranked.take(maxResults)
+    }
+
+    /**
+     * Basic relevance ranking + de-duplication by URL.
+     */
+    private fun rankAndDeduplicateResults(query: String, results: List<SearchResult>): List<SearchResult> {
+        val terms = query.lowercase(Locale.ROOT)
+            .split(Regex("\\s+"))
+            .filter { it.length > 2 }
+
+        val scored = results.map { result ->
+            var score = 0.0
+            val haystack = (result.title + " " + result.snippet).lowercase(Locale.ROOT)
+            terms.forEach { term ->
+                if (haystack.contains(term)) {
+                    score += 1.0
+                }
+            }
+            // Light weighting by engine
+            score += when (result.source.lowercase(Locale.ROOT)) {
+                "google" -> 1.5
+                "bing" -> 1.0
+                "duckduckgo" -> 0.8
+                else -> 0.5
+            }
+            result.copy(score = score)
+        }
+
+        // De-dupe by normalized URL
+        val seen = mutableSetOf<String>()
+        val deduped = mutableListOf<SearchResult>()
+        scored.sortedByDescending { it.score }.forEach { r ->
+            val normalizedUrl = r.url.trim().lowercase(Locale.ROOT)
+            if (normalizedUrl !in seen) {
+                seen += normalizedUrl
+                deduped += r
+            }
+        }
+        return deduped
+    }
+
+    /**
+     * DuckDuckGo search (JSON + HTML fallback).
+     */
+    private fun performDuckDuckGoSearch(
+        query: String,
+        language: String?,
+        region: String?
+    ): List<SearchResult> {
         return try {
             // DuckDuckGo Instant Answer API (no API key required)
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -198,7 +328,8 @@ class CustomWebSearchToolInvocation(
                 results.add(SearchResult(
                     title = abstract.ifEmpty { "DuckDuckGo Result" },
                     url = abstractUrl,
-                    snippet = abstractText
+                    snippet = abstractText,
+                    source = "duckduckgo"
                 ))
             }
             
@@ -214,7 +345,8 @@ class CustomWebSearchToolInvocation(
                         results.add(SearchResult(
                             title = text.take(100),
                             url = firstUrl,
-                            snippet = text
+                            snippet = text,
+                            source = "duckduckgo"
                         ))
                     }
                 }
@@ -267,13 +399,144 @@ class CustomWebSearchToolInvocation(
                 results.add(SearchResult(
                     title = title,
                     url = url,
-                    snippet = snippet
+                    snippet = snippet,
+                    source = "duckduckgo-html"
                 ))
             }
             
             results
         } catch (e: Exception) {
             android.util.Log.e("CustomWebSearch", "DuckDuckGo HTML search failed", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Bing Web Search API (optional).
+     * Uses environment variable BING_SEARCH_API_KEY if present; otherwise returns empty list.
+     */
+    private fun performBingSearch(
+        query: String,
+        language: String?,
+        region: String?,
+        timeRange: String?
+    ): List<SearchResult> {
+        val apiKey = System.getenv("BING_SEARCH_API_KEY") ?: return emptyList()
+        return try {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val urlBuilder = StringBuilder("https://api.bing.microsoft.com/v7.0/search?q=$encodedQuery")
+            language?.let { urlBuilder.append("&mkt=${it.lowercase(Locale.ROOT)}") }
+            region?.let { urlBuilder.append("&cc=${it.uppercase(Locale.ROOT)}") }
+            // timeRange mapping is engine-specific; keep it simple / best-effort.
+
+            val request = Request.Builder()
+                .url(urlBuilder.toString())
+                .header("Ocp-Apim-Subscription-Key", apiKey)
+                .get()
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                android.util.Log.w("CustomWebSearch", "Bing API returned ${response.code}")
+                return emptyList()
+            }
+
+            val body = response.body?.string() ?: return emptyList()
+            val json = JSONObject(body)
+            val webPages = json.optJSONObject("webPages") ?: return emptyList()
+            val value = webPages.optJSONArray("value") ?: return emptyList()
+
+            val results = mutableListOf<SearchResult>()
+            for (i in 0 until minOf(value.length(), 10)) {
+                val item = value.getJSONObject(i)
+                val name = item.optString("name", "")
+                val url = item.optString("url", "")
+                val snippet = item.optString("snippet", "")
+                if (name.isNotEmpty() && url.isNotEmpty()) {
+                    results.add(
+                        SearchResult(
+                            title = name,
+                            url = url,
+                            snippet = snippet,
+                            source = "bing"
+                        )
+                    )
+                }
+            }
+            results
+        } catch (e: Exception) {
+            android.util.Log.e("CustomWebSearch", "Bing search failed", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Google Custom Search API (optional).
+     * Uses environment variables GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX if present; otherwise returns empty list.
+     */
+    private fun performGoogleSearch(
+        query: String,
+        language: String?,
+        region: String?,
+        timeRange: String?
+    ): List<SearchResult> {
+        val apiKey = System.getenv("GOOGLE_SEARCH_API_KEY") ?: return emptyList()
+        val cx = System.getenv("GOOGLE_SEARCH_CX") ?: return emptyList()
+
+        return try {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val urlBuilder = StringBuilder("https://www.googleapis.com/customsearch/v1?q=$encodedQuery&key=$apiKey&cx=$cx")
+            language?.let { urlBuilder.append("&lr=lang_${it.lowercase(Locale.ROOT)}") }
+            region?.let { urlBuilder.append("&gl=${it.lowercase(Locale.ROOT)}") }
+            timeRange?.let {
+                // Simple mapping; e.g., "d1" = last day, "w1" = last week in Google CSE.
+                val mapped = when (it.lowercase(Locale.ROOT)) {
+                    "day" -> "d1"
+                    "week" -> "w1"
+                    "month" -> "m1"
+                    "year" -> "y1"
+                    else -> null
+                }
+                if (mapped != null) {
+                    urlBuilder.append("&sort=date:r:$mapped")
+                }
+            }
+
+            val request = Request.Builder()
+                .url(urlBuilder.toString())
+                .get()
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                android.util.Log.w("CustomWebSearch", "Google CSE API returned ${response.code}")
+                return emptyList()
+            }
+
+            val body = response.body?.string() ?: return emptyList()
+            val json = JSONObject(body)
+            val items = json.optJSONArray("items") ?: return emptyList()
+
+            val results = mutableListOf<SearchResult>()
+            for (i in 0 until minOf(items.length(), 10)) {
+                val item = items.getJSONObject(i)
+                val title = item.optString("title", "")
+                val link = item.optString("link", "")
+                val snippet = item.optString("snippet", "")
+                if (title.isNotEmpty() && link.isNotEmpty()) {
+                    results.add(
+                        SearchResult(
+                            title = title,
+                            url = link,
+                            snippet = snippet,
+                            source = "google"
+                        )
+                    )
+                }
+            }
+            results
+        } catch (e: Exception) {
+            android.util.Log.e("CustomWebSearch", "Google search failed", e)
             emptyList()
         }
     }
@@ -522,14 +785,45 @@ class CustomWebSearchTool(
     
     override val name = "custom_web_search"
     override val displayName = "CustomWebSearch"
-    override val description = "Performs a custom web search using direct API calls and AI analysis. Supports recursive searches to gather comprehensive information. Use this when API-based search is not available or when you need more control over the search process."
+    override val description = """
+        Performs a custom web search using multiple search engines (DuckDuckGo, Bing, Google when configured),
+        then aggregates, de-duplicates, ranks, and summarizes the results with AI.
+        
+        Supports:
+        - Multi-engine search with preference control
+        - Result ranking and de-duplication
+        - Basic filters (language, region, time range)
+        - Recursive expansion of queries via AI suggestions
+        - Non-streaming AI summarization of gathered sources
+    """.trimIndent()
     
     override val parameterSchema = FunctionParameters(
         type = "object",
         properties = mapOf(
             "query" to PropertySchema(
                 type = "string",
-                description = "The search query."
+                description = "The search query or research goal."
+            ),
+            "engines" to PropertySchema(
+                type = "array",
+                description = "Optional list of search engines to use (e.g., ['duckduckgo','bing','google']). Defaults to a sensible order.",
+                items = PropertySchema(type = "string")
+            ),
+            "maxResults" to PropertySchema(
+                type = "integer",
+                description = "Maximum number of aggregated results to return (default: 20)."
+            ),
+            "timeRange" to PropertySchema(
+                type = "string",
+                description = "Time filter: 'day', 'week', 'month', 'year', or 'any' (engine-dependent, best-effort)."
+            ),
+            "language" to PropertySchema(
+                type = "string",
+                description = "Preferred result language (e.g., 'en', 'de', 'fr')."
+            ),
+            "region" to PropertySchema(
+                type = "string",
+                description = "Preferred region/country code (e.g., 'us', 'uk', 'de')."
             )
         ),
         required = listOf("query")
@@ -558,7 +852,17 @@ class CustomWebSearchTool(
         if (query.trim().isEmpty()) {
             throw IllegalArgumentException("query must be non-empty")
         }
-        
-        return CustomWebSearchToolParams(query = query)
+
+        @Suppress("UNCHECKED_CAST")
+        val engines = (params["engines"] as? List<*>)?.mapNotNull { it as? String }
+
+        return CustomWebSearchToolParams(
+            query = query,
+            engines = engines,
+            maxResults = (params["maxResults"] as? Number)?.toInt(),
+            timeRange = params["timeRange"] as? String,
+            language = params["language"] as? String,
+            region = params["region"] as? String
+        )
     }
 }

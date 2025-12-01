@@ -4,7 +4,16 @@ import com.qali.aterm.agent.core.*
 import com.qali.aterm.agent.ppe.models.*
 import com.qali.aterm.agent.tools.ToolRegistry
 import com.qali.aterm.agent.utils.CodeDependencyAnalyzer
+import com.qali.aterm.agent.debug.DebugLogger
+import com.qali.aterm.agent.debug.ExecutionStateTracker
+import com.qali.aterm.agent.debug.BreakpointManager
 import android.util.Log
+import org.json.JSONObject
+import org.json.JSONArray
+import java.io.File
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Execution engine for PPE scripts
@@ -39,6 +48,17 @@ class PpeExecutionEngine(
         var aiCallCount = 0
         var toolExecutionCount = 0
         
+        // Start operation tracking
+        val operationId = "script-exec-${System.currentTimeMillis()}"
+        Observability.startOperation(operationId, "script-execution")
+        
+        // Start execution state tracking
+        ExecutionStateTracker.startExecution(
+            operationId = operationId,
+            scriptPath = script.sourcePath,
+            initialVariables = inputParams.toMap()
+        )
+        
         try {
             Log.d("PpeExecutionEngine", "Starting script execution (turns: ${script.turns.size})")
             
@@ -52,12 +72,36 @@ class PpeExecutionEngine(
             val chatHistory = mutableListOf<Content>()
             var currentVariables = variables.toMutableMap()
             
+            // Update state tracker with initial variables
+            ExecutionStateTracker.updateVariables(operationId, currentVariables)
+            
             // Execute each turn in sequence
             for (turnIndex in script.turns.indices) {
                 turnCount++
                 lastActivityTime = System.currentTimeMillis()
                 val turn = script.turns[turnIndex]
                 Log.d("PpeExecutionEngine", "Executing turn $turnCount/${script.turns.size} (messages: ${turn.messages.size}, instructions: ${turn.instructions.size})")
+                
+                // Update state tracker with turn information
+                ExecutionStateTracker.updateTurn(operationId, turnCount, script.turns.size)
+                
+                // Check for breakpoint at turn
+                if (BreakpointManager.checkBreakpoint(
+                    operationId,
+                    BreakpointManager.BreakpointType.TURN,
+                    turnCount.toString(),
+                    mapOf(
+                        "turnNumber" to turnCount,
+                        "totalTurns" to script.turns.size,
+                        "variables" to currentVariables,
+                        "operationId" to operationId
+                    )
+                )) {
+                    // Wait for continue/step command
+                    while (BreakpointManager.isPaused(operationId)) {
+                        delay(100) // Check every 100ms
+                    }
+                }
                 
                 // Process messages in this turn
                 val turnMessages = mutableListOf<Content>()
@@ -79,6 +123,98 @@ class PpeExecutionEngine(
                         lastActivityTime = System.currentTimeMillis()
                         val timeSinceStart = lastActivityTime - executionStartTime
                         Log.d("PpeExecutionEngine", "Executing AI placeholder call #$aiCallCount (turn $turnCount, time: ${timeSinceStart}ms)")
+                        
+                        // Check if this is a new project startup - if so, use two-phase approach
+                        val userMessage = (inputParams["userMessage"]?.toString() 
+                            ?: inputParams["content"]?.toString() 
+                            ?: processedContent).takeIf { it.isNotEmpty() } ?: processedContent
+                        
+                        if (aiCallCount == 1) {
+                            // Check for new project startup (enhanced detection)
+                            val projectDetection = ProjectStartupDetector.detectNewProject(userMessage, workspaceRoot)
+                            if (projectDetection.isNewProject) {
+                                Log.d("PpeExecutionEngine", "Detected new project startup - type: ${projectDetection.projectType}, confidence: ${projectDetection.confidence}")
+                                
+                                // Log detection details
+                                DebugLogger.i("PpeExecutionEngine", "New project detected", mapOf(
+                                    "project_type" to (projectDetection.projectType?.name ?: "unknown"),
+                                    "confidence" to projectDetection.confidence,
+                                    "template" to (projectDetection.suggestedTemplate ?: "none")
+                                ))
+                                
+                                val twoPhaseResult = executeTwoPhaseProjectStartup(
+                                    userMessage,
+                                    chatHistory + turnMessages,
+                                    script,
+                                    onChunk,
+                                    onToolCall,
+                                    onToolResult,
+                                    projectDetection.projectType,
+                                    projectDetection.suggestedTemplate
+                                )
+                                
+                                // Store result
+                                currentVariables["LatestResult"] = twoPhaseResult.finalResult
+                                currentVariables["RESPONSE"] = twoPhaseResult.finalResult
+                                
+                                // Add to chat history
+                                turnMessages.add(
+                                    Content(
+                                        role = "model",
+                                        parts = listOf(Part.TextPart(text = twoPhaseResult.finalResult))
+                                    )
+                                )
+                                
+                                // Continue with normal flow if there are more turns
+                                continue
+                            }
+                            
+                            // Check for upgrade/debug flow (existing project)
+                            if (isUpgradeOrDebugRequest(userMessage, workspaceRoot)) {
+                                Log.d("PpeExecutionEngine", "Detected upgrade/debug request - using upgrade/debug flow")
+                                val upgradeResult = executeUpgradeDebugFlow(
+                                    userMessage,
+                                    chatHistory + turnMessages,
+                                    script,
+                                    onChunk,
+                                    onToolCall,
+                                    onToolResult
+                                )
+                                
+                                // Store result
+                                currentVariables["LatestResult"] = upgradeResult.finalResult
+                                currentVariables["RESPONSE"] = upgradeResult.finalResult
+                                
+                                // Add to chat history
+                                turnMessages.add(
+                                    Content(
+                                        role = "model",
+                                        parts = listOf(Part.TextPart(text = upgradeResult.finalResult))
+                                    )
+                                )
+                                
+                                // Continue with normal flow if there are more turns
+                                continue
+                            }
+                        }
+                        
+                        // Check for breakpoint before AI call
+                        if (BreakpointManager.checkBreakpoint(
+                            operationId,
+                            BreakpointManager.BreakpointType.CONDITION,
+                            "ai_call",
+                            mapOf(
+                                "turnNumber" to turnCount,
+                                "aiCallNumber" to aiCallCount,
+                                "variables" to currentVariables,
+                                "operationId" to operationId
+                            )
+                        )) {
+                            while (BreakpointManager.isPaused(operationId)) {
+                                delay(100)
+                            }
+                        }
+                        
                         // Execute AI call - include current turn's messages processed so far
                         val aiResponse = executeAiPlaceholder(
                             message,
@@ -98,6 +234,26 @@ class PpeExecutionEngine(
                         // Also store as RESPONSE (default variable)
                         currentVariables["RESPONSE"] = aiResponse.text
                         
+                        // Check for breakpoint on variable change
+                        if (BreakpointManager.checkBreakpoint(
+                            operationId,
+                            BreakpointManager.BreakpointType.VARIABLE,
+                            varName,
+                            mapOf(
+                                "variable_$varName" to aiResponse.text,
+                                "variables" to currentVariables,
+                                "operationId" to operationId
+                            )
+                        )) {
+                            while (BreakpointManager.isPaused(operationId)) {
+                                delay(100)
+                            }
+                        }
+                        
+                        // Update state tracker with variables and chat history
+                        ExecutionStateTracker.updateVariables(operationId, currentVariables)
+                        ExecutionStateTracker.updateChatHistory(operationId, chatHistory + turnMessages)
+                        
                         // Add to chat history (replace AI placeholder with response)
                         val finalContent = processedContent.replace(Regex("""\[\[.*?\]\]"""), aiResponse.text)
                         turnMessages.add(
@@ -107,23 +263,146 @@ class PpeExecutionEngine(
                             )
                         )
                         
-                        // Handle function calls from AI response
+                        // Handle function calls from AI response with parallel execution
                         if (aiResponse.functionCalls.isNotEmpty()) {
                             Log.d("PpeExecutionEngine", "Processing ${aiResponse.functionCalls.size} function calls from AI response")
-                            for (functionCallIndex in aiResponse.functionCalls.indices) {
-                                val functionCall = aiResponse.functionCalls[functionCallIndex]
-                                toolExecutionCount++
-                                lastActivityTime = System.currentTimeMillis()
-                                Log.d("PpeExecutionEngine", "Executing tool #$toolExecutionCount: ${functionCall.name} (call ${functionCallIndex + 1}/${aiResponse.functionCalls.size})")
-                                onToolCall(functionCall)
-                                
-                                // Execute tool
-                                val toolStartTime = System.currentTimeMillis()
-                                val toolResult = executeTool(functionCall, onToolResult)
-                                val toolExecutionTime = System.currentTimeMillis() - toolStartTime
-                                Log.d("PpeExecutionEngine", "Tool #$toolExecutionCount (${functionCall.name}) completed (time: ${toolExecutionTime}ms, error: ${toolResult.error != null})")
+                            
+                            // Filter calls that need approval
+                            val callsNeedingApproval = aiResponse.functionCalls.filter { call ->
+                                ToolApprovalManager.requiresApproval(call) && !AllowListManager.isAllowed(call)
+                            }
+                            
+                            val callsToExecute = aiResponse.functionCalls.filter { call ->
+                                !ToolApprovalManager.requiresApproval(call) || AllowListManager.isAllowed(call)
+                            }
+                            
+                            // If there are calls needing approval, we'll handle them separately
+                            // For now, execute approved calls
+                            
+                            // Execute tools in parallel when possible
+                            val toolResults = if (callsToExecute.isNotEmpty()) {
+                                ParallelToolExecutor.executeInParallel(
+                                    calls = callsToExecute,
+                                    executeTool = { call ->
+                                        toolExecutionCount++
+                                        lastActivityTime = System.currentTimeMillis()
+                                        
+                                        // Check for breakpoint before tool call
+                                        if (BreakpointManager.checkBreakpoint(
+                                            operationId,
+                                            BreakpointManager.BreakpointType.TOOL_CALL,
+                                            call.name,
+                                            mapOf(
+                                                "toolName" to call.name,
+                                                "toolExecutionCount" to toolExecutionCount,
+                                                "turnNumber" to turnCount,
+                                                "variables" to currentVariables,
+                                                "operationId" to operationId
+                                            )
+                                        )) {
+                                            while (BreakpointManager.isPaused(operationId)) {
+                                                delay(100)
+                                            }
+                                        }
+                                        
+                                        Log.d("PpeExecutionEngine", "Executing tool #$toolExecutionCount: ${call.name}")
+                                        onToolCall(call)
+                                        
+                                        val toolStartTime = System.currentTimeMillis()
+                                        
+                                        // Validate code before writing
+                                        if (call.name == "write_file" && PpeConfig.VALIDATE_BEFORE_WRITE) {
+                                            val filePath = call.args["file_path"] as? String
+                                            val fileContents = call.args["file_contents"] as? String
+                                            
+                                            if (filePath != null && fileContents != null) {
+                                                val validation = CodeQualityValidator.validateCode(
+                                                    code = fileContents,
+                                                    filePath = filePath,
+                                                    workspaceRoot = workspaceRoot
+                                                )
+                                                
+                                                if (!validation.isValid) {
+                                                    Log.w("PpeExecutionEngine", "Code validation failed for $filePath: ${validation.errors.joinToString(", ")}")
+                                                    // Still execute but log warnings
+                                                    validation.warnings.forEach { warning ->
+                                                        Log.w("PpeExecutionEngine", "Warning: $warning")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        val result = executeTool(call, onToolResult)
+                                        val toolExecutionTime = System.currentTimeMillis() - toolStartTime
+                                        Log.d("PpeExecutionEngine", "Tool #$toolExecutionCount (${call.name}) completed (time: ${toolExecutionTime}ms, error: ${result.error != null})")
+                                        
+                                        // Record tool call in state tracker
+                                        ExecutionStateTracker.recordToolCall(
+                                            operationId = operationId,
+                                            functionCall = call,
+                                            duration = toolExecutionTime,
+                                            success = result.error == null,
+                                            error = result.error?.message
+                                        )
+                                        
+                                        // Log tool execution
+                                        val resultSize = when {
+                                            result.llmContent is String -> (result.llmContent as String).length
+                                            result.error != null -> 0
+                                            else -> 0
+                                        }
+                                        DebugLogger.logToolExecution(
+                                            tag = "PpeExecutionEngine",
+                                            toolName = call.name,
+                                            params = call.args,
+                                            duration = toolExecutionTime,
+                                            success = result.error == null,
+                                            resultSize = resultSize,
+                                            error = result.error?.message
+                                        )
+                                        
+                                        result
+                                    }
+                                )
+                            } else {
+                                emptyList()
+                            }
+                            
+                            // Store calls needing approval for UI (they won't execute until approved)
+                            if (callsNeedingApproval.isNotEmpty()) {
+                                callsNeedingApproval.forEach { call ->
+                                    onToolCall(call) // Notify UI about pending approval
+                                    // Add a placeholder result indicating approval needed
+                                    turnMessages.add(
+                                        Content(
+                                            role = "user",
+                                            parts = listOf(
+                                                Part.FunctionResponsePart(
+                                                    functionResponse = FunctionResponse(
+                                                        name = call.name,
+                                                        response = mapOf(
+                                                            "status" to "pending_approval",
+                                                            "message" to "This action requires user approval"
+                                                        ),
+                                                        id = call.id ?: ""
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                }
+                            }
+                            
+                            // Process results in order
+                            for ((functionCall, toolResult) in toolResults) {
                                 
                                 // Add tool result to chat history
+                                val toolResponse = when {
+                                    toolResult.error != null -> mapOf("error" to toolResult.error.message)
+                                    toolResult.llmContent is String -> mapOf("output" to toolResult.llmContent)
+                                    else -> mapOf("output" to "Tool execution succeeded.")
+                                }
+                                
                                 turnMessages.add(
                                     Content(
                                         role = "user",
@@ -131,17 +410,19 @@ class PpeExecutionEngine(
                                             Part.FunctionResponsePart(
                                                 functionResponse = FunctionResponse(
                                                     name = functionCall.name,
-                                                    response = when {
-                                                        toolResult.error != null -> mapOf("error" to toolResult.error.message)
-                                                        toolResult.llmContent is String -> mapOf("output" to toolResult.llmContent)
-                                                        else -> mapOf("output" to "Tool execution succeeded.")
-                                                    },
+                                                    response = toolResponse,
                                                     id = functionCall.id ?: ""
                                                 )
                                             )
                                         )
                                     )
                                 )
+                                
+                                // Record metrics
+                                Observability.recordToolCall(operationId)
+                                if (toolResult.error != null) {
+                                    Observability.recordError(operationId)
+                                }
                                 
                                 // Continue conversation with tool result
                                 val continuationResponse = continueWithToolResult(
@@ -495,6 +776,20 @@ class PpeExecutionEngine(
             Log.d("PpeExecutionEngine", "Execution stats - Turns: $turnCount, AI calls: $aiCallCount, Tool executions: $toolExecutionCount")
             Log.d("PpeExecutionEngine", "Final result length: ${finalResult.length}")
             
+            // Log script execution
+            DebugLogger.logScriptExecution(
+                tag = "PpeExecutionEngine",
+                scriptPath = script.sourcePath,
+                turnIndex = turnCount,
+                totalTurns = script.turns.size,
+                duration = totalExecutionTime,
+                success = true
+            )
+            
+            // End operation tracking
+            Observability.endOperation(operationId)
+            ExecutionStateTracker.endExecution(operationId)
+            
             return PpeExecutionResult(
                 success = true,
                 finalResult = finalResult,
@@ -510,6 +805,29 @@ class PpeExecutionEngine(
             Log.e("PpeExecutionEngine", "Error stats - Turns: $turnCount, AI calls: $aiCallCount, Tool executions: $toolExecutionCount")
             Log.e("PpeExecutionEngine", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
             e.printStackTrace()
+            
+            // Log script execution failure
+            DebugLogger.logScriptExecution(
+                tag = "PpeExecutionEngine",
+                scriptPath = script.sourcePath,
+                turnIndex = turnCount,
+                totalTurns = script.turns.size,
+                duration = totalExecutionTime,
+                success = false
+            )
+            DebugLogger.e("PpeExecutionEngine", "Script execution exception", mapOf(
+                "operation_id" to operationId,
+                "turns" to turnCount,
+                "ai_calls" to aiCallCount,
+                "tool_executions" to toolExecutionCount,
+                "duration_ms" to totalExecutionTime
+            ), e)
+            
+            // Record error and end operation
+            Observability.recordError(operationId)
+            Observability.endOperation(operationId)
+            ExecutionStateTracker.endExecution(operationId)
+            
             return PpeExecutionResult(
                 success = false,
                 finalResult = "",
@@ -650,6 +968,24 @@ class PpeExecutionEngine(
             }
         }
         
+        // Prune chat history if needed to fit context window
+        val modelToUse = model ?: "default"
+        val prunedMessages = ContextWindowManager.pruneChatHistory(messages, modelToUse)
+        
+        if (prunedMessages.size < messages.size) {
+            Log.d("PpeExecutionEngine", "Pruned ${messages.size - prunedMessages.size} messages to fit context window")
+            // Add summary if messages were pruned
+            if (prunedMessages.isNotEmpty() && prunedMessages.first().role != "system") {
+                val summary = ContextWindowManager.createSummary(messages.drop(prunedMessages.size))
+                if (summary.isNotEmpty()) {
+                    prunedMessages.add(0, Content(
+                        role = "system",
+                        parts = listOf(Part.TextPart(text = summary))
+                    ))
+                }
+            }
+        }
+        
         // Get tools from registry
         val tools = if (toolRegistry.getAllTools().isNotEmpty()) {
             listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
@@ -659,7 +995,7 @@ class PpeExecutionEngine(
         
         // Make API call (non-streaming) with all parameters
         val result = apiClient.callApi(
-            messages = messages,
+            messages = prunedMessages,
             model = model,
             temperature = temperature,
             topP = topP,
@@ -1755,6 +2091,1504 @@ class PpeExecutionEngine(
             null
         }
     }
+    
+    /**
+     * Data class for blueprint file structure
+     */
+    private data class BlueprintFile(
+        val path: String,
+        val type: String, // "code", "config", "test", etc.
+        val dependencies: List<String> = emptyList(),
+        val description: String = ""
+    )
+    
+    /**
+     * Data class for project blueprint
+     */
+    private data class ProjectBlueprint(
+        val projectType: String,
+        val files: List<BlueprintFile>
+    )
+    
+    /**
+     * Check if this is an upgrade or debug request
+     * Detects based on user message keywords and workspace state
+     */
+    private fun isUpgradeOrDebugRequest(userMessage: String, workspaceRoot: String): Boolean {
+        val message = userMessage.lowercase()
+        
+        // Check for upgrade/debug keywords
+        val upgradeDebugKeywords = listOf(
+            "fix", "debug", "upgrade", "update", "improve", "refactor",
+            "modify", "change", "edit", "add feature", "enhance",
+            "error", "bug", "issue", "problem", "broken"
+        )
+        val hasUpgradeKeyword = upgradeDebugKeywords.any { message.contains(it) }
+        
+        // Check workspace state - should have existing code files
+        val workspaceDir = File(workspaceRoot)
+        if (!workspaceDir.exists() || !workspaceDir.isDirectory) {
+            return false
+        }
+        
+        val codeFileCount = workspaceDir.walkTopDown()
+            .filter { it.isFile }
+            .filter { file ->
+                val name = file.name.lowercase()
+                name.endsWith(".js") || name.endsWith(".ts") || name.endsWith(".py") ||
+                name.endsWith(".java") || name.endsWith(".kt") || name.endsWith(".go") ||
+                name.endsWith(".rs") || name.endsWith(".cpp") || name.endsWith(".c")
+            }
+            .count()
+        
+        // Consider it an upgrade/debug request if:
+        // 1. Has upgrade/debug keywords AND
+        // 2. Has existing code files (more than 2)
+        val isUpgradeDebug = hasUpgradeKeyword && codeFileCount > 2
+        
+        Log.d("PpeExecutionEngine", "Upgrade/debug check - keywords: $hasUpgradeKeyword, codeFiles: $codeFileCount, isUpgrade: $isUpgradeDebug")
+        return isUpgradeDebug
+    }
+    
+    /**
+     * Check if this is a new project startup (legacy method - kept for compatibility)
+     * Now uses ProjectStartupDetector
+     */
+    private fun isNewProjectStartup(userMessage: String, workspaceRoot: String): Boolean {
+        val detection = ProjectStartupDetector.detectNewProject(userMessage, workspaceRoot)
+        return detection.isNewProject
+    }
+    
+    /**
+     * Execute two-phase project startup:
+     * Phase 1: Generate JSON blueprint
+     * Phase 2: Generate code for each file with separate API calls
+     * Enhanced with project type detection and template support
+     */
+    private suspend fun executeTwoPhaseProjectStartup(
+        userMessage: String,
+        chatHistory: List<Content>,
+        script: PpeScript,
+        onChunk: (String) -> Unit,
+        onToolCall: (FunctionCall) -> Unit,
+        onToolResult: (String, Map<String, Any>) -> Unit,
+        projectType: ProjectStartupDetector.ProjectType? = null,
+        suggestedTemplate: String? = null
+    ): PpeExecutionResult {
+        Log.d("PpeExecutionEngine", "Starting two-phase project startup")
+        
+        val transaction = FileTransaction(workspaceRoot)
+        val updatedChatHistory = chatHistory.toMutableList()
+        
+        try {
+            // Start operation tracking
+            val operationId = "two-phase-${System.currentTimeMillis()}"
+            val metrics = Observability.startOperation(operationId, "two-phase-project-startup")
+            
+            // Phase 1: Generate JSON blueprint (with caching and project type context)
+            onChunk("Phase 1: Generating project blueprint...\n")
+            if (projectType != null) {
+                onChunk("Detected project type: ${projectType.name.lowercase()}\n")
+            }
+            if (suggestedTemplate != null) {
+                onChunk("Suggested template: $suggestedTemplate\n")
+            }
+            
+            val blueprintJsonResult = try {
+                val cached = IntelligentCache.getBlueprint(workspaceRoot, userMessage) {
+                    generateBlueprintJson(userMessage, chatHistory, script, projectType, suggestedTemplate).getOrNull() ?: ""
+                }
+                if (cached.isNotEmpty()) {
+                    Result.success(cached)
+                } else {
+                    generateBlueprintJson(userMessage, chatHistory, script, projectType, suggestedTemplate)
+                }
+            } catch (e: Exception) {
+                generateBlueprintJson(userMessage, chatHistory, script, projectType, suggestedTemplate)
+            }
+            
+            val blueprintJson = blueprintJsonResult.getOrElse { error ->
+                Log.w("PpeExecutionEngine", "Failed to generate blueprint JSON: ${error.message}")
+                return PpeExecutionResult(
+                    success = false,
+                    finalResult = "Failed to generate project blueprint: ${error.message}",
+                    variables = emptyMap(),
+                    chatHistory = chatHistory,
+                    error = error.message
+                )
+            }
+            
+            onChunk("Blueprint generated successfully.\n\n")
+            
+            // Parse blueprint JSON
+            val blueprint = parseBlueprintJson(blueprintJson)
+            if (blueprint == null) {
+                Log.w("PpeExecutionEngine", "Failed to parse blueprint JSON")
+                return PpeExecutionResult(
+                    success = false,
+                    finalResult = "Failed to parse project blueprint",
+                    variables = emptyMap(),
+                    chatHistory = chatHistory,
+                    error = "Blueprint parsing failed"
+                )
+            }
+            
+            // Validate blueprint
+            val validation = validateBlueprint(blueprint)
+            if (!validation.isValid) {
+                val errorMsg = "Blueprint validation failed:\n${validation.errors.joinToString("\n")}"
+                Log.e("PpeExecutionEngine", errorMsg)
+                return PpeExecutionResult(
+                    success = false,
+                    finalResult = errorMsg,
+                    variables = emptyMap(),
+                    chatHistory = chatHistory,
+                    error = errorMsg
+                )
+            }
+            
+            if (validation.warnings.isNotEmpty()) {
+                onChunk("Warnings: ${validation.warnings.joinToString("; ")}\n")
+            }
+            
+            onChunk("Phase 2: Generating code for ${blueprint.files.size} files...\n\n")
+            
+            // Phase 2: Generate code for each file using topological sort
+            val generatedFiles = mutableListOf<String>()
+            val sortedFiles = topologicalSort(blueprint.files)
+            
+            for ((index, file) in sortedFiles.withIndex()) {
+                Log.d("PpeExecutionEngine", "Generating code for file ${index + 1}/${sortedFiles.size}: ${file.path}")
+                onChunk("Generating ${file.path}...\n")
+                
+                // Validate file path
+                if (!validateFilePath(file.path, workspaceRoot)) {
+                    onChunk("✗ Invalid file path: ${file.path}\n")
+                    continue
+                }
+                
+                val fileCodeResult = generateFileCode(
+                    file,
+                    blueprint,
+                    userMessage,
+                    updatedChatHistory,
+                    script
+                )
+                
+                val fileCode = fileCodeResult.getOrElse { error ->
+                    onChunk("✗ Failed to generate code for ${file.path}: ${error.message}\n")
+                    continue
+                }
+                
+                // Use write_file tool to create the file
+                val writeFileCall = FunctionCall(
+                    name = "write_file",
+                    args = mapOf(
+                        "file_path" to file.path,
+                        "file_contents" to fileCode
+                    )
+                )
+                
+                onToolCall(writeFileCall)
+                val toolResult = executeTool(writeFileCall, onToolResult)
+                
+                if (toolResult.error == null) {
+                    transaction.addCreatedFile(file.path)
+                    generatedFiles.add(file.path)
+                    onChunk("✓ Created ${file.path}\n")
+                    
+                    // Add tool result to chat history
+                    updatedChatHistory.add(
+                        Content(
+                            role = "user",
+                            parts = listOf(
+                                Part.FunctionResponsePart(
+                                    functionResponse = FunctionResponse(
+                                        name = "write_file",
+                                        response = mapOf("output" to "File created successfully"),
+                                        id = writeFileCall.id ?: ""
+                                    )
+                                )
+                            )
+                        )
+                    )
+                } else {
+                    onChunk("✗ Failed to create ${file.path}: ${toolResult.error?.message}\n")
+                    // Rollback on critical failure
+                    if (generatedFiles.isEmpty()) {
+                        transaction.rollback()
+                        return PpeExecutionResult(
+                            success = false,
+                            finalResult = "Failed to create first file: ${toolResult.error?.message}",
+                            variables = emptyMap(),
+                            chatHistory = updatedChatHistory,
+                            error = toolResult.error?.message
+                        )
+                    }
+                }
+            }
+            
+            // Update blueprint AFTER all files are created
+            if (generatedFiles.isNotEmpty()) {
+                try {
+                    onChunk("Updating project blueprint...\n")
+                    val currentBlueprint = CodeDependencyAnalyzer.generateComprehensiveBlueprint(workspaceRoot)
+                    
+                    // Update dependency matrix for all created files
+                    generatedFiles.forEach { filePath ->
+                        try {
+                            val file = File(workspaceRoot, filePath)
+                            if (file.exists()) {
+                                val content = file.readText()
+                                val metadata = CodeDependencyAnalyzer.analyzeFile(filePath, content, workspaceRoot)
+                                CodeDependencyAnalyzer.updateDependencyMatrix(workspaceRoot, metadata)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("PpeExecutionEngine", "Failed to update dependency matrix for $filePath: ${e.message}")
+                        }
+                    }
+                    
+                    onChunk("Blueprint updated successfully.\n")
+                } catch (e: Exception) {
+                    Log.w("PpeExecutionEngine", "Failed to update blueprint: ${e.message}")
+                    // Don't fail the entire operation if blueprint update fails
+                }
+            }
+            
+            val result = "Project created successfully! Generated ${generatedFiles.size} files:\n" +
+                generatedFiles.joinToString("\n") { "  - $it" }
+            
+            onChunk("\n$result\n")
+            
+            // Clear transaction on success
+            transaction.clear()
+            
+            // End operation tracking
+            Observability.endOperation(operationId)
+            
+            return PpeExecutionResult(
+                success = true,
+                finalResult = result,
+                variables = mapOf("generatedFiles" to generatedFiles),
+                chatHistory = updatedChatHistory
+            )
+            
+        } catch (e: Exception) {
+            Log.e("PpeExecutionEngine", "Two-phase project startup failed", e)
+            // Rollback on exception
+            try {
+                transaction.rollback()
+            } catch (rollbackError: Exception) {
+                Log.e("PpeExecutionEngine", "Rollback failed: ${rollbackError.message}")
+            }
+            return PpeExecutionResult(
+                success = false,
+                finalResult = "Project creation failed: ${e.message}",
+                variables = emptyMap(),
+                chatHistory = updatedChatHistory,
+                error = e.message
+            )
+        }
+    }
+    
+    /**
+     * Phase 1: Generate JSON blueprint via API call with retry
+     * Enhanced with project type detection and template support
+     */
+    private suspend fun generateBlueprintJson(
+        userMessage: String,
+        chatHistory: List<Content>,
+        script: PpeScript,
+        projectType: ProjectStartupDetector.ProjectType? = null,
+        suggestedTemplate: String? = null
+    ): Result<String> {
+        return retryWithBackoff(
+            maxRetries = 3,
+            isRetryable = ::isRetryableException
+        ) {
+            generateBlueprintJsonInternal(sanitizeForPrompt(userMessage), chatHistory, script, projectType, suggestedTemplate)
+        }
+    }
+    
+    /**
+     * Internal blueprint generation (without retry)
+     * Enhanced with project type and template context
+     */
+    private suspend fun generateBlueprintJsonInternal(
+        userMessage: String,
+        chatHistory: List<Content>,
+        script: PpeScript,
+        projectType: ProjectStartupDetector.ProjectType? = null,
+        suggestedTemplate: String? = null
+    ): String {
+        // Build project type context
+        val projectTypeContext = buildString {
+            if (projectType != null) {
+                appendLine("Detected Project Type: ${projectType.name.lowercase()}")
+                if (suggestedTemplate != null) {
+                    appendLine("Suggested Template: $suggestedTemplate")
+                }
+                val templateSuggestions = ProjectStartupDetector.getTemplateSuggestions(projectType)
+                if (templateSuggestions.isNotEmpty()) {
+                    appendLine("Available Templates: ${templateSuggestions.joinToString(", ")}")
+                }
+                appendLine()
+            }
+        }
+        
+        val blueprintPrompt = """
+You are a project architect. Based on the user's request, generate a JSON blueprint for the project structure.
+
+User Request: $userMessage
+
+$projectTypeContext
+
+Generate a JSON blueprint in this EXACT format (no markdown, no code blocks, just pure JSON):
+
+{
+  "projectType": "nodejs",
+  "files": [
+    {
+      "path": "package.json",
+      "type": "config",
+      "dependencies": [],
+      "description": "Package configuration file"
+    },
+    {
+      "path": "server.js",
+      "type": "code",
+      "dependencies": ["package.json"],
+      "description": "Main server file"
+    },
+    {
+      "path": "public/index.html",
+      "type": "code",
+      "dependencies": ["package.json"],
+      "description": "Main HTML file"
+    }
+  ]
+}
+
+IMPORTANT:
+- Return ONLY valid JSON, no markdown, no code blocks, no explanations
+- Include ALL files needed for the project
+- Set dependencies array to show which files each file depends on
+- Use appropriate file types: "config", "code", "test", "style", etc.
+- Ensure the JSON is valid and can be parsed directly
+
+JSON Blueprint:
+""".trimIndent()
+        
+        val messages = chatHistory.toMutableList()
+        messages.add(
+            Content(
+                role = "user",
+                parts = listOf(Part.TextPart(text = blueprintPrompt))
+            )
+        )
+        
+        // Get tools (but don't use them for blueprint generation)
+        val tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+            listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+        } else {
+            null
+        }
+        
+        // Apply rate limiting
+        rateLimiter.acquire()
+        
+        val result = apiClient.callApi(
+            messages = messages,
+            model = null,
+            tools = null // Don't use tools for blueprint generation
+        )
+        
+        val response = result.getOrElse {
+            Log.e("PpeExecutionEngine", "Blueprint API call failed: ${it.message}")
+            throw Exception("Blueprint API call failed: ${it.message}", it)
+        }
+        
+        // Extract JSON from response (might be wrapped in markdown)
+        var jsonText = response.text.trim()
+        
+        // Remove markdown code blocks if present
+        jsonText = jsonText.removePrefix("```json").removePrefix("```")
+        jsonText = jsonText.removePrefix("```")
+        jsonText = jsonText.removeSuffix("```").trim()
+        
+        // Try to find JSON object in the response
+        val jsonStart = jsonText.indexOf('{')
+        val jsonEnd = jsonText.lastIndexOf('}') + 1
+        
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+            jsonText = jsonText.substring(jsonStart, jsonEnd)
+        }
+        
+        Log.d("PpeExecutionEngine", "Extracted blueprint JSON (length: ${jsonText.length})")
+        
+        // Validate JSON is not empty
+        if (jsonText.isEmpty() || !jsonText.trim().startsWith("{")) {
+            throw Exception("Invalid blueprint JSON: empty or not a JSON object")
+        }
+        
+        return jsonText
+    }
+    
+    /**
+     * Parse JSON blueprint into ProjectBlueprint object
+     */
+    private fun parseBlueprintJson(jsonText: String): ProjectBlueprint? {
+        return try {
+            val json = JSONObject(jsonText)
+            val projectType = json.optString("projectType", "unknown")
+            val filesArray = json.optJSONArray("files") ?: JSONArray()
+            
+            val files = mutableListOf<BlueprintFile>()
+            for (i in 0 until filesArray.length()) {
+                val fileObj = filesArray.getJSONObject(i)
+                val path = fileObj.optString("path", "")
+                val type = fileObj.optString("type", "code")
+                val description = fileObj.optString("description", "")
+                
+                val dependencies = mutableListOf<String>()
+                val depsArray = fileObj.optJSONArray("dependencies")
+                if (depsArray != null) {
+                    for (j in 0 until depsArray.length()) {
+                        dependencies.add(depsArray.getString(j))
+                    }
+                }
+                
+                if (path.isNotEmpty()) {
+                    files.add(BlueprintFile(path, type, dependencies, description))
+                }
+            }
+            
+            Log.d("PpeExecutionEngine", "Parsed blueprint: projectType=$projectType, files=${files.size}")
+            ProjectBlueprint(projectType, files)
+        } catch (e: Exception) {
+            Log.e("PpeExecutionEngine", "Failed to parse blueprint JSON: ${e.message}", e)
+            null
+        }
+    }
+    
+    /**
+     * Phase 2: Generate code for a specific file via API call with retry
+     */
+    private suspend fun generateFileCode(
+        file: BlueprintFile,
+        blueprint: ProjectBlueprint,
+        userMessage: String,
+        chatHistory: List<Content>,
+        script: PpeScript
+    ): Result<String> {
+        return retryWithBackoff(
+            maxRetries = 3,
+            isRetryable = ::isRetryableException
+        ) {
+            generateFileCodeInternal(file, blueprint, sanitizeForPrompt(userMessage), chatHistory, script)
+        }
+    }
+    
+    /**
+     * Internal file code generation (without retry)
+     */
+    private suspend fun generateFileCodeInternal(
+        file: BlueprintFile,
+        blueprint: ProjectBlueprint,
+        userMessage: String,
+        chatHistory: List<Content>,
+        script: PpeScript
+    ): String {
+        // Get related files (dependencies)
+        val relatedFiles = blueprint.files.filter { file.dependencies.contains(it.path) }
+        
+        // Get existing files metadata from dependency matrix for imports/exports
+        val existingFilesMetadata = try {
+            val matrix = CodeDependencyAnalyzer.getDependencyMatrix(workspaceRoot)
+            relatedFiles.mapNotNull { relatedFile ->
+                val metadata = matrix.files[relatedFile.path]
+                if (metadata != null) {
+                    buildString {
+                        appendLine("  - ${relatedFile.path}:")
+                        if (metadata.imports.isNotEmpty()) {
+                            appendLine("    Imports: ${metadata.imports.joinToString(", ")}")
+                        }
+                        if (metadata.exports.isNotEmpty()) {
+                            appendLine("    Exports: ${metadata.exports.joinToString(", ")}")
+                        }
+                        if (metadata.functions.isNotEmpty()) {
+                            appendLine("    Functions: ${metadata.functions.take(10).joinToString(", ")}")
+                        }
+                        if (metadata.classes.isNotEmpty()) {
+                            appendLine("    Classes: ${metadata.classes.joinToString(", ")}")
+                        }
+                    }
+                } else null
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        
+        val filePrompt = buildString {
+            appendLine("Generate the complete code for this file:")
+            appendLine("")
+            appendLine("File: ${file.path}")
+            appendLine("Type: ${file.type}")
+            appendLine("Description: ${file.description}")
+            appendLine("")
+            
+            if (relatedFiles.isNotEmpty()) {
+                appendLine("This file depends on:")
+                relatedFiles.forEach { relatedFile ->
+                    appendLine("  - ${relatedFile.path} (${relatedFile.type})")
+                }
+                appendLine("")
+                
+                if (existingFilesMetadata.isNotEmpty()) {
+                    appendLine("Available imports/exports from related files:")
+                    existingFilesMetadata.forEach { metadata ->
+                        appendLine(metadata)
+                    }
+                    appendLine("")
+                    appendLine("IMPORTANT: Use ONLY the imports/exports/functions/classes listed above from related files.")
+                    appendLine("")
+                }
+            }
+            
+            appendLine("Project Context:")
+            appendLine("  - Project Type: ${blueprint.projectType}")
+            appendLine("  - Total Files: ${blueprint.files.size}")
+            appendLine("")
+            
+            appendLine("Original User Request: $userMessage")
+            appendLine("")
+            appendLine("IMPORTANT:")
+            appendLine("- Generate COMPLETE, working code for this file")
+            appendLine("- Use appropriate imports/exports based on the project type")
+            appendLine("- If importing from related files, use ONLY the names listed above")
+            appendLine("- Ensure the code is production-ready and follows best practices")
+            appendLine("- Include all necessary functionality")
+            appendLine("- Return ONLY the code, no explanations, no markdown")
+            appendLine("")
+            appendLine("Code for ${file.path}:")
+        }
+        
+        val messages = chatHistory.toMutableList()
+        messages.add(
+            Content(
+                role = "user",
+                parts = listOf(Part.TextPart(text = filePrompt))
+            )
+        )
+        
+        // Get tools (but don't use them for code generation)
+        val tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+            listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+        } else {
+            null
+        }
+        
+        // Apply rate limiting
+        rateLimiter.acquire()
+        
+        val result = apiClient.callApi(
+            messages = messages,
+            model = null,
+            tools = null // Don't use tools for code generation
+        )
+        
+        val response = result.getOrElse {
+            Log.e("PpeExecutionEngine", "File code generation failed for ${file.path}: ${it.message}")
+            throw Exception("File code generation failed for ${file.path}: ${it.message}", it)
+        }
+        
+        // Extract code from response (remove markdown if present)
+        var code = response.text.trim()
+        
+        // Remove markdown code blocks if present
+        val codeBlockPattern = Regex("```(?:\\w+)?\\s*(.*?)\\s*```", RegexOption.DOT_MATCHES_ALL)
+        codeBlockPattern.find(code)?.let { match ->
+            code = match.groupValues[1].trim()
+        }
+        
+        Log.d("PpeExecutionEngine", "Generated code for ${file.path} (length: ${code.length})")
+        
+        // Validate code is not empty
+        if (code.trim().isEmpty()) {
+            throw Exception("Generated code is empty for ${file.path}")
+        }
+        
+        return code
+    }
+    
+    /**
+     * Data class for file reading plan
+     */
+    private data class FileReadPlan(
+        val files: List<FileReadRequest>
+    )
+    
+    /**
+     * Data class for a file read request with line ranges
+     */
+    private data class FileReadRequest(
+        val path: String,
+        val offset: Int? = null,
+        val limit: Int? = null,
+        val reason: String = ""
+    )
+    
+    /**
+     * Get file structure respecting .gitignore
+     */
+    private fun getFileStructureRespectingGitignore(workspaceRoot: String): String {
+        val workspaceDir = File(workspaceRoot)
+        if (!workspaceDir.exists() || !workspaceDir.isDirectory) {
+            return "Workspace does not exist"
+        }
+        
+        // Read .gitignore patterns
+        val gitignoreFile = File(workspaceRoot, ".gitignore")
+        val ignorePatterns = mutableListOf<String>()
+        if (gitignoreFile.exists()) {
+            gitignoreFile.readLines().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                    ignorePatterns.add(trimmed)
+                }
+            }
+        }
+        
+        // Default ignore patterns
+        val defaultIgnores = listOf(
+            ".git", "node_modules", ".gradle", "build", "dist", "out",
+            ".idea", ".vscode", ".DS_Store", "*.class", "*.jar", "*.war"
+        )
+        ignorePatterns.addAll(defaultIgnores)
+        
+        // Check if path should be ignored
+        fun shouldIgnore(path: String): Boolean {
+            val relativePath = path.removePrefix(workspaceRoot).trimStart('/')
+            return ignorePatterns.any { pattern ->
+                when {
+                    pattern.contains("*") -> {
+                        val regex = pattern
+                            .replace(".", "\\.")
+                            .replace("*", ".*")
+                            .toRegex()
+                        regex.matches(relativePath) || relativePath.contains(pattern.removeSuffix("*"))
+                    }
+                    pattern.startsWith("/") -> relativePath.startsWith(pattern.removePrefix("/"))
+                    else -> relativePath.contains(pattern) || relativePath.endsWith(pattern)
+                }
+            }
+        }
+        
+        // Collect file structure
+        val fileList = mutableListOf<Pair<String, Long>>()
+        workspaceDir.walkTopDown().forEach { file ->
+            if (file.isFile) {
+                val relativePath = file.relativeTo(workspaceDir).path
+                if (!shouldIgnore(relativePath)) {
+                    fileList.add(relativePath to file.length())
+                }
+            }
+        }
+        
+        // Format as structure summary
+        return buildString {
+            appendLine("=== Project File Structure ===")
+            appendLine("Total files: ${fileList.size}")
+            appendLine()
+            appendLine("Files (excluding .gitignore patterns):")
+            fileList.sortedBy { it.first }.forEach { (path, size) ->
+                val sizeStr = when {
+                    size < 1024 -> "${size}B"
+                    size < 1024 * 1024 -> "${size / 1024}KB"
+                    else -> "${size / (1024 * 1024)}MB"
+                }
+                appendLine("  $path ($sizeStr)")
+            }
+        }
+    }
+    
+    /**
+     * Determine which files to read and line ranges via API call
+     */
+    private suspend fun determineFilesToRead(
+        userMessage: String,
+        fileStructure: String,
+        chatHistory: List<Content>,
+        script: PpeScript
+    ): FileReadPlan? {
+        val prompt = """
+Based on the user's request and the project file structure, determine which files need to be read and which specific line ranges are relevant.
+
+User Request: ${sanitizeForPrompt(userMessage)}
+
+Project File Structure:
+$fileStructure
+
+Analyze the request and determine:
+1. Which files are relevant to the task
+2. Which specific line ranges should be read from each file (if not the entire file)
+
+Return your response as a JSON array in this EXACT format (no markdown, just JSON):
+
+[
+  {
+    "path": "src/main.js",
+    "offset": 0,
+    "limit": 50,
+    "reason": "Need to see the main entry point"
+  },
+  {
+    "path": "src/utils.js",
+    "offset": 10,
+    "limit": 30,
+    "reason": "Need to check utility functions"
+  }
+]
+
+IMPORTANT:
+- Return ONLY valid JSON array, no markdown, no code blocks, no explanations
+- Use offset and limit for line ranges (0-based, offset is starting line, limit is number of lines)
+- If you need the entire file, omit offset and limit
+- Be specific about which parts of files are relevant
+- Focus on files that are likely to need changes or are dependencies
+
+JSON Response:
+""".trimIndent()
+        
+        val messages = chatHistory.toMutableList()
+        messages.add(
+            Content(
+                role = "user",
+                parts = listOf(Part.TextPart(text = prompt))
+            )
+        )
+        
+        // Apply rate limiting
+        rateLimiter.acquire()
+        
+        val result = apiClient.callApi(
+            messages = messages,
+            model = null,
+            tools = null
+        )
+        
+        val response = result.getOrElse {
+            Log.e("PpeExecutionEngine", "Failed to determine files to read: ${it.message}")
+            return null
+        }
+        
+        // Extract JSON from response
+        var jsonText = response.text.trim()
+        jsonText = jsonText.removePrefix("```json").removePrefix("```")
+        jsonText = jsonText.removePrefix("```")
+        jsonText = jsonText.removeSuffix("```").trim()
+        
+        val jsonStart = jsonText.indexOf('[')
+        val jsonEnd = jsonText.lastIndexOf(']') + 1
+        
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+            jsonText = jsonText.substring(jsonStart, jsonEnd)
+        }
+        
+        return try {
+            val jsonArray = JSONArray(jsonText)
+            val fileRequests = mutableListOf<FileReadRequest>()
+            
+            for (i in 0 until jsonArray.length()) {
+                val fileObj = jsonArray.getJSONObject(i)
+                val path = fileObj.optString("path", "")
+                val offset = if (fileObj.has("offset")) fileObj.optInt("offset") else null
+                val limit = if (fileObj.has("limit")) fileObj.optInt("limit") else null
+                val reason = fileObj.optString("reason", "")
+                
+                if (path.isNotEmpty()) {
+                    fileRequests.add(FileReadRequest(path, offset, limit, reason))
+                }
+            }
+            
+            Log.d("PpeExecutionEngine", "Determined ${fileRequests.size} files to read")
+            FileReadPlan(fileRequests)
+        } catch (e: Exception) {
+            Log.e("PpeExecutionEngine", "Failed to parse file read plan: ${e.message}", e)
+            null
+        }
+    }
+    
+    /**
+     * Read files based on the plan (with proper resource management)
+     */
+    private suspend fun readFilesFromPlan(
+        plan: FileReadPlan,
+        workspaceRoot: String,
+        onChunk: (String) -> Unit
+    ): Map<String, String> {
+        val fileContents = mutableMapOf<String, String>()
+        
+        for (request in plan.files) {
+            // Validate path
+            if (!validateFilePath(request.path, workspaceRoot)) {
+                onChunk("⚠ Invalid file path: ${request.path}\n")
+                continue
+            }
+            
+            onChunk("Reading ${request.path}${if (request.offset != null && request.limit != null) " (lines ${request.offset + 1}-${request.offset + request.limit})" else ""}...\n")
+            
+            val file = File(workspaceRoot, request.path)
+            if (!file.exists() || !file.isFile) {
+                onChunk("⚠ File not found: ${request.path}\n")
+                continue
+            }
+            
+            try {
+                // Use useLines() for memory-efficient reading
+                val content = file.useLines { lines ->
+                    when {
+                        request.offset != null && request.limit != null -> {
+                            val start = request.offset.coerceAtLeast(0)
+                            lines.drop(start).take(request.limit).joinToString("\n")
+                        }
+                        request.offset != null -> {
+                            val start = request.offset.coerceAtLeast(0)
+                            lines.drop(start).joinToString("\n")
+                        }
+                        else -> {
+                            // Limit to MAX_FILE_LINES if reading entire file
+                            val allLines = lines.toList()
+                            val totalLines = allLines.size
+                            val limitedLines = allLines.take(PpeConfig.MAX_FILE_LINES)
+                            if (totalLines > PpeConfig.MAX_FILE_LINES) {
+                                limitedLines.joinToString("\n") + "\n... (truncated, file has $totalLines lines)"
+                            } else {
+                                limitedLines.joinToString("\n")
+                            }
+                        }
+                    }
+                }
+                
+                fileContents[request.path] = content
+                onChunk("✓ Read ${request.path}\n")
+            } catch (e: Exception) {
+                onChunk("✗ Failed to read ${request.path}: ${e.message}\n")
+                Log.e("PpeExecutionEngine", "Failed to read file ${request.path}", e)
+            }
+        }
+        
+        return fileContents
+    }
+    
+    /**
+     * Update blueprint with new file information
+     */
+    private suspend fun updateBlueprintWithNewFile(
+        newFilePath: String,
+        newFileMetadata: String, // imports, exports, functions, classes
+        blueprint: String,
+        chatHistory: List<Content>,
+        script: PpeScript
+    ): String {
+        val prompt = """
+You are updating a project blueprint. A new file has been added to the project.
+
+NEW FILE:
+- Path: $newFilePath
+- Metadata: $newFileMetadata
+
+CURRENT BLUEPRINT:
+$blueprint
+
+IMPORTANT INSTRUCTIONS:
+1. DO NOT change any existing files in the blueprint
+2. ONLY add the new file to the blueprint
+3. Include the new file's location, type, dependencies, and metadata
+4. Update the dependency relationships if the new file depends on existing files or if existing files depend on it
+5. Maintain the same JSON format as the current blueprint
+
+Return the updated blueprint as JSON in the same format, with the new file added.
+
+Updated Blueprint JSON:
+""".trimIndent()
+        
+        val messages = chatHistory.toMutableList()
+        messages.add(
+            Content(
+                role = "user",
+                parts = listOf(Part.TextPart(text = prompt))
+            )
+        )
+        
+        val result = apiClient.callApi(
+            messages = messages,
+            model = null,
+            tools = null
+        )
+        
+        val response = result.getOrElse {
+            Log.e("PpeExecutionEngine", "Failed to update blueprint: ${it.message}")
+            return blueprint // Return original if update fails
+        }
+        
+        // Extract JSON from response
+        var jsonText = response.text.trim()
+        jsonText = jsonText.removePrefix("```json").removePrefix("```")
+        jsonText = jsonText.removePrefix("```")
+        jsonText = jsonText.removeSuffix("```").trim()
+        
+        val jsonStart = jsonText.indexOf('{')
+        val jsonEnd = jsonText.lastIndexOf('}') + 1
+        
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+            jsonText = jsonText.substring(jsonStart, jsonEnd)
+        }
+        
+        return jsonText
+    }
+    
+    /**
+     * Execute upgrade/debug flow for existing projects
+     */
+    private suspend fun executeUpgradeDebugFlow(
+        userMessage: String,
+        chatHistory: List<Content>,
+        script: PpeScript,
+        onChunk: (String) -> Unit,
+        onToolCall: (FunctionCall) -> Unit,
+        onToolResult: (String, Map<String, Any>) -> Unit
+    ): PpeExecutionResult {
+        Log.d("PpeExecutionEngine", "Starting upgrade/debug flow")
+        
+        val transaction = FileTransaction(workspaceRoot)
+        val updatedChatHistory = chatHistory.toMutableList()
+        
+        try {
+            // Start operation tracking
+            val operationId = "upgrade-debug-${System.currentTimeMillis()}"
+            Observability.startOperation(operationId, "upgrade-debug-flow")
+            
+            // Step 1: Get file structure (respecting .gitignore) with caching
+            onChunk("Step 1: Analyzing project structure...\n")
+            val fileStructure = IntelligentCache.getFileStructure(workspaceRoot) {
+                getFileStructureRespectingGitignore(workspaceRoot)
+            }
+            onChunk("Project structure analyzed.\n\n")
+            
+            // Step 2: Determine which files to read (with rate limiting)
+            onChunk("Step 2: Determining which files to read...\n")
+            rateLimiter.acquire()
+            val readPlan = determineFilesToRead(userMessage, fileStructure, chatHistory, script)
+            
+            if (readPlan == null || readPlan.files.isEmpty()) {
+                Log.w("PpeExecutionEngine", "No files determined for reading")
+                onChunk("No specific files identified. Proceeding with general analysis...\n\n")
+            } else {
+                onChunk("Identified ${readPlan.files.size} files to read.\n\n")
+                
+                // Step 3: Read the files
+                onChunk("Step 3: Reading files...\n")
+                val fileContents = readFilesFromPlan(readPlan, workspaceRoot, onChunk)
+                onChunk("\n")
+                
+                // Add file contents to chat history for context
+                if (fileContents.isNotEmpty()) {
+                    val filesContext = buildString {
+                        appendLine("=== Files Read for Analysis ===")
+                        fileContents.forEach { (path, content) ->
+                            appendLine("\n--- File: $path ---")
+                            appendLine(content)
+                        }
+                    }
+                    updatedChatHistory.add(
+                        Content(
+                            role = "user",
+                            parts = listOf(Part.TextPart(text = filesContext))
+                        )
+                    )
+                }
+                
+                // Step 4: Get plan from AI
+                onChunk("Step 4: Analyzing and creating plan...\n")
+                val planPrompt = """
+Based on the user's request and the files I've read, create a plan for what needs to be done.
+
+User Request: $userMessage
+
+Files Read:
+${fileContents.keys.joinToString("\n") { "- $it" }}
+
+Analyze the situation and provide a plan. The plan should specify:
+1. Whether new files need to be created or existing files need to be modified
+2. For new files: provide the file path, type, dependencies, and what imports/functions/classes it needs
+3. For existing files: specify what changes are needed and where (line numbers if possible)
+
+Be specific and actionable. Use tools to implement the plan.
+
+Plan:
+""".trimIndent()
+                
+                updatedChatHistory.add(
+                    Content(
+                        role = "user",
+                        parts = listOf(Part.TextPart(text = planPrompt))
+                    )
+                )
+                
+                // Get plan from AI (with tools enabled)
+                val tools = if (toolRegistry.getAllTools().isNotEmpty()) {
+                    listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
+                } else {
+                    null
+                }
+                
+                val planResult = apiClient.callApi(
+                    messages = updatedChatHistory,
+                    model = null,
+                    tools = tools
+                )
+                
+                val planResponse = planResult.getOrElse {
+                    return PpeExecutionResult(
+                        success = false,
+                        finalResult = "Failed to create plan: ${it.message}",
+                        variables = emptyMap(),
+                        chatHistory = updatedChatHistory,
+                        error = it.message
+                    )
+                }
+                
+                onChunk("Plan created. Executing...\n\n")
+                
+                // Execute function calls from plan if any
+                val finalChatHistory = updatedChatHistory.toMutableList()
+                finalChatHistory.add(
+                    Content(
+                        role = "model",
+                        parts = listOf(Part.TextPart(text = planResponse.text))
+                    )
+                )
+                
+                if (planResponse.functionCalls.isNotEmpty()) {
+                    for (functionCall in planResponse.functionCalls) {
+                        onToolCall(functionCall)
+                        val toolResult = executeTool(functionCall, onToolResult)
+                        
+                        // Add tool result to chat history
+                        finalChatHistory.add(
+                            Content(
+                                role = "user",
+                                parts = listOf(
+                                    Part.FunctionResponsePart(
+                                        functionResponse = FunctionResponse(
+                                            name = functionCall.name,
+                                            response = when {
+                                                toolResult.error != null -> mapOf("error" to toolResult.error.message)
+                                                toolResult.llmContent is String -> mapOf("output" to toolResult.llmContent)
+                                                else -> mapOf("output" to "Tool execution succeeded.")
+                                            },
+                                            id = functionCall.id ?: ""
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                        
+                        // Track created files for blueprint update later
+                        if (functionCall.name == "write_file" && toolResult.error == null) {
+                            val filePath = functionCall.args["file_path"] as? String
+                            if (filePath != null && validateFilePath(filePath, workspaceRoot)) {
+                                transaction.addCreatedFile(filePath)
+                            }
+                        }
+                    }
+                }
+                
+                // Update blueprint AFTER all files are created
+                val createdFiles = transaction.createdFiles
+                if (createdFiles.isNotEmpty()) {
+                    try {
+                        onChunk("Updating project blueprint...\n")
+                        // Update dependency matrix for all created files
+                        createdFiles.forEach { filePath ->
+                            try {
+                                val file = File(workspaceRoot, filePath)
+                                if (file.exists()) {
+                                    val content = file.useLines { it.joinToString("\n") }
+                                    val metadata = CodeDependencyAnalyzer.analyzeFile(filePath, content, workspaceRoot)
+                                    CodeDependencyAnalyzer.updateDependencyMatrix(workspaceRoot, metadata)
+                                }
+                            } catch (e: Exception) {
+                                Log.w("PpeExecutionEngine", "Failed to update dependency matrix for $filePath: ${e.message}")
+                            }
+                        }
+                        onChunk("Blueprint updated successfully.\n")
+                    } catch (e: Exception) {
+                        Log.w("PpeExecutionEngine", "Failed to update blueprint: ${e.message}")
+                    }
+                }
+                
+                val result = "Upgrade/debug completed. ${planResponse.functionCalls.size} actions executed."
+                onChunk("\n$result\n")
+                
+                // Clear transaction on success
+                transaction.clear()
+                
+                // End operation tracking
+                Observability.endOperation(operationId)
+                
+                return PpeExecutionResult(
+                    success = true,
+                    finalResult = result,
+                    variables = emptyMap(),
+                    chatHistory = finalChatHistory
+                )
+            }
+            
+            // If no specific files, proceed with normal flow
+            return PpeExecutionResult(
+                success = true,
+                finalResult = "Analysis completed. Proceed with normal execution.",
+                variables = emptyMap(),
+                chatHistory = chatHistory
+            )
+            
+        } catch (e: Exception) {
+            Log.e("PpeExecutionEngine", "Upgrade/debug flow failed", e)
+            // Rollback on exception
+            try {
+                transaction.rollback()
+            } catch (rollbackError: Exception) {
+                Log.e("PpeExecutionEngine", "Rollback failed: ${rollbackError.message}")
+            }
+            return PpeExecutionResult(
+                success = false,
+                finalResult = "Upgrade/debug failed: ${e.message}",
+                variables = emptyMap(),
+                chatHistory = updatedChatHistory,
+                error = e.message
+            )
+        }
+    }
+    
+    // ==================== Helper Classes ====================
+    
+    /**
+     * File transaction for rollback support
+     */
+    private class FileTransaction(private val workspaceRoot: String) {
+        val createdFiles = mutableListOf<String>()
+        private val modifiedFiles = mutableMapOf<String, String>() // path -> original content
+        
+        fun addCreatedFile(path: String) {
+            createdFiles.add(path)
+        }
+        
+        fun addModifiedFile(path: String, originalContent: String) {
+            modifiedFiles[path] = originalContent
+        }
+        
+        suspend fun rollback() {
+            withContext(Dispatchers.IO) {
+                // Delete created files
+                createdFiles.forEach { path ->
+                    try {
+                        val file = File(workspaceRoot, path)
+                        if (file.exists()) {
+                            file.delete()
+                            Log.d("FileTransaction", "Rolled back created file: $path")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("FileTransaction", "Failed to rollback file $path: ${e.message}")
+                    }
+                }
+                
+                // Restore modified files
+                modifiedFiles.forEach { (path, originalContent) ->
+                    try {
+                        val file = File(workspaceRoot, path)
+                        if (file.exists()) {
+                            file.writeText(originalContent)
+                            Log.d("FileTransaction", "Restored modified file: $path")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("FileTransaction", "Failed to restore file $path: ${e.message}")
+                    }
+                }
+            }
+        }
+        
+        fun clear() {
+            createdFiles.clear()
+            modifiedFiles.clear()
+        }
+    }
+    
+    /**
+     * Progress callback interface
+     */
+    interface ProgressCallback {
+        fun onProgress(current: Int, total: Int, currentItem: String)
+        fun isCancelled(): Boolean = false
+    }
+    
+    /**
+     * Rate limiter for API calls
+     */
+    private class RateLimiter(
+        private val maxRequests: Int,
+        private val windowMs: Long
+    ) {
+        private val requests = mutableListOf<Long>()
+        
+        suspend fun acquire() {
+            val now = System.currentTimeMillis()
+            synchronized(requests) {
+                // Remove old requests outside the window
+                requests.removeAll { it < now - windowMs }
+                
+                // Wait if we're at the limit
+                while (requests.size >= maxRequests) {
+                    val oldestRequest = requests.minOrNull() ?: break
+                    val waitTime = (oldestRequest + windowMs) - now
+                    if (waitTime > 0) {
+                        delay(waitTime)
+                    }
+                    requests.removeAll { it < System.currentTimeMillis() - windowMs }
+                }
+                
+                requests.add(System.currentTimeMillis())
+            }
+        }
+    }
+    
+    private val rateLimiter = RateLimiter(
+        maxRequests = PpeConfig.RATE_LIMIT_MAX_REQUESTS, 
+        windowMs = PpeConfig.RATE_LIMIT_WINDOW_MS
+    )
+    
+    // ==================== Validation Utilities ====================
+    
+    /**
+     * Validate file path to prevent path traversal attacks
+     */
+    private fun validateFilePath(path: String, workspaceRoot: String): Boolean {
+        return try {
+            val file = File(workspaceRoot, path)
+            val canonicalPath = file.canonicalPath
+            val workspaceCanonical = File(workspaceRoot).canonicalPath
+            canonicalPath.startsWith(workspaceCanonical)
+        } catch (e: Exception) {
+            Log.e("PpeExecutionEngine", "Path validation failed: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Sanitize user input for prompts
+     */
+    private fun sanitizeForPrompt(input: String): String {
+        return input
+            .replace("```", "\\`\\`\\`") // Escape code blocks
+            .replace("${'$'}", "\\${'$'}") // Escape dollar signs
+            .take((PpeConfig.MAX_TOKENS_BY_PROVIDER.values.maxOrNull() ?: 32768) * PpeConfig.CHARS_PER_TOKEN.toInt()) // Limit based on max tokens
+    }
+    
+    /**
+     * Validate blueprint structure
+     */
+    private fun validateBlueprint(blueprint: ProjectBlueprint): ValidationResult {
+        val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        
+        // Check for empty files
+        if (blueprint.files.isEmpty()) {
+            errors.add("Blueprint has no files")
+        }
+        
+        // Check for duplicate paths
+        val paths = blueprint.files.map { it.path }
+        val duplicates = paths.groupingBy { it }.eachCount().filter { it.value > 1 }.keys
+        if (duplicates.isNotEmpty()) {
+            errors.add("Duplicate file paths: ${duplicates.joinToString(", ")}")
+        }
+        
+        // Check for invalid paths
+        blueprint.files.forEach { file ->
+            if (!validateFilePath(file.path, workspaceRoot)) {
+                errors.add("Invalid file path: ${file.path}")
+            }
+        }
+        
+        // Check for circular dependencies
+        val circularDeps = detectCircularDependencies(blueprint.files)
+        if (circularDeps.isNotEmpty()) {
+            errors.add("Circular dependencies detected: ${circularDeps.joinToString(", ")}")
+        }
+        
+        // Check for missing dependencies
+        val allPaths = paths.toSet()
+        blueprint.files.forEach { file ->
+            file.dependencies.forEach { dep ->
+                if (!allPaths.contains(dep)) {
+                    warnings.add("File ${file.path} depends on ${dep} which is not in blueprint")
+                }
+            }
+        }
+        
+        return ValidationResult(
+            isValid = errors.isEmpty(),
+            errors = errors,
+            warnings = warnings
+        )
+    }
+    
+    /**
+     * Detect circular dependencies
+     */
+    private fun detectCircularDependencies(files: List<BlueprintFile>): List<String> {
+        val graph = files.associate { it.path to it.dependencies.toSet() }
+        val visited = mutableSetOf<String>()
+        val recursionStack = mutableSetOf<String>()
+        val cycles = mutableListOf<String>()
+        
+        fun dfs(node: String): Boolean {
+            if (node in recursionStack) {
+                cycles.add(node)
+                return true
+            }
+            if (node in visited) return false
+            
+            visited.add(node)
+            recursionStack.add(node)
+            
+            graph[node]?.forEach { neighbor ->
+                if (dfs(neighbor)) {
+                    cycles.add(node)
+                    return true
+                }
+            }
+            
+            recursionStack.remove(node)
+            return false
+        }
+        
+        graph.keys.forEach { node ->
+            if (node !in visited) {
+                dfs(node)
+            }
+        }
+        
+        return cycles.distinct()
+    }
+    
+    /**
+     * Topological sort for dependency resolution
+     */
+    private fun topologicalSort(files: List<BlueprintFile>): List<BlueprintFile> {
+        val graph = files.associate { it.path to it.dependencies.toSet() }
+        val inDegree = mutableMapOf<String, Int>()
+        val fileMap = files.associateBy { it.path }
+        
+        // Initialize in-degree
+        files.forEach { file ->
+            inDegree[file.path] = file.dependencies.size
+        }
+        
+        // Find files with no dependencies
+        val queue = mutableListOf<String>()
+        inDegree.forEach { (path, degree) ->
+            if (degree == 0) {
+                queue.add(path)
+            }
+        }
+        
+        val result = mutableListOf<BlueprintFile>()
+        
+        while (queue.isNotEmpty()) {
+            val current = queue.removeAt(0)
+            fileMap[current]?.let { result.add(it) }
+            
+            // Reduce in-degree of dependents
+            files.forEach { file ->
+                if (file.dependencies.contains(current)) {
+                    val newDegree = (inDegree[file.path] ?: 0) - 1
+                    inDegree[file.path] = newDegree
+                    if (newDegree == 0) {
+                        queue.add(file.path)
+                    }
+                }
+            }
+        }
+        
+        // If we couldn't process all files, there's a cycle
+        if (result.size != files.size) {
+            Log.w("PpeExecutionEngine", "Topological sort incomplete - possible cycle. Returning original order.")
+            return files.sortedBy { it.dependencies.size }
+        }
+        
+        return result
+    }
+    
+    /**
+     * Retry logic with exponential backoff
+     */
+    private suspend fun <T> retryWithBackoff(
+        maxRetries: Int = PpeConfig.MAX_RETRIES,
+        initialDelayMs: Long = PpeConfig.RETRY_INITIAL_DELAY_MS,
+        maxDelayMs: Long = PpeConfig.RETRY_MAX_DELAY_MS,
+        isRetryable: (Exception) -> Boolean = { true },
+        operation: suspend () -> T
+    ): Result<T> {
+        var lastException: Exception? = null
+        var delayMs = initialDelayMs
+        
+        repeat(maxRetries) { attempt ->
+            try {
+                return Result.success(operation())
+            } catch (e: Exception) {
+                lastException = e
+                if (!isRetryable(e)) {
+                    return Result.failure(e)
+                }
+                
+                if (attempt < maxRetries - 1) {
+                    Log.w("PpeExecutionEngine", "Retry attempt ${attempt + 1}/$maxRetries failed: ${e.message}. Retrying in ${delayMs}ms...")
+                    delay(delayMs)
+                    delayMs = minOf(delayMs * 2, maxDelayMs) // Exponential backoff with cap
+                }
+            }
+        }
+        
+        return Result.failure(lastException ?: Exception("Failed after $maxRetries attempts"))
+    }
+    
+    /**
+     * Check if exception is retryable
+     */
+    private fun isRetryableException(e: Exception): Boolean {
+        val message = e.message?.lowercase() ?: ""
+        return when {
+            message.contains("timeout") -> true
+            message.contains("network") -> true
+            message.contains("connection") -> true
+            message.contains("rate limit") -> true
+            message.contains("429") -> true
+            e is java.net.SocketTimeoutException -> true
+            e is java.net.UnknownHostException -> true
+            else -> false
+        }
+    }
+    
+    /**
+     * Validation result
+     */
+    private data class ValidationResult(
+        val isValid: Boolean,
+        val errors: List<String>,
+        val warnings: List<String>
+    )
 }
 
 /**

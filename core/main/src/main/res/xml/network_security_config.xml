@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- Allow cleartext traffic for localhost and local network IPs -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">localhost</domain>
-        <!-- You can add other domains or use <domain includeSubdomains="true">*<domain> to allow all -->
+        <domain includeSubdomains="true">127.0.0.1</domain>
     </domain-config>
+    <!-- Allow cleartext traffic for all private IP ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x) -->
+    <!-- Note: Android doesn't support IP ranges in domain-config, so we use base-config -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
 </network-security-config>

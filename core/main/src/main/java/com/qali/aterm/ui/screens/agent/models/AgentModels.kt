@@ -27,7 +27,14 @@ data class AgentMessage(
     val text: String,
     val isUser: Boolean,
     val timestamp: Long,
-    val fileDiff: FileDiff? = null // Optional file diff for code changes
+    val fileDiff: FileDiff? = null, // Optional file diff for code changes
+    val pendingToolCall: PendingToolCall? = null // Optional pending tool call requiring approval
+)
+
+data class PendingToolCall(
+    val functionCall: com.qali.aterm.agent.core.FunctionCall,
+    val requiresApproval: Boolean = false,
+    val reason: String = ""
 )
 
 fun formatTimestamp(timestamp: Long): String {
