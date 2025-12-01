@@ -19,7 +19,7 @@ import java.util.*
 class ProcessDataAnalyzer(
     private val workspaceRoot: String,
     private val apiClient: PpeApiClient,
-    private val tasksPerAnalysis: Int = 7
+    private val tasksPerAnalysis: Int = 1
 ) {
     private val prefs: SharedPreferences
         get() = application!!.getSharedPreferences("process_analyzer", Context.MODE_PRIVATE)

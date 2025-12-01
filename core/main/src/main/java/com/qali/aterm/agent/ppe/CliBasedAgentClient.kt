@@ -24,7 +24,7 @@ class CliBasedAgentClient(
     private val processAnalyzer = ProcessDataAnalyzer(
         workspaceRoot = workspaceRoot,
         apiClient = apiClient,
-        tasksPerAnalysis = 7
+        tasksPerAnalysis = 1
     )
     
     /**
