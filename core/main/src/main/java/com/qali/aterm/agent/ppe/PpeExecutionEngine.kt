@@ -55,7 +55,7 @@ class PpeExecutionEngine(
         // If it's a KeysExhaustedExceptionWithRetry, wait and retry
         if (result.isFailure) {
             val error = result.exceptionOrNull()
-            if (error is PpeApiClient.KeysExhaustedExceptionWithRetry) {
+            if (error is KeysExhaustedExceptionWithRetry) {
                 val retryDelayMs = error.retryDelayMs
                 Log.w("PpeExecutionEngine", "All API keys exhausted with rate limit. Waiting ${retryDelayMs}ms before retry...")
                 onChunk?.invoke("⏳ All API keys hit rate limit. Waiting ${retryDelayMs / 1000}s before retrying...\n")
