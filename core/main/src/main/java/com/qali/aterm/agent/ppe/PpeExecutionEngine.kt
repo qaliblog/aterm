@@ -2455,9 +2455,10 @@ Return ONLY the raw code content. No markdown, no explanations, no code blocks. 
                             tools = null
                         )
                         
-                        val retryResponse = retryResult.getOrElse {
-                            onChunk("✗ Retry failed for ${file.path}: ${it.message}\n")
-                            continue
+                        val retryResponse = retryResult.getOrNull()
+                        if (retryResponse == null) {
+                            onChunk("✗ Retry failed for ${file.path}: ${retryResult.exceptionOrNull()?.message}\n")
+                            continue // Continue to next file
                         }
                         
                         // Extract code from retry response
@@ -3038,12 +3039,13 @@ JSON Blueprint:
             val aggressivePattern = Regex("""```[^`]*?```""", RegexOption.DOT_MATCHES_ALL)
             val aggressiveMatch = aggressivePattern.find(code)
             if (aggressiveMatch != null) {
-                val extracted = aggressiveMatch.value
-                    .removePrefix("```")
-                    .removeSuffix("```")
-                    .trim()
-                    .removePrefix(Regex("""\w+""").find(extracted)?.value ?: "")
-                    .trim()
+                var extracted = aggressiveMatch.value
+                extracted = extracted.removePrefix("```").removeSuffix("```").trim()
+                // Remove language identifier if present
+                val langMatch = Regex("""^\w+""").find(extracted)
+                if (langMatch != null) {
+                    extracted = extracted.removePrefix(langMatch.value).trim()
+                }
                 if (extracted.isNotEmpty()) {
                     code = extracted
                 }
