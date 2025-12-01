@@ -272,9 +272,15 @@ fun DirectoryPickerDialog(
 
 /**
  * Parse file diff from tool result
- * Extracts file path and content from edit and write_file tool results
+ * Extracts file path and content from edit and write_file tool results.
+ * Uses the current workspaceRoot so diffs work correctly for per-session workspaces.
  */
-fun parseFileDiffFromToolResult(toolName: String, toolResult: ToolResult, toolArgs: Map<String, Any>? = null): FileDiff? {
+fun parseFileDiffFromToolResult(
+    toolName: String,
+    toolResult: ToolResult,
+    toolArgs: Map<String, Any>? = null,
+    workspaceRoot: String
+): FileDiff? {
     if (toolName != "edit" && toolName != "write_file") {
         return null
     }
@@ -311,8 +317,8 @@ fun parseFileDiffFromToolResult(toolName: String, toolResult: ToolResult, toolAr
                 // If toolArgs is null, try to read the file that was written
                 // The file path should have been extracted from llmContent above
                 try {
-                    val workspaceRoot = com.rk.libcommons.alpineDir()
-                    val file = java.io.File(workspaceRoot, filePath)
+                    val workspaceDir = java.io.File(workspaceRoot)
+                    val file = java.io.File(workspaceDir, filePath)
                     if (file.exists()) {
                         file.readText()
                     } else {
@@ -325,8 +331,8 @@ fun parseFileDiffFromToolResult(toolName: String, toolResult: ToolResult, toolAr
             }
             
             // Check if file exists to determine if it's new
-            val workspaceRoot = com.rk.libcommons.alpineDir()
-            val file = java.io.File(workspaceRoot, filePath)
+            val workspaceDir = java.io.File(workspaceRoot)
+            val file = java.io.File(workspaceDir, filePath)
             val isNewFile = !file.exists()
             val oldContent = if (isNewFile) {
                 ""
@@ -2288,7 +2294,12 @@ fun AgentScreen(
                                                                     null
                                                                 }
                                                                 
-                                                                val fileDiff = parseFileDiffFromToolResult(event.toolName, event.result, toolArgs)
+                                                                val fileDiff = parseFileDiffFromToolResult(
+                                                                    toolName = event.toolName,
+                                                                    toolResult = event.result,
+                                                                    toolArgs = toolArgs,
+                                                                    workspaceRoot = workspaceRoot
+                                                                )
                                                                 if (fileDiff == null && (event.toolName == "write_file" || event.toolName == "edit")) {
                                                                     android.util.Log.w("AgentScreen", "Failed to extract file diff for ${event.toolName} - toolArgs: ${toolArgs != null}, llmContent length: ${event.result.llmContent.length}")
                                                                 }

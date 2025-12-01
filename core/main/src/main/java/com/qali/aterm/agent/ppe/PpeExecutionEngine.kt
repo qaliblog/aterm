@@ -2223,7 +2223,7 @@ class PpeExecutionEngine(
             onChunk("Blueprint generated successfully.\n\n")
             
             // Parse blueprint JSON
-            val blueprint = parseBlueprintJson(blueprintJson)
+            var blueprint = parseBlueprintJson(blueprintJson)
             if (blueprint == null) {
                 Log.w("PpeExecutionEngine", "Failed to parse blueprint JSON")
                 return PpeExecutionResult(
@@ -2234,6 +2234,8 @@ class PpeExecutionEngine(
                     error = "Blueprint parsing failed"
                 )
             }
+            // Ensure required files are present for certain project types (e.g. package.json for Node.js)
+            blueprint = ensureRequiredFiles(blueprint)
             
             // Validate blueprint
             val validation = validateBlueprint(blueprint)
@@ -2650,6 +2652,33 @@ JSON Blueprint:
             Log.e("PpeExecutionEngine", "Failed to parse blueprint JSON: ${e.message}", e)
             null
         }
+    }
+    
+    /**
+     * Ensure required files exist in the blueprint for specific project types.
+     * For example, Node.js projects should always have a package.json.
+     */
+    private fun ensureRequiredFiles(blueprint: ProjectBlueprint): ProjectBlueprint {
+        val files = blueprint.files.toMutableList()
+        val lowerType = blueprint.projectType.lowercase()
+        
+        if (lowerType == "nodejs") {
+            val hasPackageJson = files.any { it.path.equals("package.json", ignoreCase = true) }
+            if (!hasPackageJson) {
+                Log.w("PpeExecutionEngine", "Node.js blueprint missing package.json – adding a minimal stub.")
+                files.add(
+                    0,
+                    BlueprintFile(
+                        path = "package.json",
+                        type = "config",
+                        dependencies = emptyList(),
+                        description = "Package configuration file (auto-added fallback)"
+                    )
+                )
+            }
+        }
+        
+        return if (files === blueprint.files) blueprint else ProjectBlueprint(blueprint.projectType, files)
     }
     
     /**
