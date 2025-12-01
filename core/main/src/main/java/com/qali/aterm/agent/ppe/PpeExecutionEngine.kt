@@ -174,7 +174,8 @@ class PpeExecutionEngine(
                                     
                                     // Check if response is empty or has no function calls - might need fallback continuation
                                     // For write_file, if we've only written a few files (less than 5), be more aggressive about continuing
-                                    val writeFileCount = messages.takeLast(20).flatMap { content ->
+                                    val allMessages = chatHistory + turnMessages
+                                    val writeFileCount = allMessages.takeLast(20).flatMap { content ->
                                         content.parts.filterIsInstance<Part.FunctionResponsePart>().map { it.functionResponse.name }
                                     }.count { it == "write_file" }
                                     val needsFallbackForWriteFile = (continuationResponse.text.isEmpty() || continuationResponse.functionCalls.isEmpty()) && 
