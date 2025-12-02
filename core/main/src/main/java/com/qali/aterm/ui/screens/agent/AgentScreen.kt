@@ -2299,21 +2299,10 @@ fun AgentScreen(
                                                     try {
                                                         android.util.Log.d("AgentScreen", "Received stream event: ${event.javaClass.simpleName}")
                                                         // All state updates must happen on Main dispatcher to avoid Compose snapshot lock issues
+                                                        // Process events in order: ToolCall events must be processed before ToolResult events
                                                         when (event) {
-                                                            is AgentEvent.Chunk -> {
-                                                                execState.chunkCount++
-                                                                android.util.Log.d("AgentScreen", "Processing Chunk event (count: ${execState.chunkCount}, size: ${event.text.length})")
-                                                                withContext(Dispatchers.Main) {
-                                                                    currentResponseText += event.text
-                                                                    val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
-                                                                    messages = currentMessages + AgentMessage(
-                                                                        text = currentResponseText,
-                                                                        isUser = false,
-                                                                        timestamp = System.currentTimeMillis()
-                                                                    )
-                                                                }
-                                                            }
                                                             is AgentEvent.ToolCall -> {
+                                                                // Process ToolCall FIRST to populate queue before ToolResult arrives
                                                                 execState.toolCallCount++
                                                                 android.util.Log.d("AgentScreen", "Processing ToolCall event (count: ${execState.toolCallCount}, tool: ${event.functionCall.name})")
                                                                 
@@ -2378,6 +2367,19 @@ fun AgentScreen(
                                                                         )
                                                                         messages = messages + toolMessage
                                                                     }
+                                                                }
+                                                            }
+                                                            is AgentEvent.Chunk -> {
+                                                                execState.chunkCount++
+                                                                android.util.Log.d("AgentScreen", "Processing Chunk event (count: ${execState.chunkCount}, size: ${event.text.length})")
+                                                                withContext(Dispatchers.Main) {
+                                                                    currentResponseText += event.text
+                                                                    val currentMessages = if (messages.isNotEmpty()) messages.dropLast(1) else messages
+                                                                    messages = currentMessages + AgentMessage(
+                                                                        text = currentResponseText,
+                                                                        isUser = false,
+                                                                        timestamp = System.currentTimeMillis()
+                                                                    )
                                                                 }
                                                             }
                                                             is AgentEvent.ToolResult -> {
