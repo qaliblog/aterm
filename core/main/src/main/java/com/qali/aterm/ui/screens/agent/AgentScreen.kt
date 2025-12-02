@@ -1920,7 +1920,7 @@ fun AgentScreen(
         }
         val hasFileChanges = remember(fileDiffs) { fileDiffs.isNotEmpty() }
         // Currently selected file diff to show in a modal dialog
-        var selectedFileDiff by remember(messages) { mutableStateOf<com.qali.aterm.ui.screens.agent.models.FileDiff?>(null) }
+        var selectedFileDiff by remember(messages) { mutableStateOf<FileDiff?>(null) }
         
         LazyColumn(
             state = listState,
