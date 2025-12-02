@@ -287,14 +287,32 @@ fun parseFileDiffFromToolResult(
     }
     
     return try {
-        // Extract file path from tool args
+        // Extract file path - try multiple sources
         val filePath = toolArgs?.get("file_path") as? String
             ?: run {
-                // Try to extract from llmContent or returnDisplay
+                // Try to extract from llmContent
                 val content = toolResult.llmContent
-                val filePathPattern = Regex("""(?:file|File|path|Path)[:\s]+([^\s,]+)""")
-                filePathPattern.find(content)?.groupValues?.get(1)
-            } ?: return null
+                val patterns = listOf(
+                    Regex("""(?:file|File|path|Path|written|created)[:\s]+([^\s,\n]+)""", RegexOption.IGNORE_CASE),
+                    Regex("""(?:to|at)\s+([^\s,\n]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|cpp|h|json|yaml|yml|md|txt|xml|html|css))""", RegexOption.IGNORE_CASE),
+                    Regex("""([^\s,\n]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|cpp|h|json|yaml|yml|md|txt|xml|html|css))""")
+                )
+                patterns.firstNotNullOfOrNull { it.find(content)?.groupValues?.get(1) }
+            }
+            ?: run {
+                // Try returnDisplay
+                val display = toolResult.returnDisplay
+                val patterns = listOf(
+                    Regex("""(?:Written|Created|Updated)\s+([^\s]+)""", RegexOption.IGNORE_CASE),
+                    Regex("""([^\s]+\.(?:js|ts|jsx|tsx|py|java|kt|go|rs|cpp|h|json|yaml|yml|md|txt|xml|html|css))""")
+                )
+                patterns.firstNotNullOfOrNull { it.find(display)?.groupValues?.get(1) }
+            }
+        
+        if (filePath == null) {
+            android.util.Log.w("AgentScreen", "Could not extract file path for $toolName - toolArgs: ${toolArgs != null}, llmContent: ${toolResult.llmContent.take(100)}")
+            return null
+        }
         
         // For edit, extract old_string and new_string from args
         if (toolName == "edit" && toolArgs != null) {
@@ -311,13 +329,47 @@ fun parseFileDiffFromToolResult(
         } 
         // For write_file, we only have new content (creates new file or overwrites)
         else if (toolName == "write_file") {
-            // For robustness, always synthesize a FileDiff from toolArgs without touching the filesystem.
-            // This guarantees we show a diff card even if reads fail or the file does not yet exist on disk.
-            val newContent = (toolArgs?.get("content") as? String) ?: ""
-            val isNewFile = true // write_file from the agent is always treated as creating/overwriting a file
+            // Try to get content from toolArgs first
+            var newContent = toolArgs?.get("content") as? String
+            
+            // If not in args, try to read the file that was just written
+            if (newContent == null || newContent.isEmpty()) {
+                try {
+                    val file = File(workspaceRoot, filePath)
+                    if (file.exists()) {
+                        newContent = file.readText()
+                        android.util.Log.d("AgentScreen", "Read file content from disk for diff: ${filePath} (${newContent.length} chars)")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("AgentScreen", "Could not read file for diff: ${filePath}", e)
+                }
+            }
+            
+            // If still no content, use empty string (will show as new file)
+            if (newContent == null) {
+                newContent = ""
+            }
+            
+            // Check if file exists to determine if it's new
+            val file = File(workspaceRoot, filePath)
+            val isNewFile = !file.exists() || (toolArgs == null) // If we don't have toolArgs, assume it's new
+            
+            val oldContent = if (isNewFile) {
+                ""
+            } else {
+                try {
+                    // Try to read old content if file existed
+                    file.readText()
+                } catch (e: Exception) {
+                    ""
+                }
+            }
+            
+            android.util.Log.d("AgentScreen", "Creating FileDiff for $filePath - isNewFile: $isNewFile, content length: ${newContent.length}")
+            
             FileDiff(
                 filePath = filePath,
-                oldContent = "",
+                oldContent = oldContent,
                 newContent = newContent,
                 isNewFile = isNewFile
             )
@@ -325,7 +377,7 @@ fun parseFileDiffFromToolResult(
             null
         }
     } catch (e: Exception) {
-        android.util.Log.e("AgentScreen", "Failed to parse file diff", e)
+        android.util.Log.e("AgentScreen", "Failed to parse file diff for $toolName", e)
         null
     }
 }
@@ -2264,8 +2316,10 @@ fun AgentScreen(
                                                                     toolArgs = toolArgs,
                                                                     workspaceRoot = workspaceRoot
                                                                 )
-                                                                if (fileDiff == null && (event.toolName == "write_file" || event.toolName == "edit")) {
-                                                                    android.util.Log.w("AgentScreen", "Failed to extract file diff for ${event.toolName} - toolArgs: ${toolArgs != null}, llmContent length: ${event.result.llmContent.length}")
+                                                                if (fileDiff != null) {
+                                                                    android.util.Log.d("AgentScreen", "Successfully created FileDiff for ${fileDiff.filePath} - isNewFile: ${fileDiff.isNewFile}, newContent length: ${fileDiff.newContent.length}")
+                                                                } else if (event.toolName == "write_file" || event.toolName == "edit") {
+                                                                    android.util.Log.w("AgentScreen", "Failed to extract file diff for ${event.toolName} - toolArgs: ${toolArgs != null}, toolArgs keys: ${toolArgs?.keys}, llmContent: ${event.result.llmContent.take(200)}, returnDisplay: ${event.result.returnDisplay}")
                                                                 }
                                                                 
                                                                 withContext(Dispatchers.Main) {
