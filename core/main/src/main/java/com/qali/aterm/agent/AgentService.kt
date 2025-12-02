@@ -7,6 +7,7 @@ import com.qali.aterm.agent.client.OllamaClient
 import com.qali.aterm.agent.ppe.CliBasedAgentClient
 import com.qali.aterm.agent.debug.DebugLogger
 import com.qali.aterm.agent.tools.*
+import com.qali.aterm.agent.tools.IntelligentErrorAnalysisTool
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -58,7 +59,7 @@ object AgentService {
                 // Recreate CLI client if workspace changed, useOllama changed, Ollama config changed, or client doesn't exist
                 if (cliClient == null || workspaceChanged || useOllamaChanged || ollamaConfigChanged) {
                     val toolRegistry = ToolRegistry()
-                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity)
+                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity, ollamaUrl, ollamaModel)
                     
                     // Create CLI-based client with Ollama configuration (bypasses ApiProviderManager)
                     val newCliClient = CliBasedAgentClient(toolRegistry, workspaceRoot, ollamaUrl, ollamaModel)
@@ -74,7 +75,7 @@ object AgentService {
                 // Fallback to old OllamaClient if CLI agent is disabled
                 if (ollamaClient == null || workspaceChanged || useOllamaChanged || ollamaConfigChanged) {
                     val toolRegistry = ToolRegistry()
-                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity)
+                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity, ollamaUrl, ollamaModel)
                     
                     // For Ollama, we need an AgentClient for custom search (it uses API for AI analysis)
                     // Create a temporary client just for custom search tool
@@ -91,7 +92,7 @@ object AgentService {
                 // Recreate CLI client if workspace changed or client doesn't exist
                 if (cliClient == null || workspaceChanged || useOllamaChanged) {
                     val toolRegistry = ToolRegistry()
-                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity)
+                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity, null, null)
                     
                     // Create CLI-based client (no Ollama config - uses ApiProviderManager)
                     val newCliClient = CliBasedAgentClient(toolRegistry, workspaceRoot, null, null)
@@ -107,7 +108,7 @@ object AgentService {
                 // Fallback to old AgentClient if CLI agent is disabled
                 if (client == null || workspaceChanged || useOllamaChanged) {
                     val toolRegistry = ToolRegistry()
-                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity)
+                    registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity, null, null)
                     
                     val newClient = AgentClient(toolRegistry, workspaceRoot)
                     client = newClient
@@ -123,7 +124,14 @@ object AgentService {
         }
     }
     
-    private fun registerAllTools(toolRegistry: ToolRegistry, workspaceRoot: String, sessionId: String? = null, mainActivity: MainActivity? = null) {
+    private fun registerAllTools(
+        toolRegistry: ToolRegistry, 
+        workspaceRoot: String, 
+        sessionId: String? = null, 
+        mainActivity: MainActivity? = null,
+        ollamaUrl: String? = null,
+        ollamaModel: String? = null
+    ) {
         toolRegistry.registerTool(ReadFileTool(workspaceRoot))
         toolRegistry.registerTool(WriteFileTool(workspaceRoot))
         toolRegistry.registerTool(EditTool(workspaceRoot))
@@ -173,6 +181,8 @@ object AgentService {
         toolRegistry.registerTool(CodeReviewTool(workspaceRoot))
         // Documentation generation tool
         toolRegistry.registerTool(DocumentationGenerationTool(workspaceRoot))
+        // Intelligent error analysis tool (with toolRegistry for API access)
+        toolRegistry.registerTool(IntelligentErrorAnalysisTool(workspaceRoot, toolRegistry, ollamaUrl, ollamaModel))
     }
     
     fun getClient(): AgentClient? = client
