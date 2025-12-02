@@ -1919,6 +1919,8 @@ fun AgentScreen(
             messages.mapNotNull { it.fileDiff }.distinctBy { it.filePath }
         }
         val hasFileChanges = remember(fileDiffs) { fileDiffs.isNotEmpty() }
+        // Currently selected file diff to show in a modal dialog
+        var selectedFileDiff by remember(messages) { mutableStateOf<com.qali.aterm.ui.screens.agent.models.FileDiff?>(null) }
         
         LazyColumn(
             state = listState,
@@ -1953,18 +1955,89 @@ fun AgentScreen(
                         MessageBubble(
                             message = message
                         )
-                        // Show diff card if message has file diff - use index for stable key to prevent disappearing
+                        // If this message has an associated file diff, show a compact preview
+                        // and allow opening a full diff in a modal dialog.
                         message.fileDiff?.let { diff ->
                             key("file-diff-${index}-${diff.filePath}") {
-                                CodeDiffCard(
-                                    fileDiff = diff,
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                )
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp),
+                                    shape = MaterialTheme.shapes.medium,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                    ),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = if (diff.isNewFile) "New file created" else "File updated",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = diff.filePath,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        TextButton(
+                                            onClick = { selectedFileDiff = diff }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.InsertDriveFile,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "View diff",
+                                                style = MaterialTheme.typography.labelMedium
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+
+        // Modal dialog showing full code diff for the selected file
+        selectedFileDiff?.let { diff ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { selectedFileDiff = null },
+                confirmButton = {
+                    TextButton(onClick = { selectedFileDiff = null }) {
+                        Text("Close")
+                    }
+                },
+                title = {
+                    Text(
+                        text = if (diff.isNewFile) "New File Created" else "File Updated",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                },
+                text = {
+                    // Use the existing CodeDiffCard to show + / - line diffs
+                    CodeDiffCard(
+                        fileDiff = diff,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                    )
+                }
+            )
         }
         
         // Input area
