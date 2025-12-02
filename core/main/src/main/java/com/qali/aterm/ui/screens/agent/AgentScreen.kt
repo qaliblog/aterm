@@ -356,7 +356,31 @@ fun parseFileDiffFromToolResult(
         } 
         // For write_file, we only have new content (creates new file or overwrites)
         else if (toolName == "write_file") {
-            // Try to get content from toolArgs first
+            // Get old content from toolArgs (stored when tool call was received)
+            // If _old_content key exists, use it (empty string means new file, non-empty means existing file)
+            // If key doesn't exist, try to determine from file existence
+            val hasOldContentKey = toolArgs?.containsKey("_old_content") == true
+            val oldContent = if (hasOldContentKey) {
+                toolArgs?.get("_old_content") as? String ?: ""
+            } else {
+                // Fallback: try to read old content (though file may have been overwritten)
+                try {
+                    val file = File(workspaceRoot, filePath)
+                    if (file.exists()) {
+                        file.readText()
+                    } else {
+                        ""
+                    }
+                } catch (e: Exception) {
+                    ""
+                }
+            }
+            // If _old_content key exists and is empty, it's a new file
+            // If _old_content key exists and is non-empty, it's an existing file
+            // If key doesn't exist, assume it's new (fallback)
+            val isNewFile = hasOldContentKey && oldContent.isEmpty()
+            
+            // Try to get new content from toolArgs first
             var newContent = toolArgs?.get("content") as? String
             
             // If not in args, try to read the file that was just written
@@ -365,34 +389,23 @@ fun parseFileDiffFromToolResult(
                     val file = File(workspaceRoot, filePath)
                     if (file.exists()) {
                         newContent = file.readText()
-                        android.util.Log.d("AgentScreen", "Read file content from disk for diff: ${filePath} (${newContent.length} chars)")
+                        android.util.Log.d("AgentScreen", "Read new file content from disk for diff: ${filePath} (${newContent.length} chars)")
+                    } else {
+                        newContent = ""
+                        android.util.Log.w("AgentScreen", "File does not exist after write: ${filePath}")
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w("AgentScreen", "Could not read file for diff: ${filePath}", e)
+                    android.util.Log.w("AgentScreen", "Could not read new file for diff: ${filePath}", e)
+                    newContent = ""
                 }
             }
             
-            // If still no content, use empty string (will show as new file)
+            // If still no content, use empty string
             if (newContent == null) {
                 newContent = ""
             }
             
-            // Check if file exists to determine if it's new
-            val file = File(workspaceRoot, filePath)
-            val isNewFile = !file.exists() || (toolArgs == null) // If we don't have toolArgs, assume it's new
-            
-            val oldContent = if (isNewFile) {
-                ""
-            } else {
-                try {
-                    // Try to read old content if file existed
-                    file.readText()
-                } catch (e: Exception) {
-                    ""
-                }
-            }
-            
-            android.util.Log.d("AgentScreen", "Creating FileDiff for $filePath - isNewFile: $isNewFile, content length: ${newContent.length}")
+            android.util.Log.d("AgentScreen", "Creating FileDiff for $filePath - isNewFile: $isNewFile, oldContent length: ${oldContent.length}, newContent length: ${newContent.length}")
             
             FileDiff(
                 filePath = filePath,
@@ -2309,11 +2322,36 @@ fun AgentScreen(
                                                                 val isAllowed = com.qali.aterm.agent.ppe.AllowListManager.isAllowed(event.functionCall)
                                                                 
                                                                 // Store tool call args in queue for file diff extraction
+                                                                // For write_file, also read old content before file is written
                                                                 if (event.functionCall.name == "edit" || event.functionCall.name == "write_file") {
                                                                     toolCallCounter++
                                                                     val filePath = event.functionCall.args["file_path"] as? String ?: ""
-                                                                    toolCallQueue.add(Triple(event.functionCall.name, event.functionCall.args, toolCallCounter))
-                                                                    android.util.Log.d("AgentScreen", "Added tool call to queue: ${event.functionCall.name} for file: $filePath (counter: $toolCallCounter, queue size: ${toolCallQueue.size})")
+                                                                    
+                                                                    // Read old content if file exists (for write_file)
+                                                                    var oldContent: String? = null
+                                                                    if (event.functionCall.name == "write_file") {
+                                                                        try {
+                                                                            val file = File(workspaceRoot, filePath)
+                                                                            if (file.exists()) {
+                                                                                oldContent = file.readText()
+                                                                                android.util.Log.d("AgentScreen", "Read old content for $filePath (${oldContent.length} chars)")
+                                                                            } else {
+                                                                                oldContent = "" // New file
+                                                                                android.util.Log.d("AgentScreen", "File $filePath does not exist, will be new file")
+                                                                            }
+                                                                        } catch (e: Exception) {
+                                                                            android.util.Log.w("AgentScreen", "Could not read old content for $filePath", e)
+                                                                            oldContent = ""
+                                                                        }
+                                                                    }
+                                                                    
+                                                                    // Store args with old content metadata
+                                                                    val argsWithOldContent = event.functionCall.args.toMutableMap()
+                                                                    if (oldContent != null) {
+                                                                        argsWithOldContent["_old_content"] = oldContent
+                                                                    }
+                                                                    toolCallQueue.add(Triple(event.functionCall.name, argsWithOldContent, toolCallCounter))
+                                                                    android.util.Log.d("AgentScreen", "Added tool call to queue: ${event.functionCall.name} for file: $filePath (counter: $toolCallCounter, queue size: ${toolCallQueue.size}, oldContent: ${oldContent != null})")
                                                                 }
                                                                 
                                                                 withContext(Dispatchers.Main) {
