@@ -107,9 +107,12 @@ class CliBasedAgentClient(
             val eventChannel = Channel<AgentEvent>(Channel.UNLIMITED)
             
             // Launch coroutine to consume events from channel and emit them
-            val emitJob = launch {
-                for (event in eventChannel) {
-                    emit(event)
+            // Use coroutineScope to ensure proper scope for launch
+            val emitJob = coroutineScope {
+                launch {
+                    for (event in eventChannel) {
+                        emit(event)
+                    }
                 }
             }
             
