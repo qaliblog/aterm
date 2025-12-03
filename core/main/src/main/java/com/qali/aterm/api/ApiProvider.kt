@@ -24,6 +24,7 @@ data class ApiProvider(
     val type: ApiProviderType,
     val apiKeys: MutableList<ApiKey> = mutableListOf(),
     val model: String = "",
+    val baseUrl: String = "", // Base URL for custom provider
     val isActive: Boolean = true
 ) {
     fun getActiveKeys(): List<ApiKey> = apiKeys.filter { it.isActive }
@@ -86,6 +87,20 @@ object ApiProviderManager {
         val providers = getProviders().toMutableMap()
         val provider = providers.getOrPut(selectedProvider) { ApiProvider(selectedProvider) }
         providers[selectedProvider] = provider.copy(model = model)
+        saveProviders(providers)
+    }
+    
+    // Get base URL for current provider
+    fun getCurrentBaseUrl(): String {
+        val provider = getCurrentProvider()
+        return provider.baseUrl
+    }
+    
+    // Set base URL for current provider
+    fun setCurrentBaseUrl(baseUrl: String) {
+        val providers = getProviders().toMutableMap()
+        val provider = providers.getOrPut(selectedProvider) { ApiProvider(selectedProvider) }
+        providers[selectedProvider] = provider.copy(baseUrl = baseUrl)
         saveProviders(providers)
     }
     

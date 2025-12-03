@@ -277,19 +277,37 @@ object ProviderAdapter {
                 Pair(url, headers)
             }
             ApiProviderType.CUSTOM -> {
-                // Custom provider - check if it's Ollama
-                if (apiKey.contains("localhost") || apiKey.contains("127.0.0.1") || apiKey.contains("ollama") || apiKey.contains(":11434")) {
-                    // Ollama format: http://localhost:11434/api/chat
-                    val baseUrl = when {
-                        apiKey.startsWith("http") -> apiKey.split("/api").first()
-                        apiKey.contains(":11434") -> "http://$apiKey"
-                        else -> "http://localhost:11434"
+                // Custom provider - use baseUrl from ApiProviderManager
+                val baseUrl = com.qali.aterm.api.ApiProviderManager.getCurrentBaseUrl()
+                if (baseUrl.isNotEmpty()) {
+                    // Use configured base URL
+                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434")) {
+                        // Ollama format: append /api/chat if not already present
+                        if (baseUrl.endsWith("/api/chat")) {
+                            baseUrl
+                        } else {
+                            val cleanBaseUrl = baseUrl.trimEnd('/')
+                            "$cleanBaseUrl/api/chat"
+                        }
+                    } else {
+                        // Generic custom API - use baseUrl as-is (should be full endpoint URL)
+                        baseUrl
                     }
-                    val url = "$baseUrl/api/chat"
                     Pair(url, emptyMap())
                 } else {
-                    // Generic custom API - assume it's a full URL and Gemini-compatible format
-                    Pair(apiKey, emptyMap())
+                    // Fallback: check if apiKey contains URL (for backward compatibility)
+                    if (apiKey.contains("localhost") || apiKey.contains("127.0.0.1") || apiKey.contains("ollama") || apiKey.contains(":11434")) {
+                        val fallbackBaseUrl = when {
+                            apiKey.startsWith("http") -> apiKey.split("/api").first()
+                            apiKey.contains(":11434") -> "http://$apiKey"
+                            else -> "http://localhost:11434"
+                        }
+                        val url = "$fallbackBaseUrl/api/chat"
+                        Pair(url, emptyMap())
+                    } else {
+                        // Generic custom API - assume it's a full URL and Gemini-compatible format
+                        Pair(apiKey, emptyMap())
+                    }
                 }
             }
             else -> {

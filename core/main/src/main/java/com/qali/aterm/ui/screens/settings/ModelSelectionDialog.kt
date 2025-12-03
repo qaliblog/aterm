@@ -18,14 +18,18 @@ import com.qali.aterm.api.ApiProviderType
 fun ModelSelectionDialog(
     providerType: ApiProviderType,
     currentModel: String,
+    currentBaseUrl: String = "",
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (String) -> Unit,
+    onBaseUrlSave: ((String) -> Unit)? = null
 ) {
     var selectedModel by remember { mutableStateOf(currentModel) }
     var customModel by remember { mutableStateOf("") }
     var showCustomInput by remember { mutableStateOf(false) }
+    var baseUrl by remember { mutableStateOf(currentBaseUrl) }
     
     val suggestedModels = getSuggestedModels(providerType)
+    val isCustomProvider = providerType == ApiProviderType.CUSTOM
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -82,15 +86,32 @@ fun ModelSelectionDialog(
                     }
                 }
                 
-                if (showCustomInput) {
+                if (showCustomInput || isCustomProvider) {
                     OutlinedTextField(
-                        value = customModel,
+                        value = if (isCustomProvider) selectedModel else customModel,
                         onValueChange = {
-                            customModel = it
-                            selectedModel = it
+                            if (isCustomProvider) {
+                                selectedModel = it
+                            } else {
+                                customModel = it
+                                selectedModel = it
+                            }
                         },
                         label = { Text("Model Name") },
                         placeholder = { Text("e.g., gemini-2.5-pro") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                
+                // Base URL field for custom provider
+                if (isCustomProvider) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = { baseUrl = it },
+                        label = { Text("Base URL") },
+                        placeholder = { Text("e.g., https://api.example.com/v1") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -102,6 +123,7 @@ fun ModelSelectionDialog(
                 onClick = {
                     if (selectedModel.isNotBlank()) {
                         onSave(selectedModel)
+                        onBaseUrlSave?.invoke(baseUrl)
                     }
                 },
                 enabled = selectedModel.isNotBlank()

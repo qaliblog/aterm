@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import android.util.Log
 import java.io.File
 
@@ -24,11 +25,6 @@ class CliBasedAgentClient(
 ) {
     private val executionEngine = PpeExecutionEngine(toolRegistry, workspaceRoot, ollamaUrl, ollamaModel)
     private val apiClient = PpeApiClient(toolRegistry, ollamaUrl, ollamaModel)
-    private val processAnalyzer = ProcessDataAnalyzer(
-        workspaceRoot = workspaceRoot,
-        apiClient = apiClient,
-        tasksPerAnalysis = 1
-    )
     
     /**
      * Default script path - can be overridden
@@ -160,9 +156,18 @@ class CliBasedAgentClient(
                 }
             )
             
-            // Close channel and wait for all events to be emitted
+            // Close channel and wait for all events to be emitted (with timeout)
             eventChannel.close()
-            emitJob.join()
+            
+            // Wait for emit job with timeout to prevent infinite hanging
+            try {
+                withTimeout(60000L) { // 60 second timeout for emit job
+                    emitJob.join()
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.w("CliBasedAgentClient", "Emit job timeout - forcing completion")
+                emitJob.cancel()
+            }
             
             val now = System.currentTimeMillis()
             val totalTime = now - startTime
@@ -171,6 +176,7 @@ class CliBasedAgentClient(
             Log.d("CliBasedAgentClient", "Execution result received (success: ${result.success}, total time: ${totalTime}ms, time since last event: ${timeSinceLastEvent}ms)")
             Log.d("CliBasedAgentClient", "Event summary - Total: $eventCount, Chunks: $chunkCount, ToolCalls: $toolCallCount, ToolResults: $toolResultCount")
             
+            // Always emit Done event to ensure stream collection completes
             if (result.success) {
                 // Emit final result if any
                 if (result.finalResult.isNotEmpty()) {
@@ -186,20 +192,13 @@ class CliBasedAgentClient(
                 val errorMsg = result.error ?: "Script execution failed"
                 Log.e("CliBasedAgentClient", "Script execution failed: $errorMsg")
                 emit(AgentEvent.Error(errorMsg))
+                // Still emit Done after error to ensure stream completes
+                emit(AgentEvent.Done)
             }
             
-            Log.d("CliBasedAgentClient", "Script execution completed successfully (total time: ${totalTime}ms)")
+            Log.d("CliBasedAgentClient", "Script execution completed (total time: ${totalTime}ms)")
             
-            // Track task for process analysis (every 7 tasks)
-            try {
-                processAnalyzer.trackTask(
-                    sessionId = sessionId,
-                    messages = null, // Will load from history
-                    onChunk = onChunk
-                )
-            } catch (e: Exception) {
-                Log.w("CliBasedAgentClient", "Failed to track task for analysis: ${e.message}")
-            }
+            // Process analyzer disabled - removed auto-debug feature
             
         } catch (e: kotlinx.coroutines.CancellationException) {
             val totalTime = System.currentTimeMillis() - startTime

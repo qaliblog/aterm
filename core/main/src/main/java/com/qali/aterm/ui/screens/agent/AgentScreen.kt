@@ -2212,6 +2212,8 @@ fun AgentScreen(
                                                 if (timeSinceStart > timeoutMs) {
                                                     android.util.Log.e("AgentScreen", "TIMEOUT: Agent execution exceeded ${timeoutMs}ms (events: ${execState.eventCount}, last event: ${timeSinceLastEvent}ms ago)")
                                                     android.util.Log.e("AgentScreen", "Timeout details - Chunks: ${execState.chunkCount}, ToolCalls: ${execState.toolCallCount}, ToolResults: ${execState.toolResultCount}")
+                                                    // Cancel the stream collection to break out of the stuck state
+                                                    currentAgentJob?.cancel()
                                                     break
                                                 }
                                                 

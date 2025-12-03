@@ -58,6 +58,7 @@ fun ApiProviderSettings() {
         // Model Selection
         PreferenceGroup(heading = "Model Configuration") {
                 var currentModel by remember { mutableStateOf(ApiProviderManager.getCurrentModel()) }
+                var currentBaseUrl by remember { mutableStateOf(ApiProviderManager.getCurrentBaseUrl()) }
                 var showModelDialog by remember { mutableStateOf(false) }
                 
                 SettingsCard(
@@ -69,15 +70,32 @@ fun ApiProviderSettings() {
                     onClick = { showModelDialog = true }
                 )
                 
+                // Show base URL for custom provider
+                if (selectedProvider == ApiProviderType.CUSTOM) {
+                    SettingsCard(
+                        title = { Text("Base URL") },
+                        description = { Text(currentBaseUrl.ifEmpty { "Not set" }) },
+                        endWidget = {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit Base URL")
+                        },
+                        onClick = { showModelDialog = true }
+                    )
+                }
+                
                 if (showModelDialog) {
                     ModelSelectionDialog(
                         providerType = selectedProvider,
                         currentModel = currentModel,
+                        currentBaseUrl = currentBaseUrl,
                         onDismiss = { showModelDialog = false },
                         onSave = { model ->
                             ApiProviderManager.setCurrentModel(model)
                             currentModel = model
                             showModelDialog = false
+                        },
+                        onBaseUrlSave = { baseUrl ->
+                            ApiProviderManager.setCurrentBaseUrl(baseUrl)
+                            currentBaseUrl = baseUrl
                         }
                     )
                 }
