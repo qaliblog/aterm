@@ -23,10 +23,10 @@ fun ModelSelectionDialog(
     onSave: (String) -> Unit,
     onBaseUrlSave: ((String) -> Unit)? = null
 ) {
-    var selectedModel by remember { mutableStateOf(currentModel) }
+    var selectedModel by remember { mutableStateOf(currentModel ?: "") }
     var customModel by remember { mutableStateOf("") }
     var showCustomInput by remember { mutableStateOf(false) }
-    var baseUrl by remember { mutableStateOf(currentBaseUrl) }
+    var baseUrl by remember { mutableStateOf(currentBaseUrl ?: "") }
     
     val suggestedModels = getSuggestedModels(providerType)
     val isCustomProvider = providerType == ApiProviderType.CUSTOM
@@ -88,13 +88,14 @@ fun ModelSelectionDialog(
                 
                 if (showCustomInput || isCustomProvider) {
                     OutlinedTextField(
-                        value = if (isCustomProvider) selectedModel else customModel,
+                        value = if (isCustomProvider) (selectedModel ?: "") else (customModel ?: ""),
                         onValueChange = {
+                            val safeValue = it ?: ""
                             if (isCustomProvider) {
-                                selectedModel = it
+                                selectedModel = safeValue
                             } else {
-                                customModel = it
-                                selectedModel = it
+                                customModel = safeValue
+                                selectedModel = safeValue
                             }
                         },
                         label = { Text("Model Name") },
@@ -108,8 +109,8 @@ fun ModelSelectionDialog(
                 if (isCustomProvider) {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
-                        value = baseUrl,
-                        onValueChange = { baseUrl = it },
+                        value = baseUrl ?: "",
+                        onValueChange = { baseUrl = it ?: "" },
                         label = { Text("Base URL") },
                         placeholder = { Text("e.g., https://api.example.com/v1") },
                         modifier = Modifier.fillMaxWidth(),
@@ -121,12 +122,14 @@ fun ModelSelectionDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (selectedModel.isNotBlank()) {
-                        onSave(selectedModel)
-                        onBaseUrlSave?.invoke(baseUrl)
+                    val safeModel = selectedModel ?: ""
+                    val safeBaseUrl = baseUrl ?: ""
+                    if (safeModel.isNotBlank()) {
+                        onSave(safeModel)
+                        onBaseUrlSave?.invoke(safeBaseUrl)
                     }
                 },
-                enabled = selectedModel.isNotBlank()
+                enabled = (selectedModel ?: "").isNotBlank()
             ) {
                 Text("Save")
             }

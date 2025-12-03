@@ -45,22 +45,35 @@ data class ProviderConfig(
         }
         
         /**
-         * Adjust parameters based on prompt length
+         * Adjust parameters based on prompt length and type (creative vs deterministic)
          * Returns adjusted config if user hasn't overridden, otherwise returns original
          */
         fun adjustForPromptLength(
             config: ProviderConfig,
-            promptLength: Int
+            promptLength: Int,
+            isCreative: Boolean = false
         ): ProviderConfig {
             // If user manually overrode, don't auto-adjust
             if (config.userOverridden) {
                 return config
             }
             
-            val (temp, tokens) = when {
-                promptLength < 200 -> Pair(0.3f, 1024)
-                promptLength <= 1000 -> Pair(0.7f, 2048)
-                else -> Pair(0.9f, 4096)
+            // Determine temperature based on prompt type and length
+            val baseTemp = when {
+                isCreative -> 0.8f // Higher for creative tasks
+                promptLength < 200 -> 0.2f // Lower for short, focused prompts
+                promptLength <= 1000 -> 0.5f // Medium for normal prompts
+                else -> 0.7f // Higher for long, complex prompts
+            }
+            
+            // Clamp temperature between 0.2 and 1.0
+            val temp = baseTemp.coerceIn(0.2f, 1.0f)
+            
+            // Determine max tokens based on prompt length
+            val tokens = when {
+                promptLength < 200 -> 1024
+                promptLength <= 1000 -> 2048
+                else -> 4096
             }
             
             return config.copy(

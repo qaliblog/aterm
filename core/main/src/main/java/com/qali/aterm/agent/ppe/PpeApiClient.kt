@@ -81,9 +81,21 @@ class PpeApiClient(
                     }
                 }
                 
-                // Get current config and adjust based on prompt length
+                // Detect if prompt is creative (contains creative keywords) vs deterministic
+                val promptText = messages.joinToString(" ") { content ->
+                    content.parts.joinToString(" ") { part ->
+                        when (part) {
+                            is Part.TextPart -> part.text ?: ""
+                            else -> ""
+                        }
+                    }
+                }.lowercase()
+                
+                val isCreative = promptText.contains(Regex("""\b(create|write|generate|imagine|design|story|poem|creative|artistic|novel|unique|original)\b"""))
+                
+                // Get current config and adjust based on prompt length and type
                 val currentConfig = ApiProviderManager.getCurrentConfig()
-                val adjustedConfig = ProviderConfig.adjustForPromptLength(currentConfig, promptLength)
+                val adjustedConfig = ProviderConfig.adjustForPromptLength(currentConfig, promptLength, isCreative)
                 
                 // Use provided parameters or fall back to adjusted config
                 val finalTemperature = (temperature?.toFloat() ?: adjustedConfig.temperature)

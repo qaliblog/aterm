@@ -77,7 +77,10 @@ fun ApiProviderSettings() {
                 
                 SettingsCard(
                     title = { Text("Model") },
-                    description = { Text((currentModel.takeIf { it.isNotBlank() } ?: "Not set")) },
+                    description = { 
+                        val modelText = (currentModel ?: "").takeIf { it.isNotBlank() } ?: "Not set"
+                        Text(modelText)
+                    },
                     endWidget = {
                         Icon(Icons.Default.Edit, contentDescription = "Edit Model")
                     },
@@ -88,7 +91,10 @@ fun ApiProviderSettings() {
                 if (selectedProvider == ApiProviderType.CUSTOM) {
                     SettingsCard(
                         title = { Text("Base URL") },
-                        description = { Text((currentBaseUrl.takeIf { it.isNotBlank() } ?: "Not set")) },
+                        description = { 
+                            val urlText = (currentBaseUrl ?: "").takeIf { it.isNotBlank() } ?: "Not set"
+                            Text(urlText)
+                        },
                         endWidget = {
                             Icon(Icons.Default.Edit, contentDescription = "Edit Base URL")
                         },
@@ -111,12 +117,13 @@ fun ApiProviderSettings() {
                 if (showModelDialog) {
                     ModelSelectionDialog(
                         providerType = selectedProvider,
-                        currentModel = currentModel,
-                        currentBaseUrl = currentBaseUrl,
+                        currentModel = currentModel ?: "",
+                        currentBaseUrl = currentBaseUrl ?: "",
                         onDismiss = { showModelDialog = false },
                         onSave = { model ->
-                            ApiProviderManager.setCurrentModel(model)
-                            currentModel = model
+                            val safeModel = model ?: ""
+                            ApiProviderManager.setCurrentModel(safeModel)
+                            currentModel = safeModel
                             // Update config with model defaults
                             currentTemperature = ApiProviderManager.getCurrentTemperature()
                             currentMaxTokens = ApiProviderManager.getCurrentMaxTokens()
@@ -124,8 +131,9 @@ fun ApiProviderSettings() {
                             showModelDialog = false
                         },
                         onBaseUrlSave = { baseUrl ->
-                            ApiProviderManager.setCurrentBaseUrl(baseUrl)
-                            currentBaseUrl = baseUrl
+                            val safeBaseUrl = baseUrl ?: ""
+                            ApiProviderManager.setCurrentBaseUrl(safeBaseUrl)
+                            currentBaseUrl = safeBaseUrl
                         }
                     )
                 }
@@ -164,8 +172,9 @@ fun ApiProviderSettings() {
                     apiKeys.forEach { key ->
                         SettingsCard(
                             title = { 
+                                val labelText = (key.label ?: "").ifEmpty { "API Key ${(key.id ?: "").take(8)}" }
                                 Text(
-                                    key.label.ifEmpty { "API Key ${key.id.take(8)}" },
+                                    labelText,
                                     fontWeight = if (key.isActive) FontWeight.Normal else FontWeight.Light
                                 )
                             },
@@ -296,11 +305,13 @@ fun AddApiKeyDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (keyText.isNotBlank()) {
-                        onSave(ApiKey(key = keyText, label = labelText))
+                    val safeKeyText = keyText ?: ""
+                    val safeLabelText = labelText ?: ""
+                    if (safeKeyText.isNotBlank()) {
+                        onSave(ApiKey(key = safeKeyText, label = safeLabelText))
                     }
                 },
-                enabled = keyText.isNotBlank()
+                enabled = (keyText ?: "").isNotBlank()
             ) {
                 Text("Add")
             }
@@ -320,8 +331,8 @@ fun EditApiKeyDialog(
     onDismiss: () -> Unit,
     onSave: (ApiKey) -> Unit
 ) {
-    var keyText by remember { mutableStateOf(apiKey.key) }
-    var labelText by remember { mutableStateOf(apiKey.label) }
+    var keyText by remember { mutableStateOf(apiKey.key ?: "") }
+    var labelText by remember { mutableStateOf(apiKey.label ?: "") }
     var isActive by remember { mutableStateOf(apiKey.isActive) }
     
     AlertDialog(
@@ -361,9 +372,11 @@ fun EditApiKeyDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onSave(apiKey.copy(key = keyText, label = labelText, isActive = isActive))
+                    val safeKeyText = keyText ?: ""
+                    val safeLabelText = labelText ?: ""
+                    onSave(apiKey.copy(key = safeKeyText, label = safeLabelText, isActive = isActive))
                 },
-                enabled = keyText.isNotBlank()
+                enabled = (keyText ?: "").isNotBlank()
             ) {
                 Text("Save")
             }

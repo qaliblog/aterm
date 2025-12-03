@@ -78,10 +78,15 @@ object ApiProviderManager {
         )
     }
     
-    // Get model for current provider
+    // Get model for current provider - always returns non-null string
     fun getCurrentModel(): String {
         val provider = getCurrentProvider()
-        return (provider.model.takeIf { it.isNotBlank() } ?: getDefaultModel(selectedProvider))
+        val model = provider.model ?: ""
+        return if (model.isNotBlank()) {
+            model
+        } else {
+            getDefaultModel(selectedProvider)
+        }
     }
     
     // Get current config with safe defaults
@@ -150,34 +155,36 @@ object ApiProviderManager {
     // Set model for current provider
     // Automatically updates config with model-specific defaults unless user overrode
     fun setCurrentModel(model: String) {
+        val safeModel = model ?: ""
         val providers = getProviders().toMutableMap()
         val provider = providers.getOrPut(selectedProvider) { ApiProvider(selectedProvider) }
         
         // If user hasn't overridden config, apply model defaults
         val newConfig = if (!provider.config.userOverridden) {
-            ProviderConfig.getModelDefaults(model)
+            ProviderConfig.getModelDefaults(safeModel)
         } else {
             provider.config // Keep user's settings
         }
         
         providers[selectedProvider] = provider.copy(
-            model = model,
+            model = safeModel,
             config = newConfig
         )
         saveProviders(providers)
     }
     
-    // Get base URL for current provider
+    // Get base URL for current provider - always returns non-null string
     fun getCurrentBaseUrl(): String {
         val provider = getCurrentProvider()
-        return provider.baseUrl
+        return provider.baseUrl ?: ""
     }
     
     // Set base URL for current provider
     fun setCurrentBaseUrl(baseUrl: String) {
+        val safeBaseUrl = baseUrl ?: ""
         val providers = getProviders().toMutableMap()
         val provider = providers.getOrPut(selectedProvider) { ApiProvider(selectedProvider) }
-        providers[selectedProvider] = provider.copy(baseUrl = baseUrl)
+        providers[selectedProvider] = provider.copy(baseUrl = safeBaseUrl)
         saveProviders(providers)
     }
     
@@ -241,7 +248,7 @@ object ApiProviderManager {
         
         val key = activeKeys[currentKeyIndex % activeKeys.size]
         currentKeyIndex = (currentKeyIndex + 1) % activeKeys.size
-        return key.key
+        return key.key ?: null
     }
     
     // Reset to first key (call this when starting a new request cycle)
