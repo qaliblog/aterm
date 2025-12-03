@@ -1807,8 +1807,10 @@ fun AgentScreen(
         }
         
         if (loadedHistory.isNotEmpty()) {
-            messages = loadedHistory
-            messageHistory = loadedHistory
+            // Mark all loaded messages as viewed (they're from history)
+            val viewedHistory = loadedHistory.map { it.copy(viewed = true) }
+            messages = viewedHistory
+            messageHistory = viewedHistory
             // Restore history to client for context in API calls
             if (aiClient is AgentClient) {
                 aiClient.restoreHistoryFromMessages(loadedHistory)
@@ -2083,12 +2085,23 @@ fun AgentScreen(
                         message.fileDiff?.let { diff ->
                             key("file-diff-${index}-${diff.filePath}") {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                CodeDiffCard(
-                                    fileDiff = diff,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 4.dp)
-                                )
+                                // Show minimal diff card for chat history (viewed messages)
+                                // Show full diff card for new messages (not yet viewed)
+                                if (message.viewed) {
+                                    com.qali.aterm.ui.screens.agent.components.MinimalFileDiffCard(
+                                        fileDiff = diff,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 4.dp)
+                                    )
+                                } else {
+                                    CodeDiffCard(
+                                        fileDiff = diff,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 4.dp)
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(4.dp))
                             }
                         }
@@ -2505,9 +2518,24 @@ fun AgentScreen(
                                                                         isUser = false,
                                                                         timestamp = System.currentTimeMillis(),
                                                                         fileDiff = fileDiff,
-                                                                        viewed = false // Don't mark as viewed so diff box is visible
+                                                                        viewed = false // Don't mark as viewed so full diff box is visible initially
                                                                     )
                                                                     messages = messages + resultMessage
+                                                                    
+                                                                    // Mark message as viewed after a delay (so it shows minimal card in history)
+                                                                    scope.launch(Dispatchers.Main) {
+                                                                        kotlinx.coroutines.delay(5000) // 5 seconds
+                                                                        val messageIndex = messages.indexOfLast { it.fileDiff?.filePath == fileDiff?.filePath && !it.viewed }
+                                                                        if (messageIndex >= 0 && messageIndex < messages.size) {
+                                                                            messages = messages.toMutableList().apply {
+                                                                                set(messageIndex, messages[messageIndex].copy(viewed = true))
+                                                                            }
+                                                                            // Save updated history
+                                                                            scope.launch(Dispatchers.IO) {
+                                                                                HistoryPersistenceService.saveHistory(sessionId, messages)
+                                                                            }
+                                                                        }
+                                                                    }
                                                                     
                                                                     // Auto-save immediately when file is written
                                                                     if (fileDiff != null) {
