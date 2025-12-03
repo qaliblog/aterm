@@ -2088,8 +2088,15 @@ fun AgentScreen(
                                 // Show minimal diff card for chat history (viewed messages)
                                 // Show full diff card for new messages (not yet viewed)
                                 if (message.viewed) {
+                                    // Convert local FileDiff to models.FileDiff
+                                    val modelsFileDiff = com.qali.aterm.ui.screens.agent.models.FileDiff(
+                                        filePath = diff.filePath,
+                                        oldContent = diff.oldContent,
+                                        newContent = diff.newContent,
+                                        isNewFile = diff.isNewFile
+                                    )
                                     com.qali.aterm.ui.screens.agent.components.MinimalFileDiffCard(
-                                        fileDiff = diff,
+                                        fileDiff = modelsFileDiff,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(horizontal = 4.dp)

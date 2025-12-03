@@ -6,6 +6,9 @@ import com.qali.aterm.agent.tools.ToolRegistry
 import com.qali.aterm.agent.ppe.models.PpeScript
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import android.util.Log
 import java.io.File
 
@@ -100,7 +103,17 @@ class CliBasedAgentClient(
             
             Log.d("CliBasedAgentClient", "Starting script execution (non-streaming)")
             
-            // Execute script directly (non-streaming) - emit events immediately as they occur
+            // Use Channel to queue events from non-suspend callbacks and emit them immediately
+            val eventChannel = Channel<AgentEvent>(Channel.UNLIMITED)
+            
+            // Launch coroutine to consume events from channel and emit them
+            val emitJob = launch {
+                for (event in eventChannel) {
+                    emit(event)
+                }
+            }
+            
+            // Execute script directly (non-streaming) - send events to channel immediately
             val result = executionEngine.executeScript(
                 script = script,
                 inputParams = inputParams,
@@ -111,8 +124,8 @@ class CliBasedAgentClient(
                     eventCount++
                     Log.d("CliBasedAgentClient", "Chunk received (count: $chunkCount, size: ${chunk.length}, time since start: ${now - startTime}ms)")
                     onChunk(chunk)
-                    // Emit chunk event immediately
-                    emit(AgentEvent.Chunk(chunk))
+                    // Send chunk event to channel (non-blocking)
+                    eventChannel.trySend(AgentEvent.Chunk(chunk))
                 },
                 onToolCall = { functionCall ->
                     val now = System.currentTimeMillis()
@@ -121,8 +134,8 @@ class CliBasedAgentClient(
                     eventCount++
                     Log.d("CliBasedAgentClient", "Tool call received (count: $toolCallCount, tool: ${functionCall.name}, time since start: ${now - startTime}ms)")
                     onToolCall(functionCall)
-                    // Emit tool call event immediately
-                    emit(AgentEvent.ToolCall(functionCall))
+                    // Send tool call event to channel (non-blocking)
+                    eventChannel.trySend(AgentEvent.ToolCall(functionCall))
                 },
                 onToolResult = { toolName, args ->
                     val now = System.currentTimeMillis()
@@ -135,14 +148,18 @@ class CliBasedAgentClient(
                     // Get tool result from execution engine (FIFO queue)
                     val toolResult: com.qali.aterm.agent.tools.ToolResult? = executionEngine.getNextToolResult(toolName)
                     if (toolResult != null) {
-                        Log.d("CliBasedAgentClient", "Emitting tool result event immediately for: $toolName")
-                        // Emit tool result event immediately - AgentScreen will extract file diffs from this
-                        emit(AgentEvent.ToolResult(toolName, toolResult))
+                        Log.d("CliBasedAgentClient", "Sending tool result event to channel for: $toolName")
+                        // Send tool result event to channel (non-blocking)
+                        eventChannel.trySend(AgentEvent.ToolResult(toolName, toolResult))
                     } else {
                         Log.w("CliBasedAgentClient", "Tool result not found in queue for: $toolName")
                     }
                 }
             )
+            
+            // Close channel and wait for all events to be emitted
+            eventChannel.close()
+            emitJob.join()
             
             val now = System.currentTimeMillis()
             val totalTime = now - startTime
