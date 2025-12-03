@@ -3097,20 +3097,34 @@ JSON Blueprint:
                 appendLine("")
             }
             
-            // Show related files and their exports
+            // Show related files and their exports from blueprint
             if (relatedFiles.isNotEmpty()) {
                 appendLine("Related Files (from blueprint dependencies):")
                 relatedFiles.forEach { relatedFile ->
-                    val relatedExports = relatedFile.exports
+                    // Get exports from blueprint (source of truth)
+                    val blueprintFile = blueprint.files.find { it.path == relatedFile.path }
+                    val blueprintExports = blueprintFile?.exports ?: emptyList()
+                    val blueprintImports = blueprintFile?.imports ?: emptyList()
+                    val blueprintPackageDeps = blueprintFile?.packageDependencies ?: emptyList()
+                    
                     appendLine("  - ${relatedFile.path} (${relatedFile.type})")
-                    if (relatedExports.isNotEmpty()) {
-                        appendLine("    Available exports: ${relatedExports.joinToString(", ")}")
+                    if (blueprintExports.isNotEmpty()) {
+                        appendLine("    Blueprint exports: ${blueprintExports.joinToString(", ")}")
+                    }
+                    if (blueprintImports.isNotEmpty()) {
+                        appendLine("    Blueprint imports: ${blueprintImports.joinToString(", ")}")
+                    }
+                    if (blueprintPackageDeps.isNotEmpty()) {
+                        appendLine("    Blueprint package deps: ${blueprintPackageDeps.joinToString(", ")}")
                     }
                 }
                 appendLine("")
+                appendLine("IMPORTANT: Use ONLY the exports listed above from related files (from blueprint).")
+                appendLine("Do NOT import anything that is NOT in the blueprint exports list.")
+                appendLine("")
                 
                 if (existingFilesMetadata.isNotEmpty()) {
-                    appendLine("Available imports/exports from related files (already created):")
+                    appendLine("Already created files (for reference - but use blueprint as source of truth):")
                     existingFilesMetadata.forEach { metadata ->
                         appendLine(metadata)
                     }
