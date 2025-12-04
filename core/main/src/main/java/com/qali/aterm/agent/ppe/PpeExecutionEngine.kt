@@ -2492,10 +2492,44 @@ class PpeExecutionEngine(
                 
                 // Avoid using 'continue' inside inline lambda (requires newer language version)
                 var fileCode = fileCodeResult.getOrNull()
+                var retryCount = 0
+                val maxFileRetries = 3
+                
+                // Retry file generation if it fails (for timeout, network errors, etc.)
+                while (fileCode == null && retryCount < maxFileRetries) {
+                    val error = fileCodeResult.exceptionOrNull()
+                    val errorMsg = error?.message ?: "unknown error"
+                    val isRetryable = error != null && isRetryableException(error as? Exception ?: Exception(errorMsg))
+                    
+                    if (isRetryable && retryCount < maxFileRetries - 1) {
+                        retryCount++
+                        onChunk("↻ File generation failed for ${file.path}. Retrying (attempt $retryCount/$maxFileRetries)...\n")
+                        Log.w("PpeExecutionEngine", "File generation failed for ${file.path}, retrying (attempt $retryCount/$maxFileRetries): $errorMsg")
+                        
+                        // Wait before retry (exponential backoff)
+                        delay(1000L * retryCount)
+                        
+                        // Retry file code generation
+                        fileCodeResult = generateFileCode(
+                            file,
+                            filteredBlueprint,
+                            userMessage,
+                            updatedChatHistory,
+                            script
+                        )
+                        fileCode = fileCodeResult.getOrNull()
+                    } else {
+                        // Not retryable or max retries reached - check if it's empty code or other error
+                        break
+                    }
+                }
+                
+                // If still null after retries, check if it's empty code or other error
                 if (fileCode == null) {
                     val errorMsg = fileCodeResult.exceptionOrNull()?.message ?: "unknown error"
                     // If the model returned empty code, retry with a more direct prompt
                     if (errorMsg.contains("Generated code is empty")) {
+                        // If the model returned empty code, retry with a more direct prompt
                         onChunk("↻ Generated code was empty for ${file.path}. Retrying with a more direct prompt...\n")
                         Log.w("PpeExecutionEngine", "Empty code for ${file.path}, retrying with direct prompt")
                         
@@ -2604,7 +2638,9 @@ Return ONLY the raw code content. No markdown, no explanations, no code blocks. 
                             continue
                         }
                     } else {
+                        // Not empty code error - log and continue
                         onChunk("✗ Failed to generate code for ${file.path}: $errorMsg\n")
+                        Log.e("PpeExecutionEngine", "File generation failed for ${file.path}: $errorMsg")
                         continue
                     }
                 }

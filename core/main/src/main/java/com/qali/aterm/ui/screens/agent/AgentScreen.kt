@@ -2511,7 +2511,14 @@ fun AgentScreen(
                                                                     args
                                                                 } else {
                                                                     android.util.Log.w("AgentScreen", "No matching tool call found in queue for ${event.toolName} (queue size: ${toolCallQueue.size})")
-                                                                    null
+                                                                    // Try to extract file_path from tool result as fallback
+                                                                    val fallbackFilePath = extractFilePathFromToolResult(event.result)
+                                                                    if (fallbackFilePath != null && (event.toolName == "write_file" || event.toolName == "edit")) {
+                                                                        android.util.Log.d("AgentScreen", "Using fallback args with file_path: $fallbackFilePath")
+                                                                        mapOf("file_path" to fallbackFilePath)
+                                                                    } else {
+                                                                        null
+                                                                    }
                                                                 }
                                                                 
                                                                 var fileDiff = parseFileDiffFromToolResult(
@@ -2539,18 +2546,25 @@ fun AgentScreen(
                                                                     if (fallbackFilePath != null) {
                                                                         try {
                                                                             val file = File(workspaceRoot, fallbackFilePath)
-                                                                            val newContent = if (file.exists()) file.readText() else ""
-                                                                            val oldContent = "" // Assume new file if we can't determine
+                                                                            val newContent = if (file.exists()) {
+                                                                                file.readText()
+                                                                            } else {
+                                                                                // Try to get content from toolArgs if file doesn't exist yet
+                                                                                toolArgs?.get("content") as? String ?: ""
+                                                                            }
+                                                                            val oldContent = toolArgs?.get("_old_content") as? String ?: "" // Use stored old content if available
                                                                             fileDiff = FileDiff(
                                                                                 filePath = fallbackFilePath,
                                                                                 oldContent = oldContent,
                                                                                 newContent = newContent,
-                                                                                isNewFile = !file.exists() || oldContent.isEmpty()
+                                                                                isNewFile = oldContent.isEmpty() && !file.exists()
                                                                             )
-                                                                            android.util.Log.d("AgentScreen", "Created FileDiff via fallback for $fallbackFilePath")
+                                                                            android.util.Log.d("AgentScreen", "Created FileDiff via fallback for $fallbackFilePath - isNewFile: ${fileDiff.isNewFile}, oldContent: ${oldContent.length}, newContent: ${newContent.length}")
                                                                         } catch (e: Exception) {
                                                                             android.util.Log.w("AgentScreen", "Fallback file diff creation failed", e)
                                                                         }
+                                                                    } else {
+                                                                        android.util.Log.w("AgentScreen", "Could not extract file path for write_file fallback - llmContent: ${event.result.llmContent.take(200)}, returnDisplay: ${event.result.returnDisplay}")
                                                                     }
                                                                 }
                                                                 
