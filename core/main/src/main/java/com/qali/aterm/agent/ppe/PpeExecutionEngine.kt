@@ -2529,7 +2529,6 @@ class PpeExecutionEngine(
                     val errorMsg = fileCodeResult.exceptionOrNull()?.message ?: "unknown error"
                     // If the model returned empty code, retry with a more direct prompt
                     if (errorMsg.contains("Generated code is empty")) {
-                        // If the model returned empty code, retry with a more direct prompt
                         onChunk("↻ Generated code was empty for ${file.path}. Retrying with a more direct prompt...\n")
                         Log.w("PpeExecutionEngine", "Empty code for ${file.path}, retrying with direct prompt")
                         
