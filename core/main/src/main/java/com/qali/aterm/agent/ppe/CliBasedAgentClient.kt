@@ -112,49 +112,69 @@ class CliBasedAgentClient(
                 }
             }
             
-            // Execute script directly (non-streaming) - send events to channel immediately
-            val result = executionEngine.executeScript(
-                script = script,
-                inputParams = inputParams,
-                onChunk = { chunk ->
-                    val now = System.currentTimeMillis()
-                    lastEventTime = now
-                    chunkCount++
-                    eventCount++
-                    Log.d("CliBasedAgentClient", "Chunk received (count: $chunkCount, size: ${chunk.length}, time since start: ${now - startTime}ms)")
-                    onChunk(chunk)
-                    // Send chunk event to channel (non-blocking)
-                    eventChannel.trySend(AgentEvent.Chunk(chunk))
-                },
-                onToolCall = { functionCall ->
-                    val now = System.currentTimeMillis()
-                    lastEventTime = now
-                    toolCallCount++
-                    eventCount++
-                    Log.d("CliBasedAgentClient", "Tool call received (count: $toolCallCount, tool: ${functionCall.name}, time since start: ${now - startTime}ms)")
-                    onToolCall(functionCall)
-                    // Send tool call event to channel (non-blocking)
-                    eventChannel.trySend(AgentEvent.ToolCall(functionCall))
-                },
-                onToolResult = { toolName, args ->
-                    val now = System.currentTimeMillis()
-                    lastEventTime = now
-                    toolResultCount++
-                    eventCount++
-                    Log.d("CliBasedAgentClient", "Tool result callback (count: $toolResultCount, tool: $toolName, time since start: ${now - startTime}ms)")
-                    onToolResult(toolName, args)
-                    
-                    // Get tool result from execution engine (FIFO queue)
-                    val toolResult: com.qali.aterm.agent.tools.ToolResult? = executionEngine.getNextToolResult(toolName)
-                    if (toolResult != null) {
-                        Log.d("CliBasedAgentClient", "Sending tool result event to channel for: $toolName")
-                        // Send tool result event to channel (non-blocking)
-                        eventChannel.trySend(AgentEvent.ToolResult(toolName, toolResult))
-                    } else {
-                        Log.w("CliBasedAgentClient", "Tool result not found in queue for: $toolName")
-                    }
+            // Execute script with overall timeout to prevent infinite hanging
+            // Use 2 minutes total timeout (120 seconds) - should be enough for most tasks
+            // This wraps the entire execution to catch any hanging API calls
+            val result = try {
+                withTimeout(120_000L) { // 2 minutes total timeout
+                    executionEngine.executeScript(
+                        script = script,
+                        inputParams = inputParams,
+                        onChunk = { chunk ->
+                            val now = System.currentTimeMillis()
+                            lastEventTime = now
+                            chunkCount++
+                            eventCount++
+                            Log.d("CliBasedAgentClient", "Chunk received (count: $chunkCount, size: ${chunk.length}, time since start: ${now - startTime}ms)")
+                            onChunk(chunk)
+                            // Send chunk event to channel (non-blocking)
+                            eventChannel.trySend(AgentEvent.Chunk(chunk))
+                        },
+                        onToolCall = { functionCall ->
+                            val now = System.currentTimeMillis()
+                            lastEventTime = now
+                            toolCallCount++
+                            eventCount++
+                            Log.d("CliBasedAgentClient", "Tool call received (count: $toolCallCount, tool: ${functionCall.name}, time since start: ${now - startTime}ms)")
+                            onToolCall(functionCall)
+                            // Send tool call event to channel (non-blocking)
+                            eventChannel.trySend(AgentEvent.ToolCall(functionCall))
+                        },
+                        onToolResult = { toolName, args ->
+                            val now = System.currentTimeMillis()
+                            lastEventTime = now
+                            toolResultCount++
+                            eventCount++
+                            Log.d("CliBasedAgentClient", "Tool result callback (count: $toolResultCount, tool: $toolName, time since start: ${now - startTime}ms)")
+                            onToolResult(toolName, args)
+                            
+                            // Get tool result from execution engine (FIFO queue)
+                            val toolResult: com.qali.aterm.agent.tools.ToolResult? = executionEngine.getNextToolResult(toolName)
+                            if (toolResult != null) {
+                                Log.d("CliBasedAgentClient", "Sending tool result event to channel for: $toolName")
+                                // Send tool result event to channel (non-blocking)
+                                eventChannel.trySend(AgentEvent.ToolResult(toolName, toolResult))
+                            } else {
+                                Log.w("CliBasedAgentClient", "Tool result not found in queue for: $toolName")
+                            }
+                        }
+                    )
                 }
-            )
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                val totalTime = System.currentTimeMillis() - startTime
+                Log.e("CliBasedAgentClient", "Script execution timed out after ${totalTime}ms (120s limit)")
+                Log.e("CliBasedAgentClient", "Timeout details - Events: $eventCount, Chunks: $chunkCount, ToolCalls: $toolCallCount, ToolResults: $toolResultCount")
+                
+                // Emit timeout error to channel
+                eventChannel.trySend(AgentEvent.Error("Script execution timed out after 2 minutes. The agent may be stuck waiting for an API response. Please check your network connection and API configuration."))
+                
+                // Return failure result
+                com.qali.aterm.agent.ppe.models.PpeExecutionResult(
+                    success = false,
+                    finalResult = "",
+                    error = "Script execution timed out after 2 minutes. Please check your network connection and API configuration."
+                )
+            }
             
             // Close channel and wait for all events to be emitted (with timeout)
             eventChannel.close()
