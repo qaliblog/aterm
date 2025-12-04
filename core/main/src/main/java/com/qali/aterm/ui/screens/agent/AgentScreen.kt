@@ -377,8 +377,18 @@ fun parseFileDiffFromToolResult(
             }
             // If _old_content key exists and is empty, it's a new file
             // If _old_content key exists and is non-empty, it's an existing file
-            // If key doesn't exist, assume it's new (fallback)
-            val isNewFile = hasOldContentKey && oldContent.isEmpty()
+            // If key doesn't exist, check file existence to determine if it's new
+            val isNewFile = if (hasOldContentKey) {
+                oldContent.isEmpty() // If key exists, empty means new file
+            } else {
+                // Fallback: check if file exists (if it doesn't exist now, it's new)
+                try {
+                    val file = File(workspaceRoot, filePath)
+                    !file.exists()
+                } catch (e: Exception) {
+                    true // Assume new if we can't check
+                }
+            }
             
             // Try to get new content from toolArgs first (most reliable)
             var newContent = toolArgs?.get("content") as? String
@@ -457,6 +467,14 @@ fun calculateLineDiff(oldContent: String, newContent: String): List<DiffLine> {
     // If both are empty, return empty
     if (oldLines.isEmpty() && newLines.isEmpty()) {
         return emptyList()
+    }
+    
+    // If old is empty but new has content, it's a new file - show all lines as added
+    if (oldLines.isEmpty() && newLines.isNotEmpty()) {
+        newLines.forEachIndexed { index, line ->
+            diffLines.add(DiffLine(line, DiffLineType.ADDED, index + 1))
+        }
+        return diffLines
     }
     
     // If old is empty, all new lines are additions
@@ -852,13 +870,45 @@ fun CodeDiffCard(
             }
             
             // Diff content
+            // Always show the card, even if there are no changes (for new files or identical content)
             if (diffLines.isEmpty()) {
-                Text(
-                    text = "No changes",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(12.dp)
-                )
+                // For new files, show the full content; for unchanged files, show "No changes"
+                if (fileDiff.isNewFile && fileDiff.newContent.isNotEmpty()) {
+                    // Show new file content even if diff is empty
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                    ) {
+                        fileDiff.newContent.lines().forEachIndexed { index, line ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1E4620).copy(alpha = 0.1f))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "+",
+                                    color = Color(0xFF4CAF50),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.width(20.dp)
+                                )
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "No changes",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
             } else {
                 Column(
                     modifier = Modifier
