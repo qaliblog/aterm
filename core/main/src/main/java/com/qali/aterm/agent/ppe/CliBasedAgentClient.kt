@@ -169,9 +169,11 @@ class CliBasedAgentClient(
                 eventChannel.trySend(AgentEvent.Error("Script execution timed out after 2 minutes. The agent may be stuck waiting for an API response. Please check your network connection and API configuration."))
                 
                 // Return failure result
-                com.qali.aterm.agent.ppe.models.PpeExecutionResult(
+                PpeExecutionResult(
                     success = false,
                     finalResult = "",
+                    variables = emptyMap(),
+                    chatHistory = emptyList(),
                     error = "Script execution timed out after 2 minutes. Please check your network connection and API configuration."
                 )
             }
