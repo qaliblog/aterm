@@ -3,6 +3,7 @@ package com.qali.aterm.api
 /**
  * Configuration for LLM provider parameters
  * All fields have safe defaults to prevent null crashes
+ * This class is designed to NEVER be null - all fields have defaults
  */
 data class ProviderConfig(
     val temperature: Float = 0.7f,
@@ -10,6 +11,12 @@ data class ProviderConfig(
     val topP: Float = 1.0f,
     val userOverridden: Boolean = false // Track if user manually set these values
 ) {
+    init {
+        // Ensure all fields are valid (defensive programming)
+        require(temperature >= 0.1f && temperature <= 1.2f) { "Temperature must be between 0.1 and 1.2" }
+        require(maxTokens > 0) { "MaxTokens must be positive" }
+        require(topP >= 0.0f && topP <= 1.0f) { "TopP must be between 0.0 and 1.0" }
+    }
     companion object {
         /**
          * Get model-specific default configuration
@@ -28,6 +35,12 @@ data class ProviderConfig(
                     topP = 1.0f,
                     userOverridden = false
                 )
+                model.contains("gemini-2.0-flash", ignoreCase = true) -> ProviderConfig(
+                    temperature = 0.7f,
+                    maxTokens = 2048,
+                    topP = 1.0f,
+                    userOverridden = false
+                )
                 model.contains("llama3.1", ignoreCase = true) -> ProviderConfig(
                     temperature = 0.7f,
                     maxTokens = 2048,
@@ -40,7 +53,12 @@ data class ProviderConfig(
                     topP = 1.0f,
                     userOverridden = false
                 )
-                else -> ProviderConfig() // Use default values
+                else -> ProviderConfig(
+                    temperature = 0.7f,
+                    maxTokens = 2048,
+                    topP = 1.0f,
+                    userOverridden = false
+                ) // Use explicit default values
             }
         }
         

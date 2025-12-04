@@ -12,6 +12,8 @@ import com.qali.aterm.agent.debug.DebugLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import org.json.JSONObject
 import android.util.Log
 import okhttp3.*
@@ -50,6 +52,13 @@ class PpeApiClient(
         .connectTimeout(PpeConfig.DEFAULT_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(PpeConfig.DEFAULT_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .writeTimeout(PpeConfig.DEFAULT_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .build()
+    
+    // Separate client for Gemini with 20-second timeout to prevent infinite "thinking"
+    private val geminiClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS) // 20 seconds hard timeout for Gemini
+        .writeTimeout(10, TimeUnit.SECONDS)
         .build()
     
     /**
@@ -201,17 +210,42 @@ class PpeApiClient(
                 requestBody.put("generationConfig", generationConfig)
                 
                 // Make API call with retry (non-streaming) - uses existing API cycling
-                val result = ApiProviderManager.makeApiCallWithRetry { apiKey ->
+                // Add hard timeout for Gemini to prevent infinite "thinking"
+                val result = if (providerType == com.qali.aterm.api.ApiProviderType.GOOGLE) {
+                    // Use coroutine timeout for Gemini API calls
                     try {
-                        val response = makeNonStreamingApiCall(apiKey, actualModel, requestBody, finalTemperature.toDouble(), finalTopP.toDouble(), topK, finalMaxTokens)
-                        Result.success(response)
-                    } catch (e: KeysExhaustedException) {
-                        Result.failure(e)
-                    } catch (e: Exception) {
-                        if (ApiProviderManager.isRateLimitError(e)) {
+                        withTimeout(PpeConfig.GEMINI_API_TIMEOUT_MS) {
+                            ApiProviderManager.makeApiCallWithRetry { apiKey ->
+                                try {
+                                    val response = makeNonStreamingApiCall(apiKey, actualModel, requestBody, finalTemperature.toDouble(), finalTopP.toDouble(), topK, finalMaxTokens)
+                                    Result.success(response)
+                                } catch (e: KeysExhaustedException) {
+                                    Result.failure(e)
+                                } catch (e: Exception) {
+                                    if (ApiProviderManager.isRateLimitError(e)) {
+                                        Result.failure(e)
+                                    } else {
+                                        Result.failure(e)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: TimeoutCancellationException) {
+                        Result.failure(IOException("Gemini API call timed out after ${PpeConfig.GEMINI_API_TIMEOUT_MS / 1000} seconds. The API may be slow or unresponsive. Please try again or check your network connection."))
+                    }
+                } else {
+                    ApiProviderManager.makeApiCallWithRetry { apiKey ->
+                        try {
+                            val response = makeNonStreamingApiCall(apiKey, actualModel, requestBody, finalTemperature.toDouble(), finalTopP.toDouble(), topK, finalMaxTokens)
+                            Result.success(response)
+                        } catch (e: KeysExhaustedException) {
                             Result.failure(e)
-                        } else {
-                            Result.failure(e)
+                        } catch (e: Exception) {
+                            if (ApiProviderManager.isRateLimitError(e)) {
+                                Result.failure(e)
+                            } else {
+                                Result.failure(e)
+                            }
                         }
                     }
                 }
@@ -512,6 +546,13 @@ class PpeApiClient(
         val providerType = ApiProviderManager.selectedProvider
         
         // Determine endpoint and convert request
+        // Use geminiClient for Google provider to enforce 20-second timeout
+        val httpClient = if (providerType == com.qali.aterm.api.ApiProviderType.GOOGLE) {
+            geminiClient
+        } else {
+            client
+        }
+        
         val (url, convertedRequestBody, headers) = when (providerType) {
             com.qali.aterm.api.ApiProviderType.GOOGLE -> {
                 val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
@@ -599,7 +640,7 @@ class PpeApiClient(
             }
             .build()
         
-        val response = client.newCall(httpRequest).execute()
+        val response = httpClient.newCall(httpRequest).execute()
         
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: "Unknown error"

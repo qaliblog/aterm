@@ -36,6 +36,14 @@ object PpeConfig {
      */
     const val API_CALL_TIMEOUT_MS: Long = 120_000L // 2 minutes
     
+    /**
+     * Hard timeout for Gemini API calls (in milliseconds).
+     * 
+     * Gemini API calls should complete quickly. If they take longer than this,
+     * we surface an error message instead of infinite "thinking".
+     */
+    const val GEMINI_API_TIMEOUT_MS: Long = 20_000L // 20 seconds
+    
     // ==================== File Limits ====================
     
     /** Maximum lines to read from a file without offset/limit */

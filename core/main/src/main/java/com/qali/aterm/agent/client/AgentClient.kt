@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -45,6 +47,13 @@ class AgentClient(
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS) // 3 minutes for complex metadata generation
         .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+    
+    // Client with 20-second timeout for Gemini API calls to prevent infinite "thinking"
+    private val geminiClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS) // 20 seconds hard timeout for Gemini
+        .writeTimeout(10, TimeUnit.SECONDS)
         .build()
     
     private val chatHistory = mutableListOf<Content>()
@@ -431,22 +440,39 @@ class AgentClient(
         android.util.Log.d("AgentClient", "makeApiCall: Executing request...")
         val startTime = System.currentTimeMillis()
         
+        // Use geminiClient for Google provider to enforce 20-second timeout
+        // This prevents infinite "thinking" when Gemini API is slow or unresponsive
+        val httpClient = if (providerType == ApiProviderType.GOOGLE) {
+            geminiClient
+        } else {
+            client
+        }
+        
         try {
-            client.newCall(request).execute().use { response ->
+            // Add coroutine-level timeout for Gemini to ensure fast failure
+            val response = if (providerType == ApiProviderType.GOOGLE) {
+                withTimeout(20_000L) { // 20 seconds hard timeout
+                    httpClient.newCall(request).execute()
+                }
+            } else {
+                httpClient.newCall(request).execute()
+            }
+            
+            response.use { resp ->
                 val elapsed = System.currentTimeMillis() - startTime
                 android.util.Log.d("AgentClient", "makeApiCall: Response received after ${elapsed}ms")
-                android.util.Log.d("AgentClient", "makeApiCall: Response code: ${response.code}")
-                android.util.Log.d("AgentClient", "makeApiCall: Response successful: ${response.isSuccessful}")
+                android.util.Log.d("AgentClient", "makeApiCall: Response code: ${resp.code}")
+                android.util.Log.d("AgentClient", "makeApiCall: Response successful: ${resp.isSuccessful}")
                 
-                if (!response.isSuccessful) {
-                    val errorBody = response.body?.string() ?: "Unknown error"
-                    android.util.Log.e("AgentClient", "makeApiCall: API call failed: ${response.code}")
+                if (!resp.isSuccessful) {
+                    val errorBody = resp.body?.string() ?: "Unknown error"
+                    android.util.Log.e("AgentClient", "makeApiCall: API call failed: ${resp.code}")
                     android.util.Log.e("AgentClient", "makeApiCall: Error body: $errorBody")
-                    throw IOException("API call failed: ${response.code} - $errorBody")
+                    throw IOException("API call failed: ${resp.code} - $errorBody")
                 }
                 
                 android.util.Log.d("AgentClient", "makeApiCall: Reading response body...")
-                response.body?.let { body ->
+                resp.body?.let { body ->
                     val contentLength = body.contentLength()
                     android.util.Log.d("AgentClient", "makeApiCall: Response body content length: $contentLength")
                     
@@ -528,6 +554,10 @@ class AgentClient(
                     android.util.Log.w("AgentClient", "makeApiCall: Response body is null")
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            val elapsed = System.currentTimeMillis() - startTime
+            android.util.Log.e("AgentClient", "makeApiCall: Gemini API call timed out after ${elapsed}ms")
+            throw IOException("Gemini API call timed out after 20 seconds. The API may be slow or unresponsive. Please try again or check your network connection.", e)
         } catch (e: IOException) {
             val elapsed = System.currentTimeMillis() - startTime
             android.util.Log.e("AgentClient", "makeApiCall: IOException after ${elapsed}ms", e)
