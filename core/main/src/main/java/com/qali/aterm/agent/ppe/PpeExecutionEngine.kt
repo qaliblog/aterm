@@ -2482,7 +2482,7 @@ class PpeExecutionEngine(
                     continue
                 }
                 
-                val fileCodeResult = generateFileCode(
+                var fileCodeResult = generateFileCode(
                     file,
                     filteredBlueprint,
                     userMessage,
