@@ -54,10 +54,11 @@ class PpeApiClient(
         .writeTimeout(PpeConfig.DEFAULT_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
     
-    // Separate client for Gemini with 20-second timeout to prevent infinite "thinking"
+    // Separate client for Gemini with model-specific timeouts to prevent infinite "thinking"
+    // Flash/lite models: 20s, Pro models: 60s
     private val geminiClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS) // 20 seconds hard timeout for Gemini
+        .readTimeout(60, TimeUnit.SECONDS) // 60 seconds to support pro models (actual timeout enforced at coroutine level)
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
     
@@ -212,10 +213,19 @@ class PpeApiClient(
                 
                 // Make API call with retry (non-streaming) - uses existing API cycling
                 // Add hard timeout for Gemini to prevent infinite "thinking"
+                // Use longer timeout for pro models (gemini-2.5-pro, gemini-pro) which are slower
                 val result = if (providerType == com.qali.aterm.api.ApiProviderType.GOOGLE) {
+                    // Determine timeout based on model type
+                    val timeoutMs = if (actualModel.contains("pro", ignoreCase = true) && 
+                                       !actualModel.contains("flash", ignoreCase = true)) {
+                        PpeConfig.GEMINI_PRO_API_TIMEOUT_MS // 60 seconds for pro models
+                    } else {
+                        PpeConfig.GEMINI_API_TIMEOUT_MS // 20 seconds for flash/lite models
+                    }
+                    
                     // Use coroutine timeout for Gemini API calls
                     try {
-                        withTimeout(PpeConfig.GEMINI_API_TIMEOUT_MS) {
+                        withTimeout(timeoutMs) {
                             ApiProviderManager.makeApiCallWithRetry { apiKey ->
                                 try {
                                     val response = makeNonStreamingApiCall(apiKey, actualModel, requestBody, finalTemperature.toDouble(), finalTopP.toDouble(), topK, finalMaxTokens)
@@ -232,7 +242,7 @@ class PpeApiClient(
                             }
                         }
                     } catch (e: TimeoutCancellationException) {
-                        Result.failure(IOException("Gemini API call timed out after ${PpeConfig.GEMINI_API_TIMEOUT_MS / 1000} seconds. The API may be slow or unresponsive. Please try again or check your network connection."))
+                        Result.failure(IOException("Gemini API call timed out after ${timeoutMs / 1000} seconds. The API may be slow or unresponsive. Please try again or check your network connection."))
                     }
                 } else {
                     ApiProviderManager.makeApiCallWithRetry { apiKey ->

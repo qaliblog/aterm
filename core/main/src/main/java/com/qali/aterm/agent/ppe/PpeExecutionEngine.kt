@@ -2892,20 +2892,42 @@ JSON Blueprint:
             throw Exception("Blueprint API call failed: ${it.message}", it)
         }
         
-        // Extract JSON from response (might be wrapped in markdown)
+        // Extract JSON from response (might be wrapped in markdown or empty)
         var jsonText = response.text.trim()
         
-        // Remove markdown code blocks if present
-        jsonText = jsonText.removePrefix("```json").removePrefix("```")
-        jsonText = jsonText.removePrefix("```")
+        // Log raw response for debugging
+        Log.d("PpeExecutionEngine", "Raw response text (length: ${jsonText.length}): ${jsonText.take(1000)}")
+        
+        // If response is empty, check if there's content in response object
+        if (jsonText.isEmpty()) {
+            Log.w("PpeExecutionEngine", "Response text is empty. Checking response structure...")
+            // Try to extract from response object if available
+            val responseStr = response.toString()
+            if (responseStr.isNotEmpty()) {
+                Log.d("PpeExecutionEngine", "Response object: ${responseStr.take(500)}")
+            }
+            throw Exception(
+                "Empty response from API. The model may not have generated any content. Please check your API key and model configuration."
+            )
+        }
+        
+        // Remove markdown code blocks if present (handle various formats)
+        jsonText = jsonText.removePrefix("```json").trim()
+        jsonText = jsonText.removePrefix("```").trim()
         jsonText = jsonText.removeSuffix("```").trim()
         
-        // Try to find JSON object in the response
+        // Try to find JSON object in the response (handle markdown-wrapped JSON)
         val jsonStart = jsonText.indexOf('{')
         val jsonEnd = jsonText.lastIndexOf('}') + 1
         
         if (jsonStart >= 0 && jsonEnd > jsonStart) {
             jsonText = jsonText.substring(jsonStart, jsonEnd)
+        } else if (jsonStart < 0) {
+            // No JSON object found - might be plain text or malformed
+            Log.w("PpeExecutionEngine", "No JSON object found in response. Full response: ${jsonText.take(1000)}")
+            throw Exception(
+                "No valid JSON found in response. The model may have returned plain text instead of JSON. Response: ${jsonText.take(200)}"
+            )
         }
         
         Log.d("PpeExecutionEngine", "Extracted blueprint JSON (length: ${jsonText.length}): ${jsonText.take(500)}")
@@ -2917,7 +2939,7 @@ JSON Blueprint:
                 "Invalid blueprint JSON from API (empty or not an object). Response: ${response.text.take(500)}"
             )
             throw Exception(
-                "Invalid blueprint JSON from model. Please retry or switch to a model that can return pure JSON (no markdown)."
+                "Invalid blueprint JSON from model. The response was not valid JSON. Please retry or switch to a model that can return pure JSON (no markdown). Response preview: ${jsonText.take(200)}"
             )
         }
         

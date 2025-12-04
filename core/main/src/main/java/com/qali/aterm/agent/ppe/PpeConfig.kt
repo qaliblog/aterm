@@ -41,8 +41,15 @@ object PpeConfig {
      * 
      * Gemini API calls should complete quickly. If they take longer than this,
      * we surface an error message instead of infinite "thinking".
+     * 
+     * Note: Pro models (gemini-2.5-pro, gemini-pro) may need more time than flash/lite models.
      */
-    const val GEMINI_API_TIMEOUT_MS: Long = 20_000L // 20 seconds
+    const val GEMINI_API_TIMEOUT_MS: Long = 20_000L // 20 seconds (default for flash/lite)
+    
+    /**
+     * Timeout for Gemini Pro models (larger models that take longer to respond)
+     */
+    const val GEMINI_PRO_API_TIMEOUT_MS: Long = 60_000L // 60 seconds for pro models
     
     // ==================== File Limits ====================
     
