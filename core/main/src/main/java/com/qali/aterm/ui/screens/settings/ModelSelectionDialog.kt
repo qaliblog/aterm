@@ -218,6 +218,7 @@ data class ModelSuggestion(
 
 private fun getSuggestedModels(providerType: ApiProviderType): List<ModelSuggestion> {
     return when (providerType) {
+        ApiProviderType.BUILTIN_LOCAL -> emptyList() // Local model doesn't need model selection
         ApiProviderType.GOOGLE -> listOf(
             ModelSuggestion(
                 name = "Gemini 2.0 Flash (Experimental)",
