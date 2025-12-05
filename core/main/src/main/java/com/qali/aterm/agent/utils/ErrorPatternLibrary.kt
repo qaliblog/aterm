@@ -241,9 +241,9 @@ object ErrorPatternLibrary {
     private fun getSwiftPatterns(): LanguagePattern {
         val patterns = listOf(
             // "error: message\n    file.swift:123:45: error:"
-            Pattern.compile("""error:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOT_ALL),
+            Pattern.compile("""error:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOTALL),
             // "warning: message\n    file.swift:123:45:"
-            Pattern.compile("""warning:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOT_ALL)
+            Pattern.compile("""warning:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(
