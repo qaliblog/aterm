@@ -96,17 +96,6 @@ data class ApiMismatchInfo(
 )
 
 /**
- * Error severity levels
- */
-enum class ErrorSeverity {
-    CRITICAL,
-    HIGH,
-    MEDIUM,
-    LOW,
-    INFO
-}
-
-/**
  * Comprehensive error analysis in a single API call
  * Optimized for non-streaming API mode
  */

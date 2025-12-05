@@ -81,7 +81,7 @@ object ErrorPatternLibrary {
             // "  File \"/path/to/file.py\", line 123, in function"
             Pattern.compile("""File\s+["']([^"']+)["'],\s*line\s+(\d+)(?:,\s*in\s+(\w+))?"""),
             // Traceback with line numbers
-            Pattern.compile("""Traceback\s+\(most\s+recent\s+call\s+last\):.*?File\s+["']([^"']+)["'],\s*line\s+(\d+)""", Pattern.DOT_ALL),
+            Pattern.compile("""Traceback\s+\(most\s+recent\s+call\s+last\):.*?File\s+["']([^"']+)["'],\s*line\s+(\d+)""", Pattern.DOTALL),
             // Import error
             Pattern.compile("""ModuleNotFoundError:\s+No\s+module\s+named\s+['"]([^'"]+)['"]"""),
             // Name error
@@ -111,7 +111,7 @@ object ErrorPatternLibrary {
             // "at com.example.Class.method(Class.java:123)"
             Pattern.compile("""at\s+[^\s]+\s*\(([^:]+):(\d+)\)"""),
             // "Caused by: ... at Class.java:123"
-            Pattern.compile("""Caused\s+by:.*?at\s+[^\s]+\s*\(([^:]+):(\d+)\)""", Pattern.DOT_ALL),
+            Pattern.compile("""Caused\s+by:.*?at\s+[^\s]+\s*\(([^:]+):(\d+)\)""", Pattern.DOTALL),
             // Exception with file
             Pattern.compile("""(\w+Exception):\s*(.+?)(?:\s+at\s+[^\s]+\s*\(([^:]+):(\d+)\))?""")
         )
@@ -133,9 +133,9 @@ object ErrorPatternLibrary {
     private fun getRustPatterns(): LanguagePattern {
         val patterns = listOf(
             // "error[E0000]: message\n --> src/main.rs:5:10"
-            Pattern.compile("""error\[E\d+\]:\s*(.+?)\s+-->\s+([^:]+):(\d+):(\d+)""", Pattern.DOT_ALL),
+            Pattern.compile("""error\[E\d+\]:\s*(.+?)\s+-->\s+([^:]+):(\d+):(\d+)""", Pattern.DOTALL),
             // "warning: message\n --> src/main.rs:5:10"
-            Pattern.compile("""warning:\s*(.+?)\s+-->\s+([^:]+):(\d+):(\d+)""", Pattern.DOT_ALL),
+            Pattern.compile("""warning:\s*(.+?)\s+-->\s+([^:]+):(\d+):(\d+)""", Pattern.DOTALL),
             // Panic message
             Pattern.compile("""thread\s+['"][^'"]+['"]\s+panicked\s+at\s+['"]([^'"]+)['"],\s+([^:]+):(\d+)""")
         )
@@ -157,7 +157,7 @@ object ErrorPatternLibrary {
             // "main.go:10:5: error message"
             Pattern.compile("""([^:]+):(\d+):(\d+):\s*(.+)"""),
             // "panic: runtime error: message"
-            Pattern.compile("""panic:\s*(.+?)(?:\s+goroutine\s+\d+.*?\[running\]:\s+([^:]+):(\d+))?""", Pattern.DOT_ALL)
+            Pattern.compile("""panic:\s*(.+?)(?:\s+goroutine\s+\d+.*?\[running\]:\s+([^:]+):(\d+))?""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(
@@ -175,9 +175,9 @@ object ErrorPatternLibrary {
     private fun getCppPatterns(): LanguagePattern {
         val patterns = listOf(
             // "error: message\n    file.cpp:123:45: note:"
-            Pattern.compile("""error:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOT_ALL),
+            Pattern.compile("""error:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOTALL),
             // "warning: message\n    file.cpp:123:45:"
-            Pattern.compile("""warning:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOT_ALL),
+            Pattern.compile("""warning:\s*(.+?)\s+([^:]+):(\d+):(\d+):""", Pattern.DOTALL),
             // GCC/Clang format
             Pattern.compile("""([^:]+):(\d+):(\d+):\s+(error|warning):\s*(.+)""")
         )
@@ -199,7 +199,7 @@ object ErrorPatternLibrary {
             // "/path/to/file.rb:123:in `method'"
             Pattern.compile("""([^:]+):(\d+):in\s+['"]([^'"]+)['"]"""),
             // "NameError: message\n    from file.rb:123:in `method'"
-            Pattern.compile("""(\w+Error):\s*(.+?)(?:\s+from\s+([^:]+):(\d+))?""", Pattern.DOT_ALL)
+            Pattern.compile("""(\w+Error):\s*(.+?)(?:\s+from\s+([^:]+):(\d+))?""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(
@@ -261,9 +261,9 @@ object ErrorPatternLibrary {
     private fun getRPatterns(): LanguagePattern {
         val patterns = listOf(
             // "Error in function() : message\n    at file.R:123"
-            Pattern.compile("""Error\s+in\s+(\w+)\s*\(\)\s*:\s*(.+?)(?:\s+at\s+([^:]+):(\d+))?""", Pattern.DOT_ALL),
+            Pattern.compile("""Error\s+in\s+(\w+)\s*\(\)\s*:\s*(.+?)(?:\s+at\s+([^:]+):(\d+))?""", Pattern.DOTALL),
             // "Warning message:\n    In file.R:123"
-            Pattern.compile("""Warning\s+message:\s*(.+?)(?:\s+In\s+([^:]+):(\d+))?""", Pattern.DOT_ALL)
+            Pattern.compile("""Warning\s+message:\s*(.+?)(?:\s+In\s+([^:]+):(\d+))?""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(
@@ -280,9 +280,9 @@ object ErrorPatternLibrary {
     private fun getScalaPatterns(): LanguagePattern {
         val patterns = listOf(
             // "error: message\n    at file.scala:123"
-            Pattern.compile("""error:\s*(.+?)\s+at\s+([^:]+):(\d+)""", Pattern.DOT_ALL),
+            Pattern.compile("""error:\s*(.+?)\s+at\s+([^:]+):(\d+)""", Pattern.DOTALL),
             // "Exception in thread: message\n    at file.scala:123"
-            Pattern.compile("""Exception\s+in\s+thread.*?:\s*(.+?)(?:\s+at\s+([^:]+):(\d+))?""", Pattern.DOT_ALL)
+            Pattern.compile("""Exception\s+in\s+thread.*?:\s*(.+?)(?:\s+at\s+([^:]+):(\d+))?""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(
@@ -299,9 +299,9 @@ object ErrorPatternLibrary {
     private fun getDartPatterns(): LanguagePattern {
         val patterns = listOf(
             // "Error: message\n    at file.dart:123:45"
-            Pattern.compile("""Error:\s*(.+?)(?:\s+at\s+([^:]+):(\d+):(\d+))?""", Pattern.DOT_ALL),
+            Pattern.compile("""Error:\s*(.+?)(?:\s+at\s+([^:]+):(\d+):(\d+))?""", Pattern.DOTALL),
             // "Exception: message\n    at file.dart:123"
-            Pattern.compile("""Exception:\s*(.+?)(?:\s+at\s+([^:]+):(\d+))?""", Pattern.DOT_ALL)
+            Pattern.compile("""Exception:\s*(.+?)(?:\s+at\s+([^:]+):(\d+))?""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(
@@ -320,7 +320,7 @@ object ErrorPatternLibrary {
             // "lua: file.lua:123: message"
             Pattern.compile("""lua:\s+([^:]+):(\d+):\s*(.+)"""),
             // "error: message\n    stack traceback:\n    file.lua:123: in function"
-            Pattern.compile("""error:\s*(.+?)(?:\s+stack\s+traceback:.*?([^:]+):(\d+))?""", Pattern.DOT_ALL)
+            Pattern.compile("""error:\s*(.+?)(?:\s+stack\s+traceback:.*?([^:]+):(\d+))?""", Pattern.DOTALL)
         )
         
         val errorTypePatterns = mapOf(

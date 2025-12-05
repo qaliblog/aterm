@@ -20,7 +20,7 @@ object ApiMismatchLibrary {
     /**
      * All API mismatch patterns
      */
-    private val mismatchPatterns = listOf(
+    val mismatchPatterns = listOf(
         // Database API Mismatches
         MismatchPattern(
             errorPattern = "execute.*not a function",
