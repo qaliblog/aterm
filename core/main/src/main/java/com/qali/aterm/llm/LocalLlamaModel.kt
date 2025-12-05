@@ -1,8 +1,11 @@
 package com.qali.aterm.llm
 
+import android.content.Context
 import android.util.Log
 import com.rk.settings.Preference
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 /**
  * Local LLM model using llama.cpp
@@ -11,7 +14,11 @@ import java.io.File
 object LocalLlamaModel {
     private const val TAG = "LocalLlamaModel"
     
-    init {
+    // Context for accessing app directories
+    private var appContext: Context? = null
+    
+    fun init(context: Context) {
+        appContext = context.applicationContext
         try {
             System.loadLibrary("llama")
             Log.d(TAG, "Loaded llama native library")
@@ -22,6 +29,7 @@ object LocalLlamaModel {
     
     private var isModelLoaded = false
     private var modelPath: String? = null
+    private var cachedModelPath: String? = null
     
     /**
      * Load model from file path
@@ -30,24 +38,108 @@ object LocalLlamaModel {
      */
     fun loadModel(path: String): Boolean {
         return try {
-            val file = File(path)
-            if (!file.exists()) {
+            val sourceFile = File(path)
+            if (!sourceFile.exists()) {
                 Log.e(TAG, "Model file does not exist: $path")
                 return false
             }
             
-            val success = loadModelNative(path)
+            // Check if file is accessible from native code
+            // Files in /storage/emulated/0/ may not be accessible due to scoped storage
+            val accessiblePath = if (isPathAccessible(path)) {
+                path
+            } else {
+                // Copy to cache directory where native code can access it
+                copyToCache(sourceFile) ?: run {
+                    Log.e(TAG, "Failed to copy model to cache directory")
+                    return false
+                }
+            }
+            
+            Log.d(TAG, "Using model path: $accessiblePath")
+            
+            val success = loadModelNative(accessiblePath)
             if (success) {
                 isModelLoaded = true
                 modelPath = path
-                Log.d(TAG, "Model loaded successfully: $path")
+                cachedModelPath = accessiblePath
+                Log.d(TAG, "Model loaded successfully: $accessiblePath")
             } else {
-                Log.e(TAG, "Failed to load model: $path")
+                Log.e(TAG, "Failed to load model: $accessiblePath")
             }
             success
         } catch (e: Exception) {
             Log.e(TAG, "Exception loading model: ${e.message}", e)
             false
+        }
+    }
+    
+    /**
+     * Check if path is accessible from native code
+     */
+    private fun isPathAccessible(path: String): Boolean {
+        return try {
+            // Try to open the file - if it works, it's accessible
+            val file = File(path)
+            if (!file.exists() || !file.canRead()) {
+                return false
+            }
+            
+            // Check if it's in app's internal storage or cache
+            val context = appContext
+            if (context != null) {
+                val internalDir = context.filesDir.absolutePath
+                val cacheDir = context.cacheDir.absolutePath
+                val externalCacheDir = context.externalCacheDir?.absolutePath
+                
+                return path.startsWith(internalDir) || 
+                       path.startsWith(cacheDir) || 
+                       (externalCacheDir != null && path.startsWith(externalCacheDir))
+            }
+            
+            // If no context, assume not accessible if in /storage/emulated/
+            !path.startsWith("/storage/emulated/")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking path accessibility: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Copy model file to cache directory
+     */
+    private fun copyToCache(sourceFile: File): String? {
+        val context = appContext ?: return null
+        
+        return try {
+            val cacheDir = File(context.cacheDir, "models")
+            cacheDir.mkdirs()
+            
+            val cachedFile = File(cacheDir, sourceFile.name)
+            
+            // Check if already copied and up-to-date
+            if (cachedFile.exists() && cachedFile.length() == sourceFile.length() && 
+                cachedFile.lastModified() >= sourceFile.lastModified()) {
+                Log.d(TAG, "Using existing cached model: ${cachedFile.absolutePath}")
+                return cachedFile.absolutePath
+            }
+            
+            Log.d(TAG, "Copying model to cache: ${sourceFile.name} (${sourceFile.length()} bytes)")
+            
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(cachedFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            // Set last modified to match source
+            cachedFile.setLastModified(sourceFile.lastModified())
+            
+            Log.d(TAG, "Model copied to cache: ${cachedFile.absolutePath}")
+            cachedFile.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to copy model to cache: ${e.message}", e)
+            null
         }
     }
     
@@ -82,9 +174,14 @@ object LocalLlamaModel {
     fun isLoaded(): Boolean = isModelLoaded
     
     /**
-     * Get current model path
+     * Get current model path (original path, not cached)
      */
     fun getModelPath(): String? = modelPath
+    
+    /**
+     * Get cached model path (path used by native code)
+     */
+    fun getCachedModelPath(): String? = cachedModelPath
     
     /**
      * Unload current model
@@ -94,7 +191,24 @@ object LocalLlamaModel {
             unloadModelNative()
             isModelLoaded = false
             modelPath = null
+            cachedModelPath = null
             Log.d(TAG, "Model unloaded")
+        }
+    }
+    
+    /**
+     * Clear cached model files
+     */
+    fun clearCache() {
+        val context = appContext ?: return
+        try {
+            val cacheDir = File(context.cacheDir, "models")
+            if (cacheDir.exists()) {
+                cacheDir.listFiles()?.forEach { it.delete() }
+                Log.d(TAG, "Cleared model cache")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to clear cache: ${e.message}", e)
         }
     }
     

@@ -97,6 +97,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Initialize LocalLlamaModel with context
+        com.qali.aterm.llm.LocalLlamaModel.init(this)
+    }
+    
     override fun onStart() {
         super.onStart()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

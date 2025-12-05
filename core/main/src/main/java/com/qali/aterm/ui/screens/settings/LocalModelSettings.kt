@@ -167,8 +167,13 @@ fun LocalModelSettings() {
                     localModelPath = path
                     Preference.setString("localModelPath", path)
                     
-                    // Try to load the model
-                    val loaded = LocalLlamaModel.loadModel(path)
+                // Ensure LocalLlamaModel is initialized
+                if (LocalLlamaModel.getModelPath() == null) {
+                    LocalLlamaModel.init(context)
+                }
+                
+                // Try to load the model
+                val loaded = LocalLlamaModel.loadModel(path)
                     if (!loaded) {
                         testResult = "Failed to load model. Please check if the file is valid and accessible."
                         showTestDialog = true
@@ -231,6 +236,11 @@ fun LocalModelSettings() {
                     )
                 },
                 onClick = {
+                    // Ensure LocalLlamaModel is initialized
+                    if (LocalLlamaModel.getModelPath() == null) {
+                        LocalLlamaModel.init(context)
+                    }
+                    
                     val loaded = LocalLlamaModel.loadModel(localModelPath)
                     if (loaded) {
                         // Test generation
