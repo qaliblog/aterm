@@ -1,6 +1,7 @@
 package com.qali.aterm.llm
 
 import android.util.Log
+import com.rk.settings.Preference
 import java.io.File
 
 /**
@@ -101,8 +102,14 @@ object LocalLlamaModel {
      * Get saved model path from preferences
      */
     private fun getSavedModelPath(): String? {
-        // Will be implemented with DataStore
-        return null
+        return try {
+            val prefs = android.app.ActivityThread.currentApplication()
+                ?.getSharedPreferences("preferences", android.content.Context.MODE_PRIVATE)
+            prefs?.getString("localModelPath", null)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get saved model path: ${e.message}", e)
+            null
+        }
     }
     
     // Native methods

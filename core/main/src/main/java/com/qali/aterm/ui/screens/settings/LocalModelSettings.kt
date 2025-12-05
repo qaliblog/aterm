@@ -27,6 +27,122 @@ import java.io.FileOutputStream
 import java.io.InputStream
 
 /**
+ * Get real file path from URI (handles SAF and file:// URIs)
+ */
+private fun getRealPathFromURI(context: Context, uri: Uri): String? {
+    // Check if it's a file:// URI
+    if (uri.scheme == "file") {
+        return uri.path
+    }
+    
+    // For content:// URIs, try to get the actual path
+    var result: String? = null
+    
+    // Try DocumentsContract for Android 4.4+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && DocumentsContract.isDocumentUri(context, uri)) {
+        val docId = DocumentsContract.getDocumentId(uri)
+        
+        // Handle external storage
+        if ("com.android.externalstorage.documents" == uri.authority) {
+            val split = docId.split(":".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+            val type = split[0]
+            if ("primary".equals(type, ignoreCase = true)) {
+                result = Environment.getExternalStorageDirectory().toString() + "/" + split[1]
+            }
+        }
+        // Handle downloads
+        else if ("com.android.providers.downloads.documents" == uri.authority) {
+            val id = DocumentsContract.getDocumentId(uri)
+            val contentUri = ContentUris.withAppendedId(
+                Uri.parse("content://downloads/public_downloads"),
+                java.lang.Long.valueOf(id)
+            )
+            result = getDataColumn(context, contentUri, null, null)
+        }
+        // Handle media
+        else if ("com.android.providers.media.documents" == uri.authority) {
+            val split = docId.split(":".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+            val type = split[0]
+            val contentUri = when (type) {
+                "image" -> android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                "video" -> android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                "audio" -> android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                else -> null
+            }
+            val selection = "_id=?"
+            val selectionArgs = arrayOf(split[1])
+            result = contentUri?.let { getDataColumn(context, it, selection, selectionArgs) }
+        }
+    }
+    
+    // If still no result, try to copy to cache directory
+    if (result == null) {
+        result = copyUriToCache(context, uri)
+    }
+    
+    return result
+}
+
+/**
+ * Get data column from content URI
+ */
+private fun getDataColumn(context: Context, uri: Uri, selection: String?, selectionArgs: Array<String>?): String? {
+    var cursor: Cursor? = null
+    val column = "_data"
+    val projection = arrayOf(column)
+    
+    try {
+        cursor = context.contentResolver.query(uri, projection, selection, selectionArgs, null)
+        if (cursor != null && cursor.moveToFirst()) {
+            val columnIndex = cursor.getColumnIndexOrThrow(column)
+            return cursor.getString(columnIndex)
+        }
+    } catch (e: Exception) {
+        // Ignore
+    } finally {
+        cursor?.close()
+    }
+    return null
+}
+
+/**
+ * Copy URI content to cache directory and return path
+ */
+private fun copyUriToCache(context: Context, uri: Uri): String? {
+    return try {
+        // Get file name from URI
+        var fileName: String? = null
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) {
+                    fileName = cursor.getString(nameIndex)
+                }
+            }
+        }
+        
+        if (fileName == null) {
+            fileName = "model.gguf"
+        }
+        
+        // Copy to cache directory
+        val cacheDir = File(context.cacheDir, "models")
+        cacheDir.mkdirs()
+        val cacheFile = File(cacheDir, fileName)
+        
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(cacheFile).use { output ->
+                input.copyTo(output)
+            }
+        }
+        
+        cacheFile.absolutePath
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/**
  * Settings for local model file selection
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,122 +184,6 @@ fun LocalModelSettings() {
                 testResult = "Error: ${e.message}"
                 showTestDialog = true
             }
-        }
-    }
-    
-    /**
-     * Get real file path from URI (handles SAF and file:// URIs)
-     */
-    fun getRealPathFromURI(context: Context, uri: Uri): String? {
-        // Check if it's a file:// URI
-        if (uri.scheme == "file") {
-            return uri.path
-        }
-        
-        // For content:// URIs, try to get the actual path
-        var result: String? = null
-        
-        // Try DocumentsContract for Android 4.4+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && DocumentsContract.isDocumentUri(context, uri)) {
-            val docId = DocumentsContract.getDocumentId(uri)
-            
-            // Handle external storage
-            if ("com.android.externalstorage.documents" == uri.authority) {
-                val split = docId.split(":".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
-                val type = split[0]
-                if ("primary".equals(type, ignoreCase = true)) {
-                    result = Environment.getExternalStorageDirectory().toString() + "/" + split[1]
-                }
-            }
-            // Handle downloads
-            else if ("com.android.providers.downloads.documents" == uri.authority) {
-                val id = DocumentsContract.getDocumentId(uri)
-                val contentUri = ContentUris.withAppendedId(
-                    Uri.parse("content://downloads/public_downloads"),
-                    java.lang.Long.valueOf(id)
-                )
-                result = getDataColumn(context, contentUri, null, null)
-            }
-            // Handle media
-            else if ("com.android.providers.media.documents" == uri.authority) {
-                val split = docId.split(":".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
-                val type = split[0]
-                val contentUri = when (type) {
-                    "image" -> android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                    "video" -> android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                    "audio" -> android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                    else -> null
-                }
-                val selection = "_id=?"
-                val selectionArgs = arrayOf(split[1])
-                result = contentUri?.let { getDataColumn(context, it, selection, selectionArgs) }
-            }
-        }
-        
-        // If still no result, try to copy to cache directory
-        if (result == null) {
-            result = copyUriToCache(context, uri)
-        }
-        
-        return result
-    }
-    
-    /**
-     * Get data column from content URI
-     */
-    private fun getDataColumn(context: Context, uri: Uri, selection: String?, selectionArgs: Array<String>?): String? {
-        var cursor: Cursor? = null
-        val column = "_data"
-        val projection = arrayOf(column)
-        
-        try {
-            cursor = context.contentResolver.query(uri, projection, selection, selectionArgs, null)
-            if (cursor != null && cursor.moveToFirst()) {
-                val columnIndex = cursor.getColumnIndexOrThrow(column)
-                return cursor.getString(columnIndex)
-            }
-        } catch (e: Exception) {
-            // Ignore
-        } finally {
-            cursor?.close()
-        }
-        return null
-    }
-    
-    /**
-     * Copy URI content to cache directory and return path
-     */
-    private fun copyUriToCache(context: Context, uri: Uri): String? {
-        return try {
-            // Get file name from URI
-            var fileName: String? = null
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex >= 0) {
-                        fileName = cursor.getString(nameIndex)
-                    }
-                }
-            }
-            
-            if (fileName == null) {
-                fileName = "model.gguf"
-            }
-            
-            // Copy to cache directory
-            val cacheDir = File(context.cacheDir, "models")
-            cacheDir.mkdirs()
-            val cacheFile = File(cacheDir, fileName)
-            
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(cacheFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            
-            cacheFile.absolutePath
-        } catch (e: Exception) {
-            null
         }
     }
     
