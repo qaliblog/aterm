@@ -1092,7 +1092,76 @@ class PpeExecutionEngine(
             }
         }
         
-        // Get tools from registry
+        // Check if using built-in local model
+        val currentProvider = com.qali.aterm.api.ApiProviderManager.selectedProvider
+        val useLocalModel = currentProvider == com.qali.aterm.api.ApiProviderType.BUILTIN_LOCAL
+        
+        // If using local model, generate response directly
+        if (useLocalModel) {
+            val systemPrompt = buildString {
+                appendLine("You are Blueprint AI. You must produce coherent, consistent code with matching tags, function names, and types.")
+                appendLine()
+                appendLine("CRITICAL RULES:")
+                appendLine("1. Identifier Consistency: All identifiers (functions, classes, variables, props, API endpoints, types, event names) must remain consistent across all files.")
+                appendLine("2. Never rename things unless explicitly requested by the user.")
+                appendLine("3. When a tag, function, variable, or class is mentioned anywhere, it must keep the same name everywhere.")
+                appendLine("4. Ensure imports match exports (module.exports / export default).")
+                appendLine("5. Verify file paths are correct when importing.")
+                appendLine("6. Methods must exist in target files when referenced.")
+                appendLine("7. Return types must stay consistent.")
+                appendLine("8. DOM or API identifiers must stay consistent.")
+                appendLine()
+                appendLine("You are a multi-role development agent with debugging and code engineering capabilities.")
+                appendLine("Follow the AGENT_GUIDELINES.md principles for coherent code generation.")
+            }
+            
+            val fullPrompt = buildString {
+                // Add system prompt
+                appendLine(systemPrompt)
+                appendLine()
+                
+                // Add chat history context
+                if (prunedMessages.isNotEmpty()) {
+                    appendLine("## Conversation History")
+                    prunedMessages.forEach { msg ->
+                        val role = when (msg.role) {
+                            "user" -> "User"
+                            "model", "assistant" -> "Assistant"
+                            else -> msg.role.capitalize()
+                        }
+                        val text = msg.parts.joinToString(" ") { part ->
+                            when (part) {
+                                is Part.TextPart -> part.text
+                                else -> ""
+                            }
+                        }
+                        if (text.isNotEmpty()) {
+                            appendLine("$role: $text")
+                        }
+                    }
+                    appendLine()
+                }
+                
+                // Add current message
+                appendLine("## Current Request")
+                appendLine(finalMessageContent)
+            }
+            
+            val response = try {
+                com.qali.aterm.llm.LocalLlamaModel.generate(fullPrompt)
+            } catch (e: Exception) {
+                android.util.Log.e("PpeExecutionEngine", "Local model generation failed: ${e.message}", e)
+                "Error: Failed to generate response from local model. ${e.message}"
+            }
+            
+            return PpeApiResponse(
+                text = response,
+                finishReason = "STOP",
+                functionCalls = emptyList()
+            )
+        }
+        
+        // Get tools from registry (for remote API calls)
         val tools = if (toolRegistry.getAllTools().isNotEmpty()) {
             listOf(Tool(functionDeclarations = toolRegistry.getFunctionDeclarations()))
         } else {

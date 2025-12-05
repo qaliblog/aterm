@@ -65,6 +65,7 @@ class PpeApiClient(
     /**
      * Make a non-streaming API call
      * Returns the assistant response text
+     * If BUILTIN_LOCAL provider is selected, uses LocalLlamaModel; 
      * If Ollama is configured, uses Ollama directly; otherwise uses ApiProviderManager
      */
     suspend fun callApi(
@@ -79,6 +80,41 @@ class PpeApiClient(
         return withContext(Dispatchers.IO) {
             val startTime = System.currentTimeMillis()
             val callId = "api-call-${System.currentTimeMillis()}"
+            
+            // Check if using built-in local model
+            val currentProvider = com.qali.aterm.api.ApiProviderManager.selectedProvider
+            if (currentProvider == com.qali.aterm.api.ApiProviderType.BUILTIN_LOCAL) {
+                // Use local model for generation
+                val prompt = messages.joinToString("\n") { msg ->
+                    val role = when (msg.role) {
+                        "user" -> "User"
+                        "model", "assistant" -> "Assistant"
+                        else -> msg.role
+                    }
+                    val text = msg.parts.joinToString(" ") { part ->
+                        when (part) {
+                            is Part.TextPart -> part.text
+                            else -> ""
+                        }
+                    }
+                    "$role: $text"
+                }
+                
+                val response = try {
+                    com.qali.aterm.llm.LocalLlamaModel.generate(prompt)
+                } catch (e: Exception) {
+                    Log.e("PpeApiClient", "Local model generation failed: ${e.message}", e)
+                    return@withContext Result.failure(e)
+                }
+                
+                return@withContext Result.success(
+                    PpeApiResponse(
+                        text = response,
+                        finishReason = "STOP",
+                        functionCalls = emptyList()
+                    )
+                )
+            }
             
             try {
                 // Calculate prompt length for dynamic parameter adjustment

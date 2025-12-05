@@ -56,8 +56,14 @@ fun ApiProviderSettings() {
             }
         }
         
-        // Model Selection
-        PreferenceGroup(heading = "Model Configuration") {
+        // Show local model settings if BUILTIN_LOCAL is selected
+        if (selectedProvider == ApiProviderType.BUILTIN_LOCAL) {
+            LocalModelSettings()
+        }
+        
+        // Model Selection (hide for BUILTIN_LOCAL)
+        if (selectedProvider != ApiProviderType.BUILTIN_LOCAL) {
+            PreferenceGroup(heading = "Model Configuration") {
                 // Initialize with safe defaults to prevent crashes on first load
                 var currentModel by remember { 
                     mutableStateOf(ApiProviderManager.getCurrentModel().takeIf { it.isNotBlank() } ?: "gemini-2.5-flash-lite")
@@ -93,6 +99,11 @@ fun ApiProviderSettings() {
                         currentMaxTokens = 2048
                         currentTopP = 1.0f
                     }
+                }
+                
+                // API Key section (hide for BUILTIN_LOCAL)
+                if (selectedProvider != ApiProviderType.BUILTIN_LOCAL) {
+                    // API Keys section will be here
                 }
                 
                 SettingsCard(
@@ -177,8 +188,9 @@ fun ApiProviderSettings() {
                 }
             }
         
-        // API Keys Management
-        PreferenceGroup(heading = "API Keys for ${selectedProvider.displayName}") {
+        // API Keys Management (hide for BUILTIN_LOCAL)
+        if (selectedProvider != ApiProviderType.BUILTIN_LOCAL) {
+            PreferenceGroup(heading = "API Keys for ${selectedProvider.displayName}") {
                 val currentProvider = providers[selectedProvider] ?: ApiProvider(selectedProvider)
                 val apiKeys = currentProvider.apiKeys
                 
@@ -233,9 +245,10 @@ fun ApiProviderSettings() {
                 }
             }
         }
+        }
     
-    // Add Key Dialog
-    if (showAddKeyDialog) {
+    // Add Key Dialog (only show for non-BUILTIN_LOCAL providers)
+    if (selectedProvider != ApiProviderType.BUILTIN_LOCAL && showAddKeyDialog) {
         AddApiKeyDialog(
             providerType = selectedProvider,
             onDismiss = { showAddKeyDialog = false },
@@ -247,43 +260,75 @@ fun ApiProviderSettings() {
         )
     }
     
-    // Edit Key Dialog
-    showEditKeyDialog?.let { key ->
-        EditApiKeyDialog(
-            providerType = selectedProvider,
-            apiKey = key,
-            onDismiss = { showEditKeyDialog = null },
-            onSave = { updatedKey ->
-                ApiProviderManager.updateApiKey(selectedProvider, updatedKey)
-                providers = ApiProviderManager.getProviders()
-                showEditKeyDialog = null
-            }
-        )
+    // Edit Key Dialog (only show for non-BUILTIN_LOCAL providers)
+    if (selectedProvider != ApiProviderType.BUILTIN_LOCAL) {
+        showEditKeyDialog?.let { key ->
+            EditApiKeyDialog(
+                providerType = selectedProvider,
+                apiKey = key,
+                onDismiss = { showEditKeyDialog = null },
+                onSave = { updatedKey ->
+                    ApiProviderManager.updateApiKey(selectedProvider, updatedKey)
+                    providers = ApiProviderManager.getProviders()
+                    showEditKeyDialog = null
+                }
+            )
+        }
     }
     
-    // Delete Key Dialog
-    showDeleteKeyDialog?.let { key ->
-        AlertDialog(
-            onDismissRequest = { showDeleteKeyDialog = null },
-            title = { Text("Delete API Key?") },
-            text = { Text("Are you sure you want to delete this API key? This action cannot be undone.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        ApiProviderManager.removeApiKey(selectedProvider, key.id)
-                        providers = ApiProviderManager.getProviders()
-                        showDeleteKeyDialog = null
+    // Delete Key Dialog (only show for non-BUILTIN_LOCAL providers)
+    if (selectedProvider != ApiProviderType.BUILTIN_LOCAL) {
+        showDeleteKeyDialog?.let { key ->
+            AlertDialog(
+                onDismissRequest = { showDeleteKeyDialog = null },
+                title = { Text("Delete API Key?") },
+                text = { Text("Are you sure you want to delete this API key? This action cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            ApiProviderManager.removeApiKey(selectedProvider, key.id)
+                            providers = ApiProviderManager.getProviders()
+                            showDeleteKeyDialog = null
+                        }
+                    ) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
                     }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteKeyDialog = null }) {
+                        Text("Cancel")
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteKeyDialog = null }) {
-                    Text("Cancel")
+            )
+        }
+    }
+}
+    
+    // Delete Key Dialog (only show for non-BUILTIN_LOCAL providers)
+    if (selectedProvider != ApiProviderType.BUILTIN_LOCAL) {
+        showDeleteKeyDialog?.let { key ->
+            AlertDialog(
+                onDismissRequest = { showDeleteKeyDialog = null },
+                title = { Text("Delete API Key?") },
+                text = { Text("Are you sure you want to delete this API key? This action cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            ApiProviderManager.removeApiKey(selectedProvider, key.id)
+                            providers = ApiProviderManager.getProviders()
+                            showDeleteKeyDialog = null
+                        }
+                    ) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteKeyDialog = null }) {
+                        Text("Cancel")
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 }
 

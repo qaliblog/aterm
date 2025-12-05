@@ -121,7 +121,7 @@ import com.rk.resources.strings
 import com.rk.settings.Settings
 import com.qali.aterm.service.TabType
 import com.qali.aterm.ui.activities.terminal.MainActivity
-import com.qali.aterm.ui.screens.agent.AgentScreen
+import com.qali.aterm.ui.screens.agent.AgentTabs
 import com.qali.aterm.ui.screens.codeeditor.CodeEditorScreen
 import com.qali.aterm.ui.screens.fileexplorer.FileExplorerScreen
 import com.qali.aterm.ui.components.SettingsToggle
@@ -813,7 +813,7 @@ fun TerminalScreen(
                                     }
                                     
                                     TabType.AGENT -> {
-                                        AgentScreen(
+                                        AgentTabs(
                                             mainActivity = mainActivityActivity,
                                             sessionId = currentMainSession
                                         )

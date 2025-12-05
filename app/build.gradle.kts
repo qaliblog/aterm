@@ -88,6 +88,14 @@ android {
             resValue("string","app_name","aTerm-Debug")
         }
     }
+    
+    // External native build for llama.cpp
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     
     defaultConfig {
@@ -98,6 +106,18 @@ android {
 
         //versioning
         versionCode = 8
+        
+        // NDK configuration for llama.cpp
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+        
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
         versionName = "1.2.1"
         vectorDrawables {
             useSupportLibrary = true

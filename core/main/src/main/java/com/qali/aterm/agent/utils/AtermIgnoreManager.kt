@@ -23,6 +23,7 @@ object AtermIgnoreManager {
         "build/",
         "dist/",
         "out/",
+        ".next/",  // Next.js build directory
         ".gradle/",
         "target/",
         "__pycache__/",

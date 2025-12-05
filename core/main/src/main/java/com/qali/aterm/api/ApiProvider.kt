@@ -10,7 +10,8 @@ enum class ApiProviderType(val displayName: String) {
     GOOGLE("Google Gemini"),
     COHERE("Cohere"),
     MISTRAL("Mistral AI"),
-    CUSTOM("Custom")
+    CUSTOM("Custom"),
+    BUILTIN_LOCAL("Built-in Local Model")
 }
 
 data class ApiKey(
@@ -257,6 +258,7 @@ object ApiProviderManager {
             ApiProviderType.COHERE -> "command-r-plus"
             ApiProviderType.MISTRAL -> "mistral-large-latest"
             ApiProviderType.CUSTOM -> ""
+            ApiProviderType.BUILTIN_LOCAL -> "local-model"
         }
     }
     
@@ -264,6 +266,7 @@ object ApiProviderManager {
     fun getDefaultBaseUrl(providerType: ApiProviderType): String {
         return when (providerType) {
             ApiProviderType.GOOGLE -> "https://generativelanguage.googleapis.com/v1beta"
+            ApiProviderType.BUILTIN_LOCAL -> "" // Local model doesn't need base URL
             else -> ""
         }
     }
