@@ -168,7 +168,7 @@ fun LocalModelSettings() {
                     Preference.setString("localModelPath", path)
                     
                 // Ensure LocalLlamaModel is initialized
-                if (LocalLlamaModel.getModelPath() == null) {
+                if (!LocalLlamaModel.isInitialized()) {
                     LocalLlamaModel.init(context)
                 }
                 
@@ -237,7 +237,7 @@ fun LocalModelSettings() {
                 },
                 onClick = {
                     // Ensure LocalLlamaModel is initialized
-                    if (LocalLlamaModel.getModelPath() == null) {
+                    if (!LocalLlamaModel.isInitialized()) {
                         LocalLlamaModel.init(context)
                     }
                     

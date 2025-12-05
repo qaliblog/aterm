@@ -16,16 +16,22 @@ object LocalLlamaModel {
     
     // Context for accessing app directories
     private var appContext: Context? = null
+    private var isInitialized = false
     
     fun init(context: Context) {
-        appContext = context.applicationContext
-        try {
-            System.loadLibrary("llama")
-            Log.d(TAG, "Loaded llama native library")
-        } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "Failed to load llama native library: ${e.message}", e)
+        if (!isInitialized) {
+            appContext = context.applicationContext
+            try {
+                System.loadLibrary("llama")
+                Log.d(TAG, "Loaded llama native library")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to load llama native library: ${e.message}", e)
+            }
+            isInitialized = true
         }
     }
+    
+    fun isInitialized(): Boolean = isInitialized
     
     private var isModelLoaded = false
     private var modelPath: String? = null
