@@ -96,8 +96,14 @@ object AtermIgnoreManager {
     
     /**
      * Check if a file should be ignored (absolute path version)
+     * Also checks file size - ignores files larger than 2MB as per blueprint requirements
      */
     fun shouldIgnoreFile(file: File, workspaceRoot: String): Boolean {
+        // Check file size - ignore files larger than 2MB
+        if (file.isFile && file.length() > 2 * 1024 * 1024) {
+            return true
+        }
+        
         val relativePath = try {
             file.relativeTo(File(workspaceRoot)).path.replace("\\", "/")
         } catch (e: Exception) {
