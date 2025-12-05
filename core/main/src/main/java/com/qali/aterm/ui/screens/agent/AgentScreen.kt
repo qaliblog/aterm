@@ -114,6 +114,7 @@ data class PendingToolCall(
 
 /**
  * Parse message text to extract code blocks and text parts
+ * Returns content in order: text parts and code blocks interleaved
  */
 fun parseMessageContent(text: String): MessageContent {
     val codeBlockPattern = Regex("""```(\w+)?\s*\n?(.*?)\n?```""", RegexOption.DOT_MATCHES_ALL)
@@ -125,9 +126,10 @@ fun parseMessageContent(text: String): MessageContent {
         // Add text before code block
         if (match.range.first > lastIndex) {
             val textPart = text.substring(lastIndex, match.range.first).trim()
-            if (textPart.isNotEmpty()) {
-                textParts.add(textPart)
-            }
+            textParts.add(textPart) // Add even if empty to maintain order
+        } else if (textParts.isEmpty()) {
+            // If first match is at start, add empty text part
+            textParts.add("")
         }
         
         // Extract code block
@@ -141,14 +143,17 @@ fun parseMessageContent(text: String): MessageContent {
     // Add remaining text after last code block
     if (lastIndex < text.length) {
         val textPart = text.substring(lastIndex).trim()
-        if (textPart.isNotEmpty()) {
-            textParts.add(textPart)
-        }
+        textParts.add(textPart)
+    } else if (codeBlocks.isNotEmpty() && textParts.size == codeBlocks.size) {
+        // If code block is at end, add empty text part
+        textParts.add("")
     }
     
     // If no code blocks found, return entire text as single part
     if (codeBlocks.isEmpty()) {
-        textParts.add(text)
+        if (textParts.isEmpty()) {
+            textParts.add(text)
+        }
     }
     
     return MessageContent(textParts = textParts, codeBlocks = codeBlocks)
@@ -1141,12 +1146,27 @@ fun MessageBubble(message: AgentMessage) {
                 modifier = Modifier.widthIn(max = 320.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Display text parts and code blocks alternately
+                // Display text parts and code blocks in order
                 val content = message.parsedContent
                 var codeBlockIndex = 0
                 
+                // Build ordered list of content (text and code blocks interleaved)
+                val orderedContent = mutableListOf<Pair<String, CodeBlock?>>()
+                
+                // Since we parse sequentially, text parts and code blocks are already in order
+                // We need to match them up correctly
                 content.textParts.forEachIndexed { index, textPart ->
-                    // Display text part
+                    orderedContent.add(Pair(textPart, null))
+                    // Add code block after this text part if available
+                    if (codeBlockIndex < content.codeBlocks.size) {
+                        orderedContent.add(Pair("", content.codeBlocks[codeBlockIndex]))
+                        codeBlockIndex++
+                    }
+                }
+                
+                // Display ordered content
+                orderedContent.forEachIndexed { index, (textPart, codeBlock) ->
+                    // Display text part if not empty
                     if (textPart.isNotEmpty()) {
                         Card(
                             modifier = Modifier
@@ -1172,7 +1192,8 @@ fun MessageBubble(message: AgentMessage) {
                                         MaterialTheme.colorScheme.onSurfaceVariant
                                     }
                                 )
-                                if (index == content.textParts.size - 1 && content.codeBlocks.isEmpty()) {
+                                // Show timestamp only on last text part if no code blocks follow
+                                if (index == orderedContent.size - 1 && codeBlock == null) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = formatTimestamp(message.timestamp),
@@ -1189,37 +1210,23 @@ fun MessageBubble(message: AgentMessage) {
                         }
                     }
                     
-                    // Display code block after this text part (if available)
-                    if (codeBlockIndex < content.codeBlocks.size) {
+                    // Display code block
+                    codeBlock?.let { block ->
                         CodeBlockCard(
-                            codeBlock = content.codeBlocks[codeBlockIndex],
+                            codeBlock = block,
                             isUser = message.isUser
                         )
-                        codeBlockIndex++
+                        // Show timestamp after last code block
+                        if (index == orderedContent.size - 1) {
+                            Text(
+                                text = formatTimestamp(message.timestamp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(start = if (message.isUser) 0.dp else 40.dp, top = 4.dp)
+                            )
+                        }
                     }
-                }
-                
-                // Display any remaining code blocks
-                while (codeBlockIndex < content.codeBlocks.size) {
-                    CodeBlockCard(
-                        codeBlock = content.codeBlocks[codeBlockIndex],
-                        isUser = message.isUser
-                    )
-                    codeBlockIndex++
-                }
-                
-                // Show timestamp if no code blocks
-                if (content.codeBlocks.isEmpty() && content.textParts.isNotEmpty()) {
-                    // Timestamp already shown in last text part
-                } else if (content.codeBlocks.isNotEmpty()) {
-                    // Show timestamp below code blocks
-                    Text(
-                        text = formatTimestamp(message.timestamp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 10.sp,
-                        modifier = Modifier.padding(start = if (message.isUser) 0.dp else 40.dp, top = 4.dp)
-                    )
                 }
             }
             
