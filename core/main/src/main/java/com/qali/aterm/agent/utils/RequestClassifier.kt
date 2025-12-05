@@ -24,12 +24,14 @@ object RequestClassifier {
      * @param userMessage The user's message/prompt
      * @param apiClient The API client for AI calls (non-streaming mode)
      * @param chatHistory Optional chat history for context
+     * @param systemInfo Optional system information for context
      * @return Classification result with intent and confidence
      */
     suspend fun classifyRequest(
         userMessage: String,
         apiClient: PpeApiClient?,
-        chatHistory: List<Content> = emptyList()
+        chatHistory: List<Content> = emptyList(),
+        systemInfo: ActionFlowPlanner.SystemInfo? = null
     ): RequestClassificationResult {
         // First try rule-based classification for quick results
         val ruleBasedResult = classifyWithRules(userMessage)
@@ -43,7 +45,7 @@ object RequestClassifier {
         // If API client available, use AI for better classification
         if (apiClient != null) {
             return try {
-                classifyWithAI(userMessage, apiClient, chatHistory)
+                classifyWithAI(userMessage, apiClient, chatHistory, systemInfo)
             } catch (e: Exception) {
                 Log.w("RequestClassifier", "AI classification failed, using rule-based: ${e.message}")
                 ruleBasedResult
@@ -111,34 +113,54 @@ object RequestClassifier {
     private suspend fun classifyWithAI(
         userMessage: String,
         apiClient: PpeApiClient,
-        chatHistory: List<Content>
+        chatHistory: List<Content>,
+        systemInfo: ActionFlowPlanner.SystemInfo?
     ): RequestClassificationResult {
-        val prompt = """
-Analyze the following user request and classify it into one of these categories:
-
-1. ERROR_DEBUG - User wants to debug/fix an error or problem
-2. UPGRADE - User wants to upgrade/enhance/add features to the application
-3. BOTH - User wants to both fix an error AND upgrade/enhance
-4. UNKNOWN - Cannot determine intent
-
-User Request: "$userMessage"
-
-Consider:
-- Error indicators: error messages, exceptions, crashes, "doesn't work", "not working", stack traces
-- Upgrade indicators: "add feature", "upgrade", "enhance", "implement", "new functionality", "improve"
-- If both error fixing and upgrading are mentioned, classify as BOTH
-
-Return your response as a JSON object in this EXACT format (no markdown, just JSON):
-{
-  "intent": "ERROR_DEBUG" | "UPGRADE" | "BOTH" | "UNKNOWN",
-  "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of why this classification was chosen",
-  "errorIndicators": ["list", "of", "error", "indicators", "found"],
-  "upgradeIndicators": ["list", "of", "upgrade", "indicators", "found"]
-}
-
-JSON Response:
-""".trimIndent()
+        val prompt = buildString {
+            appendLine("Analyze the following user request and classify it into one of these categories:")
+            appendLine()
+            appendLine("1. ERROR_DEBUG - User wants to debug/fix an error or problem")
+            appendLine("2. UPGRADE - User wants to upgrade/enhance/add features to the application")
+            appendLine("3. BOTH - User wants to both fix an error AND upgrade/enhance")
+            appendLine("4. UNKNOWN - Cannot determine intent")
+            appendLine()
+            
+            if (systemInfo != null) {
+                appendLine("## System Information")
+                appendLine("- Current Directory: ${systemInfo.currentDir}")
+                appendLine("- OS: ${systemInfo.os} ${systemInfo.osVersion}")
+                appendLine("- Architecture: ${systemInfo.architecture}")
+                appendLine("- Package Manager: ${systemInfo.packageManager}")
+                appendLine("- Shell: ${systemInfo.shell}")
+                appendLine()
+                appendLine("## Directory Information")
+                appendLine("- Files: ${systemInfo.dirInfo.fileCount}")
+                appendLine("- Directories: ${systemInfo.dirInfo.directoryCount}")
+                appendLine("- Has package.json: ${systemInfo.dirInfo.hasPackageJson}")
+                appendLine("- Has build.gradle: ${systemInfo.dirInfo.hasBuildGradle}")
+                appendLine("- Project Type: ${systemInfo.dirInfo.projectType ?: "Unknown"}")
+                appendLine()
+            }
+            
+            appendLine("## User Request")
+            appendLine("\"$userMessage\"")
+            appendLine()
+            appendLine("Consider:")
+            appendLine("- Error indicators: error messages, exceptions, crashes, \"doesn't work\", \"not working\", stack traces")
+            appendLine("- Upgrade indicators: \"add feature\", \"upgrade\", \"enhance\", \"implement\", \"new functionality\", \"improve\"")
+            appendLine("- If both error fixing and upgrading are mentioned, classify as BOTH")
+            appendLine()
+            appendLine("Return your response as a JSON object in this EXACT format (no markdown, just JSON):")
+            appendLine("{")
+            appendLine("  \"intent\": \"ERROR_DEBUG\" | \"UPGRADE\" | \"BOTH\" | \"UNKNOWN\",")
+            appendLine("  \"confidence\": 0.0-1.0,")
+            appendLine("  \"reasoning\": \"Brief explanation of why this classification was chosen\",")
+            appendLine("  \"errorIndicators\": [\"list\", \"of\", \"error\", \"indicators\", \"found\"],")
+            appendLine("  \"upgradeIndicators\": [\"list\", \"of\", \"upgrade\", \"indicators\", \"found\"]")
+            appendLine("}")
+            appendLine()
+            appendLine("JSON Response:")
+        }
         
         val messages = chatHistory.toMutableList()
         messages.add(

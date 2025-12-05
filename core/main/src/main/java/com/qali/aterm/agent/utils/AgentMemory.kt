@@ -1,254 +1,291 @@
 package com.qali.aterm.agent.utils
 
-import com.qali.aterm.ui.screens.agent.AgentMessage
+import java.io.File
 import android.util.Log
+import org.json.JSONObject
+import org.json.JSONArray
 
 /**
- * Agent memory system that parses events from chat history to extract important context
- * This helps the agent remember what was done in previous interactions
+ * Agent memory system with summarization
+ * Keeps memory under 80 lines and supports search/append
  */
 object AgentMemory {
     
-    data class Memory(
-        val projectType: String? = null,
-        val framework: String? = null,
-        val os: String? = null,
-        val packageManager: String? = null,
-        val filesCreated: List<String> = emptyList(),
-        val filesModified: List<String> = emptyList(),
-        val toolsUsed: List<String> = emptyList(),
-        val keyEvents: List<String> = emptyList(),
-        val dependenciesInstalled: List<String> = emptyList(),
-        val projectStructure: String? = null,
-        val lastAction: String? = null
+    private const val MAX_MEMORY_LINES = 80
+    private const val MEMORY_FILE = ".agent_memory.json"
+    
+    /**
+     * Memory entry
+     */
+    data class MemoryEntry(
+        val id: String,
+        val timestamp: Long,
+        val category: String,
+        val content: String,
+        val tags: List<String> = emptyList()
     )
     
     /**
-     * Parse memory from chat history messages
-     * Extracts important information from the first prompt and subsequent events
+     * Memory summary
      */
-    fun parseMemoryFromHistory(messages: List<AgentMessage>, workspaceRoot: String? = null): Memory {
-        if (messages.isEmpty()) {
-            return Memory()
+    data class MemorySummary(
+        val entries: List<MemoryEntry>,
+        val summary: String,
+        val totalLines: Int
+    )
+    
+    /**
+     * Load memory from file
+     */
+    fun loadMemory(workspaceRoot: String): MemorySummary {
+        val memoryFile = File(workspaceRoot, MEMORY_FILE)
+        if (!memoryFile.exists()) {
+            return MemorySummary(emptyList(), "", 0)
         }
         
-        val firstUserMessage = messages.firstOrNull { it.isUser }?.text ?: ""
-        val allMessages = messages.joinToString("\n") { it.text }
-        
-        // Detect project type from first message and file diffs
-        val projectType = detectProjectType(firstUserMessage, messages, workspaceRoot)
-        val framework = detectFramework(firstUserMessage, allMessages)
-        val os = detectOSFromMessages(allMessages, workspaceRoot)
-        val packageManager = detectPackageManagerFromMessages(allMessages, os)
-        
-        // Extract files created/modified from file diffs
-        val filesCreated = messages.mapNotNull { it.fileDiff?.takeIf { it.isNewFile }?.filePath }.distinct()
-        val filesModified = messages.mapNotNull { it.fileDiff?.takeIf { !it.isNewFile }?.filePath }.distinct()
-        
-        // Extract tools used
-        val toolsUsed = messages
-            .filter { !it.isUser && it.text.contains("🔧 Calling tool:") }
-            .mapNotNull { 
-                val match = Regex("🔧 Calling tool: (\\w+)").find(it.text)
-                match?.groupValues?.get(1)
-            }
-            .distinct()
-        
-        // Extract key events (dependencies installed, commands run, etc.)
-        val keyEvents = mutableListOf<String>()
-        messages.forEach { msg ->
-            when {
-                msg.text.contains("npm install") || msg.text.contains("pip install") || 
-                msg.text.contains("apk add") || msg.text.contains("apt install") -> {
-                    val match = Regex("(npm install|pip install|apk add|apt install)\\s+([\\w-]+)").find(msg.text)
-                    match?.groupValues?.get(2)?.let { keyEvents.add("Installed dependency: $it") }
-                }
-                msg.text.contains("✅ Tool") && msg.text.contains("completed") -> {
-                    val match = Regex("✅ Tool '([^']+)' completed").find(msg.text)
-                    match?.groupValues?.get(1)?.let { keyEvents.add("Completed: $it") }
-                }
-            }
+        return try {
+            val json = JSONObject(memoryFile.readText())
+            parseMemoryFromJson(json)
+        } catch (e: Exception) {
+            Log.e("AgentMemory", "Failed to load memory: ${e.message}", e)
+            MemorySummary(emptyList(), "", 0)
         }
-        
-        // Extract dependencies installed
-        val dependenciesInstalled = messages
-            .filter { it.text.contains("install") && (it.text.contains("npm") || it.text.contains("pip") || it.text.contains("apk") || it.text.contains("apt")) }
-            .mapNotNull {
-                val match = Regex("(npm install|pip install|apk add|apt install)\\s+([\\w-@.]+)").find(it.text)
-                match?.groupValues?.get(2)
-            }
-            .distinct()
-        
-        // Determine project structure
-        val projectStructure = when {
-            filesCreated.any { it.contains("package.json") } -> "Node.js project"
-            filesCreated.any { it.contains("go.mod") } -> "Go project"
-            filesCreated.any { it.contains("Cargo.toml") } -> "Rust project"
-            filesCreated.any { it.contains("build.gradle") } -> "Java/Kotlin project"
-            filesCreated.any { it.contains("requirements.txt") || filesCreated.any { it.contains("Pipfile") } } -> "Python project"
-            else -> null
-        }
-        
-        // Get last action
-        val lastAction = messages.lastOrNull { !it.isUser }?.text?.take(100)
-        
-        return Memory(
-            projectType = projectType,
-            framework = framework,
-            os = os,
-            packageManager = packageManager,
-            filesCreated = filesCreated,
-            filesModified = filesModified,
-            toolsUsed = toolsUsed,
-            keyEvents = keyEvents,
-            dependenciesInstalled = dependenciesInstalled,
-            projectStructure = projectStructure,
-            lastAction = lastAction
-        )
     }
     
     /**
-     * Format memory as a context string for AI prompts
+     * Save memory to file
      */
-    fun formatMemoryForPrompt(memory: Memory): String {
-        if (memory.projectType == null && memory.filesCreated.isEmpty() && memory.keyEvents.isEmpty()) {
+    fun saveMemory(summary: MemorySummary, workspaceRoot: String) {
+        val memoryFile = File(workspaceRoot, MEMORY_FILE)
+        val json = memoryToJson(summary)
+        memoryFile.writeText(json.toString(2))
+    }
+    
+    /**
+     * Add memory entry
+     */
+    fun addMemory(
+        category: String,
+        content: String,
+        tags: List<String> = emptyList(),
+        workspaceRoot: String
+    ) {
+        val current = loadMemory(workspaceRoot)
+        val newEntry = MemoryEntry(
+            id = "mem_${System.currentTimeMillis()}",
+            timestamp = System.currentTimeMillis(),
+            category = category,
+            content = content,
+            tags = tags
+        )
+        
+        val updatedEntries = (current.entries + newEntry).sortedByDescending { it.timestamp }
+        val summarized = summarizeMemory(updatedEntries)
+        
+        saveMemory(summarized, workspaceRoot)
+    }
+    
+    /**
+     * Search memory
+     */
+    fun searchMemory(
+        query: String,
+        workspaceRoot: String
+    ): List<MemoryEntry> {
+        val memory = loadMemory(workspaceRoot)
+        val queryLower = query.lowercase()
+        
+        return memory.entries.filter { entry ->
+            entry.content.lowercase().contains(queryLower) ||
+            entry.category.lowercase().contains(queryLower) ||
+            entry.tags.any { it.lowercase().contains(queryLower) }
+        }
+    }
+    
+    /**
+     * Summarize memory to keep under MAX_MEMORY_LINES
+     */
+    private fun summarizeMemory(entries: List<MemoryEntry>): MemorySummary {
+        if (entries.isEmpty()) {
+            return MemorySummary(emptyList(), "", 0)
+        }
+        
+        // Calculate total lines
+        val totalLines = entries.sumOf { entry ->
+            entry.content.lines().size + 2 // +2 for category and tags
+        }
+        
+        // If under limit, return as-is
+        if (totalLines <= MAX_MEMORY_LINES) {
+            val summary = buildSummary(entries)
+            return MemorySummary(entries, summary, totalLines)
+        }
+        
+        // Need to summarize - keep most recent entries and summarize older ones
+        val recentCount = MAX_MEMORY_LINES / 4 // Keep 25% as recent entries
+        val recentEntries = entries.take(recentCount)
+        val oldEntries = entries.drop(recentCount)
+        
+        // Summarize old entries
+        val summarizedOld = oldEntries.groupBy { it.category }.map { (category, categoryEntries) ->
+            val combinedContent = categoryEntries.joinToString("\n") { it.content }
+            val allTags = categoryEntries.flatMap { it.tags }.distinct()
+            
+            MemoryEntry(
+                id = "summary_${category}_${System.currentTimeMillis()}",
+                timestamp = categoryEntries.maxOfOrNull { it.timestamp } ?: System.currentTimeMillis(),
+                category = category,
+                content = summarizeContent(combinedContent, MAX_MEMORY_LINES / 2),
+                tags = allTags
+            )
+        }
+        
+        val finalEntries = (recentEntries + summarizedOld).sortedByDescending { it.timestamp }
+        val summary = buildSummary(finalEntries)
+        val finalLines = finalEntries.sumOf { it.content.lines().size + 2 }
+        
+        return MemorySummary(finalEntries, summary, finalLines)
+    }
+    
+    /**
+     * Summarize content to fit within line limit
+     */
+    private fun summarizeContent(content: String, maxLines: Int): String {
+        val lines = content.lines()
+        if (lines.size <= maxLines) {
+            return content
+        }
+        
+        // Keep first and last lines, summarize middle
+        val keepFirst = maxLines / 3
+        val keepLast = maxLines / 3
+        val summarizeMiddle = maxLines - keepFirst - keepLast
+        
+        val first = lines.take(keepFirst)
+        val last = lines.takeLast(keepLast)
+        val middle = lines.drop(keepFirst).dropLast(keepLast)
+        
+        val middleSummary = if (middle.isNotEmpty()) {
+            val middleText = middle.joinToString("\n")
+            // Simple summarization: take key sentences
+            val sentences = middleText.split(Regex("[.!?]\\s+"))
+            sentences.take(summarizeMiddle).joinToString(". ") + "."
+        } else {
+            ""
+        }
+        
+        return buildString {
+            appendLine(first.joinToString("\n"))
+            if (middleSummary.isNotEmpty()) {
+                appendLine("... [summarized] ...")
+                appendLine(middleSummary)
+            }
+            appendLine(last.joinToString("\n"))
+        }
+    }
+    
+    /**
+     * Build summary text
+     */
+    private fun buildSummary(entries: List<MemoryEntry>): String {
+        if (entries.isEmpty()) return ""
+        
+        val categories = entries.groupBy { it.category }
+        return buildString {
+            appendLine("Memory Summary (${entries.size} entries):")
+            categories.forEach { (category, categoryEntries) ->
+                appendLine("  $category: ${categoryEntries.size} entries")
+            }
+        }
+    }
+    
+    /**
+     * Convert memory to JSON
+     */
+    private fun memoryToJson(summary: MemorySummary): JSONObject {
+        val json = JSONObject()
+        json.put("summary", summary.summary)
+        json.put("totalLines", summary.totalLines)
+        
+        val entriesArray = JSONArray()
+        summary.entries.forEach { entry ->
+            entriesArray.put(entryToJson(entry))
+        }
+        json.put("entries", entriesArray)
+        
+        return json
+    }
+    
+    /**
+     * Convert entry to JSON
+     */
+    private fun entryToJson(entry: MemoryEntry): JSONObject {
+        val json = JSONObject()
+        json.put("id", entry.id)
+        json.put("timestamp", entry.timestamp)
+        json.put("category", entry.category)
+        json.put("content", entry.content)
+        json.put("tags", JSONArray(entry.tags))
+        return json
+    }
+    
+    /**
+     * Parse memory from JSON
+     */
+    private fun parseMemoryFromJson(json: JSONObject): MemorySummary {
+        val summary = json.optString("summary", "")
+        val totalLines = json.optInt("totalLines", 0)
+        
+        val entriesArray = json.getJSONArray("entries")
+        val entries = mutableListOf<MemoryEntry>()
+        
+        for (i in 0 until entriesArray.length()) {
+            val entryObj = entriesArray.getJSONObject(i)
+            val tagsArray = entryObj.getJSONArray("tags")
+            val tags = mutableListOf<String>()
+            for (j in 0 until tagsArray.length()) {
+                tags.add(tagsArray.getString(j))
+            }
+            
+            entries.add(MemoryEntry(
+                id = entryObj.getString("id"),
+                timestamp = entryObj.getLong("timestamp"),
+                category = entryObj.getString("category"),
+                content = entryObj.getString("content"),
+                tags = tags
+            ))
+        }
+        
+        return MemorySummary(entries, summary, totalLines)
+    }
+    
+    /**
+     * Get memory for context (formatted for AI)
+     */
+    fun getMemoryForContext(workspaceRoot: String, query: String? = null): String {
+        val memory = if (query != null) {
+            val searchResults = searchMemory(query, workspaceRoot)
+            MemorySummary(searchResults, "", searchResults.sumOf { it.content.lines().size + 2 })
+        } else {
+            loadMemory(workspaceRoot)
+        }
+        
+        if (memory.entries.isEmpty()) {
             return ""
         }
         
         return buildString {
-            appendLine("## Agent Memory (Previous Session Context)")
-            if (memory.projectType != null) {
-                appendLine("- **Project Type:** ${memory.projectType}")
-            }
-            if (memory.framework != null) {
-                appendLine("- **Framework:** ${memory.framework}")
-            }
-            if (memory.os != null) {
-                appendLine("- **OS:** ${memory.os}")
-            }
-            if (memory.packageManager != null) {
-                appendLine("- **Package Manager:** ${memory.packageManager}")
-            }
-            if (memory.projectStructure != null) {
-                appendLine("- **Project Structure:** ${memory.projectStructure}")
-            }
-            if (memory.filesCreated.isNotEmpty()) {
-                appendLine("- **Files Created:** ${memory.filesCreated.joinToString(", ")}")
-            }
-            if (memory.filesModified.isNotEmpty()) {
-                appendLine("- **Files Modified:** ${memory.filesModified.joinToString(", ")}")
-            }
-            if (memory.dependenciesInstalled.isNotEmpty()) {
-                appendLine("- **Dependencies Installed:** ${memory.dependenciesInstalled.joinToString(", ")}")
-            }
-            if (memory.keyEvents.isNotEmpty()) {
-                appendLine("- **Key Events:**")
-                memory.keyEvents.takeLast(5).forEach { appendLine("  - $it") }
-            }
-            if (memory.lastAction != null) {
-                appendLine("- **Last Action:** ${memory.lastAction}")
-            }
+            appendLine("## Agent Memory")
+            appendLine(memory.summary)
             appendLine()
-            appendLine("**IMPORTANT:** Use this context to maintain consistency with previous work. Continue from where you left off.")
-        }
-    }
-    
-    private fun detectProjectType(firstMessage: String, messages: List<AgentMessage>, workspaceRoot: String?): String? {
-        // Check first message
-        when {
-            firstMessage.contains("nodejs", ignoreCase = true) || 
-            firstMessage.contains("node.js", ignoreCase = true) || 
-            firstMessage.contains("node", ignoreCase = true) && firstMessage.contains("webapp", ignoreCase = true) -> {
-                return "Node.js"
-            }
-            firstMessage.contains("python", ignoreCase = true) -> return "Python"
-            firstMessage.contains("go", ignoreCase = true) && !firstMessage.contains("golang", ignoreCase = true) -> return "Go"
-            firstMessage.contains("rust", ignoreCase = true) -> return "Rust"
-            firstMessage.contains("java", ignoreCase = true) -> return "Java"
-            firstMessage.contains("kotlin", ignoreCase = true) -> return "Kotlin"
-        }
-        
-        // Check file diffs
-        messages.forEach { msg ->
-            msg.fileDiff?.filePath?.let { path ->
-                when {
-                    path.contains("package.json") -> return "Node.js"
-                    path.contains("go.mod") -> return "Go"
-                    path.contains("Cargo.toml") -> return "Rust"
-                    path.contains("build.gradle") -> return "Java/Kotlin"
-                    path.contains("requirements.txt") || path.contains("Pipfile") -> return "Python"
+            memory.entries.take(10).forEach { entry ->
+                appendLine("### ${entry.category}")
+                appendLine(entry.content.take(200)) // Limit each entry
+                if (entry.tags.isNotEmpty()) {
+                    appendLine("Tags: ${entry.tags.joinToString(", ")}")
                 }
+                appendLine()
             }
-        }
-        
-        // Check workspace
-        workspaceRoot?.let { root ->
-            val rootFile = java.io.File(root)
-            if (java.io.File(rootFile, "package.json").exists()) return "Node.js"
-            if (java.io.File(rootFile, "go.mod").exists()) return "Go"
-            if (java.io.File(rootFile, "Cargo.toml").exists()) return "Rust"
-            if (java.io.File(rootFile, "build.gradle").exists() || java.io.File(rootFile, "build.gradle.kts").exists()) return "Java/Kotlin"
-            if (java.io.File(rootFile, "requirements.txt").exists() || java.io.File(rootFile, "Pipfile").exists()) return "Python"
-        }
-        
-        return null
-    }
-    
-    private fun detectFramework(firstMessage: String, allMessages: String): String? {
-        val combined = (firstMessage + " " + allMessages).lowercase()
-        when {
-            combined.contains("express") -> return "Express.js"
-            combined.contains("react") -> return "React"
-            combined.contains("vue") -> return "Vue.js"
-            combined.contains("angular") -> return "Angular"
-            combined.contains("next.js") || combined.contains("nextjs") -> return "Next.js"
-            combined.contains("django") -> return "Django"
-            combined.contains("flask") -> return "Flask"
-            combined.contains("fastapi") -> return "FastAPI"
-            combined.contains("spring") -> return "Spring"
-            combined.contains("gin") -> return "Gin"
-            combined.contains("actix") -> return "Actix"
-        }
-        return null
-    }
-    
-    private fun detectOSFromMessages(allMessages: String, workspaceRoot: String?): String? {
-        val combined = allMessages.lowercase()
-        when {
-            combined.contains("alpine") -> return "Alpine Linux"
-            combined.contains("ubuntu") -> return "Ubuntu"
-            combined.contains("debian") -> return "Debian"
-            combined.contains("apk") -> return "Alpine Linux"
-            combined.contains("apt") -> return "Debian/Ubuntu"
-        }
-        
-        // Check workspace root path
-        workspaceRoot?.let { root ->
-            when {
-                root.contains("/alpine", ignoreCase = true) -> return "Alpine Linux"
-                root.contains("/ubuntu", ignoreCase = true) -> return "Ubuntu"
-            }
-        }
-        
-        return null
-    }
-    
-    private fun detectPackageManagerFromMessages(allMessages: String, os: String?): String? {
-        val combined = allMessages.lowercase()
-        when {
-            combined.contains("apk") -> return "apk"
-            combined.contains("apt") -> return "apt"
-            combined.contains("yum") -> return "yum"
-            combined.contains("dnf") -> return "dnf"
-            combined.contains("pacman") -> return "pacman"
-            combined.contains("brew") -> return "brew"
-        }
-        
-        // Infer from OS
-        return when {
-            os?.contains("Alpine", ignoreCase = true) == true -> "apk"
-            os?.contains("Debian", ignoreCase = true) == true || os?.contains("Ubuntu", ignoreCase = true) == true -> "apt"
-            else -> null
         }
     }
 }
