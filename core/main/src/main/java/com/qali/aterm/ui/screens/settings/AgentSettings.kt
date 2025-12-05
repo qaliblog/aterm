@@ -19,6 +19,13 @@ fun AgentSettings() {
     var useApiSearch by remember { mutableStateOf(Settings.use_api_search) }
     var recursiveCurls by remember { mutableStateOf(Settings.custom_search_recursive_curls) }
     
+    // Command Allowlist state
+    val context = LocalContext.current
+    var allowedCommands by remember { 
+        mutableStateOf(CommandAllowlist.getAllowedCommands(context).sorted())
+    }
+    var showResetDialog by remember { mutableStateOf(false) }
+    
     PreferenceGroup(heading = "Agent Settings") {
         SettingsCard(
             title = { Text("Use API Search") },
@@ -77,12 +84,6 @@ fun AgentSettings() {
         
         // Command Allowlist Settings
         PreferenceGroup(heading = "Command Allowlist") {
-            val context = LocalContext.current
-            var allowedCommands by remember { 
-                mutableStateOf(CommandAllowlist.getAllowedCommands(context).sorted())
-            }
-            var showResetDialog by remember { mutableStateOf(false) }
-            
             // Display allowed commands
             SettingsCard(
                 title = { Text("Allowed Commands") },
