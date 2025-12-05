@@ -79,26 +79,29 @@ object CommandAllowlist {
     }
     
     /**
-     * Reset allowlist to base commands
+     * Reset allowlist to base commands only
+     * Clears all custom commands, leaving only base startup commands
      */
     fun resetToBase(context: Context?) {
         if (context == null) return
         
-        saveAllowlist(BASE_ALLOWED_COMMANDS.toMutableSet(), context)
-        Log.d("CommandAllowlist", "Reset allowlist to base commands")
+        // Clear custom allowlist (base commands are always allowed via isAllowed check)
+        saveAllowlist(emptySet(), context)
+        Log.d("CommandAllowlist", "Reset allowlist to base commands only")
     }
     
     /**
      * Load allowlist from preferences
+     * Returns only custom commands (base commands are always allowed)
      */
     private fun loadAllowlist(context: Context): Set<String> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val allowlistJson = prefs.getString(KEY_ALLOWLIST, null)
         
         if (allowlistJson == null) {
-            // Initialize with base commands
-            saveAllowlist(BASE_ALLOWED_COMMANDS.toMutableSet(), context)
-            return BASE_ALLOWED_COMMANDS
+            // Initialize with empty set (base commands are always allowed)
+            saveAllowlist(emptySet(), context)
+            return emptySet()
         }
         
         return try {
@@ -110,7 +113,7 @@ object CommandAllowlist {
             commands
         } catch (e: Exception) {
             Log.e("CommandAllowlist", "Failed to load allowlist: ${e.message}", e)
-            BASE_ALLOWED_COMMANDS
+            emptySet()
         }
     }
     
