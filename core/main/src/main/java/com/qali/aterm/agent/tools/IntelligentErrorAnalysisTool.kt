@@ -433,9 +433,15 @@ class IntelligentErrorAnalysisToolInvocation(
 
 $context
 
+CRITICAL: If the error is "Cannot find module", you MUST:
+1. Identify the file that's trying to import the missing module
+2. Search for where the actual module file exists in the project
+3. Provide the EXACT code change needed to fix the import path (e.g., change './db' to './src/db' if db.js is in src/)
+4. Include the exact old_string and new_string for the edit tool
+
 Please provide:
 1. Root cause analysis
-2. Specific code changes needed
+2. Specific code changes needed (with exact old_string and new_string if it's an import path fix)
 3. Step-by-step fix instructions"""
                 }
                 ErrorDetectionService.RequestType.CHANGE_REQUEST -> {

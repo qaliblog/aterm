@@ -3939,7 +3939,10 @@ Updated Blueprint JSON:
                 Regex("""ReferenceError|TypeError|SyntaxError""").find(userMessage) != null
             }
             if (errorAnalysisTool != null && hasError) {
-                onChunk("Step 0: Analyzing error with intelligent error analysis...\n")
+                // Only show message once, not repeatedly
+                if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains("Step 0: Analyzing error") } }) {
+                    onChunk("Step 0: Analyzing error with intelligent error analysis...\n")
+                }
                 try {
                     val analysisParams = mapOf(
                         "errorMessage" to userMessage
@@ -3959,14 +3962,20 @@ Updated Blueprint JSON:
                     val analysisResult = analysisInvocation.execute(null, onChunk)
                     onToolResult("intelligent_error_analysis", analysisParams)
                     
-                    // Add analysis result to chat history
-                    updatedChatHistory.add(
-                        Content(
-                            role = "user",
-                            parts = listOf(Part.TextPart(text = "Error Analysis Result:\n${analysisResult.llmContent}"))
+                    // Add analysis result to chat history (only if not already present)
+                    val analysisText = "Error Analysis Result:\n${analysisResult.llmContent}"
+                    if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains(analysisText.take(50)) } }) {
+                        updatedChatHistory.add(
+                            Content(
+                                role = "user",
+                                parts = listOf(Part.TextPart(text = analysisText))
+                            )
                         )
-                    )
-                    onChunk("Error analysis completed.\n\n")
+                    }
+                    // Don't print "Error analysis completed" if it was already printed
+                    if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains("Error analysis completed") } }) {
+                        onChunk("Error analysis completed.\n\n")
+                    }
                 } catch (e: Exception) {
                     Log.w("PpeExecutionEngine", "Error analysis tool failed, continuing with normal flow", e)
                     onChunk("Error analysis unavailable, continuing with standard flow...\n\n")
@@ -4015,6 +4024,30 @@ Updated Blueprint JSON:
                 
                 // Step 4: Get plan from AI
                 onChunk("Step 4: Analyzing and creating plan...\n")
+                
+                // Check for "Cannot find module" errors and suggest fixes
+                val moduleFixHint = if (userMessage.contains("Cannot find module", ignoreCase = true)) {
+                    val moduleMatch = Regex("""Cannot find module\s+['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(userMessage)
+                    if (moduleMatch != null) {
+                        val missingModule = moduleMatch.groupValues[1]
+                        val fileName = File(missingModule.removePrefix("./").removePrefix("../")).name
+                        val foundFiles = fileContents.keys.filter { it.contains(fileName, ignoreCase = true) }
+                        if (foundFiles.isNotEmpty()) {
+                            "\n\nMODULE PATH FIX REQUIRED:\nThe error indicates a missing module: '$missingModule'\n" +
+                            "Found potential file(s): ${foundFiles.joinToString(", ")}\n" +
+                            "ACTION REQUIRED: Use the 'edit' tool to fix the import path in the file that's trying to import '$missingModule'.\n" +
+                            "Example: If server.js imports './db' but db.js is in src/, change the import to './src/db'\n" +
+                            "Provide the exact old_string (current import) and new_string (corrected import path).\n"
+                        } else {
+                            ""
+                        }
+                    } else {
+                        ""
+                    }
+                } else {
+                    ""
+                }
+                
                 val planPrompt = """
 IMPORTANT: This is a FIX/UPGRADE request for an EXISTING project. Do NOT regenerate the entire project or create blueprints.
 
@@ -4022,7 +4055,7 @@ User Request: $userMessage
 
 Files Read:
 ${fileContents.keys.joinToString("\n") { "- $it" }}
-
+$moduleFixHint
 CRITICAL INSTRUCTIONS:
 1. This is a targeted fix/upgrade - only modify what's necessary
 2. For EXISTING files: Use the 'edit' tool to make specific changes, NOT 'write_file'
@@ -4031,11 +4064,13 @@ CRITICAL INSTRUCTIONS:
 5. Do NOT suggest "Phase 1: Generate Blueprint" or similar full regeneration approaches
 6. Focus on the specific issue mentioned in the user's request
 7. Make minimal, targeted changes to fix the problem
+8. If fixing a "Cannot find module" error, you MUST fix the import path using the 'edit' tool with exact old_string and new_string
 
 Analyze the user's request and the files. Then:
-- If modifying existing files: Use 'edit' tool with specific changes
+- If modifying existing files: Use 'edit' tool with specific changes (include exact old_string and new_string)
 - If creating new files: Use 'write_file' tool (only if file doesn't exist)
 - Be precise and minimal - fix only what's needed
+- For import path fixes: Provide the exact import line as old_string and the corrected import line as new_string
 
 Now analyze and implement the fix directly using tools:
 """.trimIndent()
@@ -4830,12 +4865,14 @@ Now fix the specific issue using the 'edit' tool:
         
         // Convert module path to file path
         // Handle both relative paths (./middleware/auth) and module names (middleware/auth)
-        val filePath = when {
+        val requestedPath = when {
             missingModule.startsWith("./") -> missingModule.substring(2)
             missingModule.startsWith("../") -> missingModule
             missingModule.startsWith("/") -> missingModule.substring(1)
             else -> missingModule
-        }.let { path ->
+        }
+        
+        val filePath = requestedPath.let { path ->
             // Add .js extension if not present and it's a JavaScript module
             if (!path.contains(".") && (combinedText.contains(".js") || combinedText.contains("node") || combinedText.contains("require"))) {
                 "$path.js"
@@ -4844,11 +4881,33 @@ Now fix the specific issue using the 'edit' tool:
             }
         }
         
-        // Check if file already exists
+        // Check if file already exists at requested path
         val file = File(workspaceRoot, filePath)
         if (file.exists()) {
             android.util.Log.d("PpeExecutionEngine", "File already exists: $filePath")
             return null
+        }
+        
+        // Search for the file in common locations (src/, lib/, etc.)
+        val fileName = File(filePath).name
+        val searchDirs = listOf("src", "lib", "app", "server", "routes", "controllers", "models", "utils")
+        for (dir in searchDirs) {
+            val candidateFile = File(workspaceRoot, "$dir/$fileName")
+            if (candidateFile.exists()) {
+                android.util.Log.d("PpeExecutionEngine", "Found file in alternative location: ${candidateFile.relativeTo(File(workspaceRoot)).path}")
+                // Return the correct path that should be used in the import
+                return candidateFile.relativeTo(File(workspaceRoot)).path.replace("\\", "/")
+            }
+        }
+        
+        // Also search recursively for the file
+        val foundFile = File(workspaceRoot).walkTopDown()
+            .firstOrNull { it.isFile && it.name == fileName && !AtermIgnoreManager.shouldIgnoreFile(it, workspaceRoot) }
+        
+        if (foundFile != null) {
+            val relativePath = foundFile.relativeTo(File(workspaceRoot)).path.replace("\\", "/")
+            android.util.Log.d("PpeExecutionEngine", "Found file recursively: $relativePath")
+            return relativePath
         }
         
         return filePath
