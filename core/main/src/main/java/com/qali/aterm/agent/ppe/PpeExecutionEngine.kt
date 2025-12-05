@@ -4185,23 +4185,44 @@ Please provide more details so I can help you better.
                                     // Get enhanced error context
                                     val enhancedContext = com.qali.aterm.agent.utils.ErrorDetectionUtils.getErrorContext(
                                         errorLoc,
-                                        fileContent,
-                                        workspaceRoot
+                                        workspaceRoot,
+                                        5
                                     )
                                     
                                     if (enhancedContext != null) {
+                                        // Extract error type from user message
+                                        val errorType = com.qali.aterm.agent.utils.ErrorDetectionUtils.parseErrorLocations(
+                                            userMessage,
+                                            workspaceRoot
+                                        ).firstOrNull()?.let { 
+                                            // Try to extract error type from message
+                                            when {
+                                                userMessage.contains("SyntaxError", ignoreCase = true) -> "SyntaxError"
+                                                userMessage.contains("TypeError", ignoreCase = true) -> "TypeError"
+                                                userMessage.contains("ReferenceError", ignoreCase = true) -> "ReferenceError"
+                                                userMessage.contains("ImportError", ignoreCase = true) -> "ImportError"
+                                                userMessage.contains("RuntimeError", ignoreCase = true) -> "RuntimeError"
+                                                else -> null
+                                            }
+                                        } ?: "Unknown"
+                                        
                                         val contextSummary = buildString {
                                             appendLine("\n📋 Error Details:")
-                                            appendLine("  Type: ${errorLoc.errorType ?: "Unknown"}")
+                                            appendLine("  Type: $errorType")
                                             appendLine("  Severity: ${errorLoc.severity?.name ?: "MEDIUM"}")
                                             appendLine("  File: ${errorLoc.filePath}")
                                             appendLine("  Line: ${errorLoc.lineNumber ?: "Unknown"}")
                                             if (errorLoc.functionName != null) {
                                                 appendLine("  Function: ${errorLoc.functionName}")
                                             }
-                                            if (enhancedContext.codeContext != null) {
+                                            if (enhancedContext.surroundingCode != null) {
                                                 appendLine("\n  Code Context:")
-                                                enhancedContext.codeContext.surroundingLines.take(5).forEach { line ->
+                                                val codeContext = enhancedContext.surroundingCode
+                                                codeContext.linesBefore.take(3).forEach { line ->
+                                                    appendLine("    $line")
+                                                }
+                                                appendLine("  >>> ${codeContext.errorLine}")
+                                                codeContext.linesAfter.take(3).forEach { line ->
                                                     appendLine("    $line")
                                                 }
                                             }
