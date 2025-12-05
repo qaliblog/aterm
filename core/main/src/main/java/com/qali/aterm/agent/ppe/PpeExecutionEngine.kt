@@ -4137,53 +4137,132 @@ Please provide more details so I can help you better.
                 }
             }
             
-            // Step 0: Use intelligent error analysis tool if error is detected
+            // Step 0: Enhanced error analysis - read error location first, then analyze
             // Use classification result to determine if error analysis is needed
             val needsErrorAnalysis = classification.intent == com.qali.aterm.agent.utils.RequestIntent.ERROR_DEBUG || 
                                     classification.intent == com.qali.aterm.agent.utils.RequestIntent.BOTH
             
-            val errorAnalysisTool = toolRegistry.getTool("intelligent_error_analysis")
-            if (errorAnalysisTool != null && needsErrorAnalysis) {
-                // Only show message once, not repeatedly
-                if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains("Step 0: Analyzing error") } }) {
-                    onChunk("Step 0: Analyzing error with intelligent error analysis...\n")
-                }
-                try {
-                    val analysisParams = mapOf(
-                        "errorMessage" to userMessage
-                    )
-                    // Manually construct params object since validateAndConvertParams is protected
-                    val toolParams = com.qali.aterm.agent.tools.IntelligentErrorAnalysisToolParams(
-                        errorMessage = userMessage,
-                        workspaceContext = null
-                    )
-                    // Create invocation using the same pattern as other tools
-                    @Suppress("UNCHECKED_CAST")
-                    val analysisInvocation = (errorAnalysisTool as com.qali.aterm.agent.tools.DeclarativeTool<Any, com.qali.aterm.agent.tools.ToolResult>).createInvocation(toolParams)
-                    onToolCall(FunctionCall(
-                        name = "intelligent_error_analysis",
-                        args = analysisParams
-                    ))
-                    val analysisResult = analysisInvocation.execute(null, onChunk)
-                    onToolResult("intelligent_error_analysis", analysisParams)
+            if (needsErrorAnalysis) {
+                onChunk("🔍 Step 0: Analyzing error...\n")
+                
+                // Step 0.1: Parse error locations from user message
+                val errorLocations = com.qali.aterm.agent.utils.ErrorDetectionUtils.parseErrorLocations(
+                    userMessage,
+                    workspaceRoot
+                )
+                
+                // Step 0.2: Read files around error locations FIRST
+                if (errorLocations.isNotEmpty()) {
+                    onChunk("📍 Found ${errorLocations.size} error location(s). Reading error context...\n")
                     
-                    // Add analysis result to chat history (only if not already present)
-                    val analysisText = "Error Analysis Result:\n${analysisResult.llmContent}"
-                    if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains(analysisText.take(50)) } }) {
+                    val errorContexts = mutableListOf<String>()
+                    for (errorLoc in errorLocations) {
+                        if (errorLoc.filePath.isNotEmpty()) {
+                            try {
+                                val errorFile = java.io.File(workspaceRoot, errorLoc.filePath)
+                                if (errorFile.exists() && errorFile.isFile) {
+                                    val fileContent = errorFile.readText()
+                                    val lines = fileContent.lines()
+                                    
+                                    // Read context around error (10 lines before and after)
+                                    val errorLine = errorLoc.lineNumber ?: 1
+                                    val startLine = (errorLine - 10).coerceAtLeast(1)
+                                    val endLine = (errorLine + 10).coerceAtMost(lines.size)
+                                    
+                                    val contextLines = lines.subList(startLine - 1, endLine)
+                                    val contextText = buildString {
+                                        appendLine("=== Error Context: ${errorLoc.filePath}:${errorLine} ===")
+                                        contextLines.forEachIndexed { index, line ->
+                                            val actualLineNum = startLine + index
+                                            val marker = if (actualLineNum == errorLine) ">>> " else "    "
+                                            appendLine("$marker${actualLineNum.toString().padStart(4)}: $line")
+                                        }
+                                    }
+                                    
+                                    errorContexts.add(contextText)
+                                    onChunk("✓ Read context for ${errorLoc.filePath}:${errorLine}\n")
+                                    
+                                    // Get enhanced error context
+                                    val enhancedContext = com.qali.aterm.agent.utils.ErrorDetectionUtils.getErrorContext(
+                                        errorLoc,
+                                        fileContent,
+                                        workspaceRoot
+                                    )
+                                    
+                                    if (enhancedContext != null) {
+                                        val contextSummary = buildString {
+                                            appendLine("\n📋 Error Details:")
+                                            appendLine("  Type: ${errorLoc.errorType ?: "Unknown"}")
+                                            appendLine("  Severity: ${errorLoc.severity?.name ?: "MEDIUM"}")
+                                            appendLine("  File: ${errorLoc.filePath}")
+                                            appendLine("  Line: ${errorLoc.lineNumber ?: "Unknown"}")
+                                            if (errorLoc.functionName != null) {
+                                                appendLine("  Function: ${errorLoc.functionName}")
+                                            }
+                                            if (enhancedContext.codeContext != null) {
+                                                appendLine("\n  Code Context:")
+                                                enhancedContext.codeContext.surroundingLines.take(5).forEach { line ->
+                                                    appendLine("    $line")
+                                                }
+                                            }
+                                        }
+                                        errorContexts.add(contextSummary)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("PpeExecutionEngine", "Failed to read error context for ${errorLoc.filePath}: ${e.message}", e)
+                            }
+                        }
+                    }
+                    
+                    // Add error contexts to chat history
+                    if (errorContexts.isNotEmpty()) {
+                        val contextText = errorContexts.joinToString("\n\n")
                         updatedChatHistory.add(
                             Content(
-                                role = "user",
-                                parts = listOf(Part.TextPart(text = analysisText))
+                                role = "assistant",
+                                parts = listOf(Part.TextPart(text = "Error Context Analysis:\n$contextText"))
                             )
                         )
+                        onChunk("\n✅ Error context analyzed.\n\n")
                     }
-                    // Don't print "Error analysis completed" if it was already printed
-                    if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains("Error analysis completed") } }) {
-                        onChunk("Error analysis completed.\n\n")
+                }
+                
+                // Step 0.3: Use intelligent error analysis tool for comprehensive analysis
+                val errorAnalysisTool = toolRegistry.getTool("intelligent_error_analysis")
+                if (errorAnalysisTool != null) {
+                    try {
+                        val analysisParams = mapOf(
+                            "errorMessage" to userMessage
+                        )
+                        val toolParams = com.qali.aterm.agent.tools.IntelligentErrorAnalysisToolParams(
+                            errorMessage = userMessage,
+                            workspaceContext = null
+                        )
+                        @Suppress("UNCHECKED_CAST")
+                        val analysisInvocation = (errorAnalysisTool as com.qali.aterm.agent.tools.DeclarativeTool<Any, com.qali.aterm.agent.tools.ToolResult>).createInvocation(toolParams)
+                        onToolCall(FunctionCall(
+                            name = "intelligent_error_analysis",
+                            args = analysisParams
+                        ))
+                        val analysisResult = analysisInvocation.execute(null, onChunk)
+                        onToolResult("intelligent_error_analysis", analysisParams)
+                        
+                        // Add analysis result to chat history
+                        val analysisText = "Comprehensive Error Analysis:\n${analysisResult.llmContent}"
+                        if (!updatedChatHistory.any { it.parts.any { part -> part is Part.TextPart && part.text.contains(analysisText.take(50)) } }) {
+                            updatedChatHistory.add(
+                                Content(
+                                    role = "user",
+                                    parts = listOf(Part.TextPart(text = analysisText))
+                                )
+                            )
+                        }
+                        onChunk("✅ Comprehensive error analysis completed.\n\n")
+                    } catch (e: Exception) {
+                        Log.w("PpeExecutionEngine", "Error analysis tool failed, continuing with normal flow", e)
+                        onChunk("⚠️ Error analysis tool unavailable, continuing with standard flow...\n\n")
                     }
-                } catch (e: Exception) {
-                    Log.w("PpeExecutionEngine", "Error analysis tool failed, continuing with normal flow", e)
-                    onChunk("Error analysis unavailable, continuing with standard flow...\n\n")
                 }
             }
             
