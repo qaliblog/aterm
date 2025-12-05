@@ -1906,6 +1906,16 @@ class PpeExecutionEngine(
         // Notify callback
         onToolResult(functionCall.name, functionCall.args)
         
+        // Display formatted file change notification for write_file tool (cursor-cli style)
+        if (functionCall.name == "write_file" && result.error == null && result.returnDisplay != null) {
+            val filePath = functionCall.args["file_path"] as? String ?: ""
+            val file = File(workspaceRoot, filePath)
+            val isNewFile = !file.exists() || file.length() == 0L
+            
+            // The notification is already formatted in WriteFileTool, just display it
+            onChunk("\n${result.returnDisplay}\n")
+        }
+        
         return result
     }
     
@@ -2665,7 +2675,9 @@ Return ONLY the raw code content. No markdown, no explanations, no code blocks. 
                 if (toolResult.error == null) {
                     transaction.addCreatedFile(file.path)
                     generatedFiles.add(file.path)
-                    onChunk("✓ Created ${file.path}\n")
+                    // Display formatted file change notification (cursor-cli style)
+                    val fileNotification = toolResult.returnDisplay ?: "✓ Created ${file.path}\n"
+                    onChunk("\n$fileNotification\n")
                     
                     // Add tool result to chat history
                     updatedChatHistory.add(

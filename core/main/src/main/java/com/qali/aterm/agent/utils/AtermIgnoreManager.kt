@@ -136,12 +136,8 @@ object AtermIgnoreManager {
     }
     
     /**
-     * Check if a path matches an ignore pattern
-     * Supports:
-     * - Exact matches: "node_modules"
-     * - Directory matches: "node_modules/" (matches directory and contents)
-     * - Wildcards: "*.log", "**/test"
-     * - Path patterns: "src/test/**"
+     * Check if a path matches an ignore pattern.
+     * Supports exact matches, directory matches, wildcards, and path patterns.
      */
     private fun matchesPattern(path: String, pattern: String): Boolean {
         val normalizedPattern = pattern.trim()

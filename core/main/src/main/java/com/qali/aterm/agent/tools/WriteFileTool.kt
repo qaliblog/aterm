@@ -118,6 +118,42 @@ class WriteFileToolInvocation(
                 emptyList()
             }
             
+            // Determine if this is a new file or modified file
+            val isNewFile = oldContent.isEmpty()
+            
+            // Build formatted file change notification (cursor-cli style)
+            val fileChangeNotification = buildString {
+                if (isNewFile) {
+                    appendLine("📄 New file: ${params.file_path}")
+                    appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    // Show first few lines of new file
+                    val previewLines = params.content.lines().take(10)
+                    previewLines.forEach { line ->
+                        appendLine("+ $line")
+                    }
+                    if (params.content.lines().size > 10) {
+                        appendLine("... (${params.content.lines().size - 10} more lines)")
+                    }
+                } else {
+                    appendLine("📝 Modified: ${params.file_path}")
+                    appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    // Show patch diff with + and - lines
+                    if (patchDiff.isNotEmpty()) {
+                        patchDiff.lines().forEach { line ->
+                            when {
+                                line.startsWith("+") && !line.startsWith("+++") -> appendLine("+ ${line.substring(1).trimStart()}")
+                                line.startsWith("-") && !line.startsWith("---") -> appendLine("- ${line.substring(1).trimStart()}")
+                                line.startsWith("@@") -> appendLine("  ${line}")
+                                else -> if (line.isNotBlank()) appendLine("  ${line}")
+                            }
+                        }
+                    } else {
+                        appendLine("  (No changes detected)")
+                    }
+                }
+                appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            }
+            
             // Build message with code metadata for chat history
             val baseMessage = "File written successfully: ${params.file_path}"
             val codeSummary = codeMetadata?.let { 
@@ -143,7 +179,7 @@ class WriteFileToolInvocation(
             
             ToolResult(
                 llmContent = messageWithErrors,
-                returnDisplay = "Written ${file.name}"
+                returnDisplay = fileChangeNotification
             )
         } catch (e: Exception) {
             ToolResult(
