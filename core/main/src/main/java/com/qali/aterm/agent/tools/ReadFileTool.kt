@@ -43,6 +43,18 @@ class ReadFileToolInvocation(
         
         val file = File(resolvedPath)
         
+        // Check if file should be ignored by .atermignore
+        if (com.qali.aterm.agent.utils.AtermIgnoreManager.shouldIgnoreFile(file, workspaceRoot)) {
+            return ToolResult(
+                llmContent = "File is ignored by .atermignore: ${params.file_path}",
+                returnDisplay = "Error: File ignored",
+                error = ToolError(
+                    message = "File is in .atermignore and cannot be read",
+                    type = ToolErrorType.PERMISSION_DENIED
+                )
+            )
+        }
+        
         if (!file.exists()) {
             return ToolResult(
                 llmContent = "File not found: ${params.file_path}",

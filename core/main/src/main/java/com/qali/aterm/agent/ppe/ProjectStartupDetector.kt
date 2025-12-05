@@ -48,11 +48,19 @@ object ProjectStartupDetector {
         )
         val hasNewProjectKeyword = newProjectKeywords.any { message.contains(it) }
         
-        // Check workspace state - count code files
+        // Auto-create .atermignore for new projects
+        com.qali.aterm.agent.utils.AtermIgnoreManager.createDefaultAtermIgnore(workspaceRoot)
+        
+        // Check workspace state - count code files (respecting .atermignore)
         val workspaceDir = File(workspaceRoot)
+        val ignoreManager = com.qali.aterm.agent.utils.AtermIgnoreManager
         val codeFileCount = if (workspaceDir.exists() && workspaceDir.isDirectory) {
             workspaceDir.walkTopDown()
                 .filter { it.isFile }
+                .filter { file ->
+                    // Skip ignored files
+                    !ignoreManager.shouldIgnoreFile(file, workspaceRoot)
+                }
                 .filter { file ->
                     val name = file.name.lowercase()
                     name.endsWith(".js") || name.endsWith(".ts") || name.endsWith(".py") ||
@@ -208,8 +216,9 @@ object ProjectStartupDetector {
         // Check workspace for existing project files
         val workspaceDir = File(workspaceRoot)
         if (workspaceDir.exists() && workspaceDir.isDirectory) {
-            // Check for package.json (Node.js)
-            if (File(workspaceDir, "package.json").exists()) {
+            // Auto-detect Node.js projects (presence of package.json)
+            val packageJsonFile = File(workspaceDir, "package.json")
+            if (packageJsonFile.exists() && !packageJsonFile.isDirectory) {
                 val packageJson = File(workspaceDir, "package.json").readText()
                 when {
                     packageJson.contains("\"react\"") || packageJson.contains("\"react-dom\"") -> {

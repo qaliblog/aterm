@@ -2322,6 +2322,9 @@ class PpeExecutionEngine(
     ): PpeExecutionResult {
         Log.d("PpeExecutionEngine", "Starting two-phase project startup")
         
+        // Auto-create .atermignore for new projects
+        com.qali.aterm.agent.utils.AtermIgnoreManager.createDefaultAtermIgnore(workspaceRoot)
+        
         val transaction = FileTransaction(workspaceRoot)
         val updatedChatHistory = chatHistory.toMutableList()
         
@@ -3553,7 +3556,7 @@ JSON Blueprint:
     )
     
     /**
-     * Get file structure respecting .gitignore
+     * Get file structure respecting .atermignore and .gitignore
      */
     private fun getFileStructureRespectingGitignore(workspaceRoot: String): String {
         val workspaceDir = File(workspaceRoot)
@@ -3561,49 +3564,16 @@ JSON Blueprint:
             return "Workspace does not exist"
         }
         
-        // Read .gitignore patterns
-        val gitignoreFile = File(workspaceRoot, ".gitignore")
-        val ignorePatterns = mutableListOf<String>()
-        if (gitignoreFile.exists()) {
-            gitignoreFile.readLines().forEach { line ->
-                val trimmed = line.trim()
-                if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
-                    ignorePatterns.add(trimmed)
-                }
-            }
-        }
-        
-        // Default ignore patterns
-        val defaultIgnores = listOf(
-            ".git", "node_modules", ".gradle", "build", "dist", "out",
-            ".idea", ".vscode", ".DS_Store", "*.class", "*.jar", "*.war"
-        )
-        ignorePatterns.addAll(defaultIgnores)
-        
-        // Check if path should be ignored
-        fun shouldIgnore(path: String): Boolean {
-            val relativePath = path.removePrefix(workspaceRoot).trimStart('/')
-            return ignorePatterns.any { pattern ->
-                when {
-                    pattern.contains("*") -> {
-                        val regex = pattern
-                            .replace(".", "\\.")
-                            .replace("*", ".*")
-                            .toRegex()
-                        regex.matches(relativePath) || relativePath.contains(pattern.removeSuffix("*"))
-                    }
-                    pattern.startsWith("/") -> relativePath.startsWith(pattern.removePrefix("/"))
-                    else -> relativePath.contains(pattern) || relativePath.endsWith(pattern)
-                }
-            }
-        }
+        // Use AtermIgnoreManager for ignore patterns (includes .atermignore and defaults)
+        val ignoreManager = com.qali.aterm.agent.utils.AtermIgnoreManager
         
         // Collect file structure
         val fileList = mutableListOf<Pair<String, Long>>()
         workspaceDir.walkTopDown().forEach { file ->
             if (file.isFile) {
-                val relativePath = file.relativeTo(workspaceDir).path
-                if (!shouldIgnore(relativePath)) {
+                // Check if file should be ignored using AtermIgnoreManager
+                if (!ignoreManager.shouldIgnoreFile(file, workspaceRoot)) {
+                    val relativePath = file.relativeTo(workspaceDir).path.replace("\\", "/")
                     fileList.add(relativePath to file.length())
                 }
             }
@@ -3613,8 +3583,9 @@ JSON Blueprint:
         return buildString {
             appendLine("=== Project File Structure ===")
             appendLine("Total files: ${fileList.size}")
+            appendLine("(Excluding .atermignore and .gitignore patterns)")
             appendLine()
-            appendLine("Files (excluding .gitignore patterns):")
+            appendLine("Files:")
             fileList.sortedBy { it.first }.forEach { (path, size) ->
                 val sizeStr = when {
                     size < 1024 -> "${size}B"
@@ -3628,6 +3599,7 @@ JSON Blueprint:
     
     /**
      * Determine which files to read and line ranges via API call
+     * Enhanced with error detection and smart file prioritization
      */
     private suspend fun determineFilesToRead(
         userMessage: String,
@@ -3635,17 +3607,63 @@ JSON Blueprint:
         chatHistory: List<Content>,
         script: PpeScript
     ): FileReadPlan? {
+        // Check if user message contains error information
+        val errorLocations = com.qali.aterm.agent.utils.ErrorDetectionUtils.parseErrorLocations(userMessage, workspaceRoot)
+        val apiMismatch = com.qali.aterm.agent.utils.ErrorDetectionUtils.detectApiMismatch(userMessage)
+        
+        // If error locations found, prioritize those files
+        val priorityFiles = if (errorLocations.isNotEmpty()) {
+            errorLocations.map { it.filePath } + 
+            errorLocations.flatMap { 
+                com.qali.aterm.agent.utils.ErrorDetectionUtils.getRelatedFilesForError(it, workspaceRoot)
+            }
+        } else {
+            // Use smart file prioritization
+            val projectType = ProjectStartupDetector.detectProjectType(userMessage.lowercase(), workspaceRoot)
+            com.qali.aterm.agent.utils.AtermIgnoreManager.getPriorityFiles(
+                workspaceRoot, 
+                projectType.projectType?.name?.lowercase()
+            )
+        }
+        // Build enhanced prompt with error detection info
+        val errorContext = buildString {
+            if (errorLocations.isNotEmpty()) {
+                appendLine("\n⚠️ ERROR DETECTED:")
+                errorLocations.forEach { loc ->
+                    appendLine("  - File: ${loc.filePath}")
+                    loc.lineNumber?.let { appendLine("    Line: $it") }
+                    loc.functionName?.let { appendLine("    Function: $it") }
+                }
+                appendLine()
+            }
+            apiMismatch?.let { mismatch ->
+                appendLine("\n⚠️ API MISMATCH DETECTED:")
+                appendLine("  Type: ${mismatch.errorType}")
+                appendLine("  Suggested Fix: ${mismatch.suggestedFix}")
+                appendLine("  Affected Files: ${mismatch.affectedFiles.joinToString(", ")}")
+                appendLine()
+            }
+            if (priorityFiles.isNotEmpty()) {
+                appendLine("\n📋 PRIORITY FILES (read these first):")
+                priorityFiles.forEach { file ->
+                    appendLine("  - $file")
+                }
+                appendLine()
+            }
+        }
+        
         val prompt = """
 Based on the user's request and the project file structure, determine which files need to be read and which specific line ranges are relevant.
 
 User Request: ${sanitizeForPrompt(userMessage)}
-
+$errorContext
 Project File Structure:
 $fileStructure
 
 Analyze the request and determine:
-1. Which files are relevant to the task
+1. Which files are relevant to the task (prioritize files mentioned in errors if any)
 2. Which specific line ranges should be read from each file (if not the entire file)
+3. Focus on files that are likely to need changes or are dependencies
 
 Return your response as a JSON array in this EXACT format (no markdown, just JSON):
 
@@ -3742,6 +3760,7 @@ JSON Response:
     
     /**
      * Read files based on the plan (with proper resource management)
+     * Respects .atermignore patterns
      */
     private suspend fun readFilesFromPlan(
         plan: FileReadPlan,
@@ -3749,10 +3768,19 @@ JSON Response:
         onChunk: (String) -> Unit
     ): Map<String, String> {
         val fileContents = mutableMapOf<String, String>()
+        val ignoreManager = com.qali.aterm.agent.utils.AtermIgnoreManager
         
         for (request in plan.files) {
             // Normalize path first (in case it's an absolute path)
             val normalizedPath = normalizeFilePath(request.path, workspaceRoot)
+            
+            // Check if file should be ignored
+            val file = File(workspaceRoot, normalizedPath)
+            if (ignoreManager.shouldIgnoreFile(file, workspaceRoot)) {
+                Log.w("PpeExecutionEngine", "Skipping ignored file: $normalizedPath")
+                onChunk("⚠️ Skipping ignored file: $normalizedPath (in .atermignore)\n")
+                continue
+            }
             
             // Validate path
             if (!validateFilePath(normalizedPath, workspaceRoot)) {

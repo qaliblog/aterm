@@ -49,6 +49,18 @@ class WriteFileToolInvocation(
         val file = File(resolvedPath)
         
         return try {
+            // Read old content BEFORE writing (for patch diff)
+            val oldContent = if (file.exists() && file.isFile) {
+                try {
+                    file.readText()
+                } catch (e: Exception) {
+                    android.util.Log.w("WriteFileTool", "Failed to read old content: ${e.message}")
+                    ""
+                }
+            } else {
+                ""
+            }
+            
             // Create parent directories if needed
             file.parentFile?.mkdirs()
             
@@ -56,6 +68,17 @@ class WriteFileToolInvocation(
             file.writeText(params.content)
             
             updateOutput?.invoke("File written successfully")
+            
+            // Generate patch diff if file existed before and content changed
+            val patchDiff = if (oldContent.isNotEmpty() && oldContent != params.content) {
+                com.qali.aterm.agent.utils.PatchDiffUtils.generatePatch(
+                    params.file_path,
+                    oldContent,
+                    params.content
+                )
+            } else {
+                ""
+            }
             
             // Analyze code dependencies and extract important metadata
             val codeMetadata = try {
@@ -104,10 +127,18 @@ class WriteFileToolInvocation(
                 val rel = CodeDependencyAnalyzer.getRelativenessSummary(params.file_path, workspaceRoot)
                 if (rel.isNotEmpty()) "\n\n$rel" else ""
             } ?: ""
-            val messageWithErrors = if (errorTasks.isNotEmpty()) {
-                baseMessage + AutoErrorDetection.formatErrorDetectionMessage(errorTasks) + codeSummary + relativenessSummary
+            
+            // Include patch diff in message if available
+            val patchSection = if (patchDiff.isNotEmpty()) {
+                "\n\n--- Patch Diff ---\n" + com.qali.aterm.agent.utils.PatchDiffUtils.formatPatchForDisplay(patchDiff)
             } else {
-                baseMessage + codeSummary + relativenessSummary
+                ""
+            }
+            
+            val messageWithErrors = if (errorTasks.isNotEmpty()) {
+                baseMessage + AutoErrorDetection.formatErrorDetectionMessage(errorTasks) + codeSummary + relativenessSummary + patchSection
+            } else {
+                baseMessage + codeSummary + relativenessSummary + patchSection
             }
             
             ToolResult(
