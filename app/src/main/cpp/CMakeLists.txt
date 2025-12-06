@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project("llama")
+project("aterm_llama_jni")
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -22,6 +22,7 @@ else()
 endif()
 
 # Disable some llama.cpp features for Android
+# Set these BEFORE adding the subdirectory
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
@@ -43,7 +44,8 @@ set(LLAMA_GGML_USE_KOMPUTE OFF CACHE BOOL "" FORCE)
 set(LLAMA_GGML_USE_SYCL OFF CACHE BOOL "" FORCE)
 
 # Build llama.cpp as a static library
-add_subdirectory(${LLAMA_CPP_SOURCE_DIR} llama_cpp_build)
+# Use a unique binary directory to avoid conflicts
+add_subdirectory(${LLAMA_CPP_SOURCE_DIR} llama_cpp_build EXCLUDE_FROM_ALL)
 
 # JNI bridge library (renamed to avoid conflict with llama.cpp target)
 add_library(
