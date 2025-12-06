@@ -29,7 +29,7 @@ Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thi
         g_ctx = nullptr;
     }
     if (g_model != nullptr) {
-        llama_free_model(g_model);
+        llama_model_free(g_model);
         g_model = nullptr;
     }
     model_loaded = false;
@@ -47,7 +47,7 @@ Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thi
     model_params.n_gpu_layers = 0; // CPU only for now
     
     // Load model
-    g_model = llama_load_model_from_file(path_str, model_params);
+    g_model = llama_model_load_from_file(path_str, model_params);
     if (g_model == nullptr) {
         LOGE("Failed to load model from: %s", path_str);
         env->ReleaseStringUTFChars(path, path_str);
@@ -63,10 +63,10 @@ Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thi
     ctx_params.n_threads_batch = DEFAULT_N_THREADS;
     
     // Create context
-    g_ctx = llama_new_context_with_model(g_model, ctx_params);
+    g_ctx = llama_init_from_model(g_model, ctx_params);
     if (g_ctx == nullptr) {
         LOGE("Failed to create context");
-        llama_free_model(g_model);
+        llama_model_free(g_model);
         g_model = nullptr;
         env->ReleaseStringUTFChars(path, path_str);
         return JNI_FALSE;
@@ -106,8 +106,10 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         llama_sampler_chain_add(smpl, llama_sampler_init_temp(DEFAULT_TEMP));
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
         
+        // Get vocab from model
+        const llama_vocab * vocab = llama_model_get_vocab(g_model);
+        
         // Tokenize prompt
-        const llama_vocab * vocab = llama_get_vocab(g_model);
         std::vector<llama_token> tokens;
         int n_tokens = llama_tokenize(vocab, prompt_str, strlen(prompt_str), nullptr, 0, true, false);
         if (n_tokens < 0) {
@@ -150,11 +152,11 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         // Generate tokens
         int n_cur = tokens.size();
         int n_predict = DEFAULT_N_PREDICT;
-        llama_token eos_token = llama_token_eos(g_model);
+        llama_token eos_token = llama_vocab_eos(vocab);
         
         while (n_cur < tokens.size() + n_predict) {
-            // Sample next token
-            llama_token new_token_id = llama_sampler_sample(smpl, g_ctx, nullptr, -1);
+            // Sample next token (idx is the logits position, -1 means last)
+            llama_token new_token_id = llama_sampler_sample(smpl, g_ctx, -1);
             
             // Check for EOS
             if (new_token_id == eos_token) {
@@ -187,7 +189,7 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
             }
             
             llama_batch_free(batch_new);
-            llama_sampler_accept(smpl, g_ctx, new_token_id, -1);
+            llama_sampler_accept(smpl, new_token_id);
             
             n_cur++;
             
@@ -226,7 +228,7 @@ Java_com_qali_aterm_llm_LocalLlamaModel_unloadModelNative(JNIEnv *env, jobject t
     }
     
     if (g_model != nullptr) {
-        llama_free_model(g_model);
+        llama_model_free(g_model);
         g_model = nullptr;
     }
     
