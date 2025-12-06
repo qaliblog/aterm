@@ -436,7 +436,7 @@ private fun saveChatHistory(context: Context, sessionId: String, messages: List<
         }
         
         val key = "chat_history_$sessionId"
-        Preference.putString(key, jsonArray.toString())
+        Preference.setString(key, jsonArray.toString())
         
         // Also save session ID to list of sessions
         val sessionsKey = "chat_sessions"
@@ -451,7 +451,7 @@ private fun saveChatHistory(context: Context, sessionId: String, messages: List<
         }
         if (!found) {
             sessionsArray.put(sessionId)
-            Preference.putString(sessionsKey, sessionsArray.toString())
+            Preference.setString(sessionsKey, sessionsArray.toString())
         }
     } catch (e: Exception) {
         android.util.Log.e("LocalModelChatScreen", "Failed to save chat history: ${e.message}", e)
@@ -485,7 +485,7 @@ private fun loadChatHistory(context: Context, sessionId: String): List<ChatMessa
 private fun deleteChatHistory(context: Context, sessionId: String) {
     try {
         val key = "chat_history_$sessionId"
-        Preference.putString(key, "")
+        Preference.setString(key, "")
         
         // Remove from sessions list
         val sessionsKey = "chat_sessions"
@@ -497,7 +497,7 @@ private fun deleteChatHistory(context: Context, sessionId: String) {
                 newSessionsArray.put(sessionsArray.getString(i))
             }
         }
-        Preference.putString(sessionsKey, newSessionsArray.toString())
+        Preference.setString(sessionsKey, newSessionsArray.toString())
     } catch (e: Exception) {
         android.util.Log.e("LocalModelChatScreen", "Failed to delete chat history: ${e.message}", e)
     }
