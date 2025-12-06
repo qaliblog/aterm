@@ -5,6 +5,22 @@ project("llama")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Check if llama.cpp submodule exists, if not use FetchContent
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/CMakeLists.txt")
+    # Submodule exists, use it
+    set(LLAMA_CPP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp")
+else()
+    # Submodule not available, use FetchContent to download it
+    include(FetchContent)
+    FetchContent_Declare(
+        llama_cpp
+        GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
+        GIT_TAG master
+    )
+    FetchContent_MakeAvailable(llama_cpp)
+    set(LLAMA_CPP_SOURCE_DIR "${llama_cpp_SOURCE_DIR}")
+endif()
+
 # Disable some llama.cpp features for Android
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -27,7 +43,7 @@ set(LLAMA_GGML_USE_KOMPUTE OFF CACHE BOOL "" FORCE)
 set(LLAMA_GGML_USE_SYCL OFF CACHE BOOL "" FORCE)
 
 # Build llama.cpp as a static library
-add_subdirectory(llama.cpp)
+add_subdirectory(${LLAMA_CPP_SOURCE_DIR} llama_cpp_build)
 
 # JNI bridge library
 add_library(
@@ -46,7 +62,8 @@ find_library(
 target_include_directories(
     llama
     PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp
+    ${LLAMA_CPP_SOURCE_DIR}
+    ${LLAMA_CPP_SOURCE_DIR}/include
 )
 
 # Link libraries
