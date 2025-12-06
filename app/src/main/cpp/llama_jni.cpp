@@ -147,11 +147,14 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         int n_predict = DEFAULT_N_PREDICT;
         llama_token eos_token = llama_vocab_eos(vocab);
         
-        // Repetition detection
-        std::string last_50_chars = "";
-        int repetition_count = 0;
-        const int MAX_REPETITION = 3;
-        const size_t MAX_RESPONSE_LENGTH = 1024; // Reduced from 2048
+        // Enhanced repetition detection
+        std::string last_30_chars = "";
+        std::string last_20_chars = "";
+        int repetition_count_30 = 0;
+        int repetition_count_20 = 0;
+        const int MAX_REPETITION = 2; // Reduced from 3
+        const size_t MAX_RESPONSE_LENGTH = 1024;
+        const int MAX_REPEATED_PHRASES = 5; // Max times a phrase can appear
         
         while (n_cur < tokens.size() + n_predict) {
             // Sample next token (idx is the logits position, -1 means last)
@@ -170,19 +173,49 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
                 buf[n_chars] = '\0';
                 response += buf;
                 
-                // Repetition detection: check last 50 characters
-                if (response.length() >= 50) {
-                    std::string current_50 = response.substr(response.length() - 50);
-                    if (current_50 == last_50_chars) {
-                        repetition_count++;
-                        if (repetition_count >= MAX_REPETITION) {
-                            LOGI("Repetition detected, stopping generation");
+                // Enhanced repetition detection: check multiple window sizes
+                if (response.length() >= 30) {
+                    std::string current_30 = response.substr(response.length() - 30);
+                    if (current_30 == last_30_chars) {
+                        repetition_count_30++;
+                        if (repetition_count_30 >= MAX_REPETITION) {
+                            LOGI("Repetition detected (30 chars), stopping generation");
                             break;
                         }
                     } else {
-                        repetition_count = 0;
+                        repetition_count_30 = 0;
                     }
-                    last_50_chars = current_50;
+                    last_30_chars = current_30;
+                }
+                
+                if (response.length() >= 20) {
+                    std::string current_20 = response.substr(response.length() - 20);
+                    if (current_20 == last_20_chars) {
+                        repetition_count_20++;
+                        if (repetition_count_20 >= MAX_REPETITION + 1) {
+                            LOGI("Repetition detected (20 chars), stopping generation");
+                            break;
+                        }
+                    } else {
+                        repetition_count_20 = 0;
+                    }
+                    last_20_chars = current_20;
+                }
+                
+                // Check for repeated phrases in the entire response
+                if (response.length() > 100) {
+                    // Check if last 15 characters appear too many times
+                    std::string last_15 = response.substr(response.length() - 15);
+                    int phrase_count = 0;
+                    size_t pos = 0;
+                    while ((pos = response.find(last_15, pos)) != std::string::npos) {
+                        phrase_count++;
+                        pos += last_15.length();
+                    }
+                    if (phrase_count > MAX_REPEATED_PHRASES) {
+                        LOGI("Repeated phrase detected (%d times), stopping generation", phrase_count);
+                        break;
+                    }
                 }
             }
             
