@@ -21,12 +21,12 @@ object LocalLlamaModel {
     fun init(context: Context) {
         if (!isInitialized) {
             appContext = context.applicationContext
-            try {
-                System.loadLibrary("llama")
-                Log.d(TAG, "Loaded llama native library")
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Failed to load llama native library: ${e.message}", e)
-            }
+        try {
+            System.loadLibrary("llama_jni")
+            Log.d(TAG, "Loaded llama_jni native library")
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "Failed to load llama_jni native library: ${e.message}", e)
+        }
             isInitialized = true
         }
     }

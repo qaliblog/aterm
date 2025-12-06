@@ -45,9 +45,9 @@ set(LLAMA_GGML_USE_SYCL OFF CACHE BOOL "" FORCE)
 # Build llama.cpp as a static library
 add_subdirectory(${LLAMA_CPP_SOURCE_DIR} llama_cpp_build)
 
-# JNI bridge library
+# JNI bridge library (renamed to avoid conflict with llama.cpp target)
 add_library(
-    llama
+    llama_jni
     SHARED
     llama_jni.cpp
 )
@@ -60,19 +60,20 @@ find_library(
 
 # Include directories
 target_include_directories(
-    llama
+    llama_jni
     PRIVATE
     ${LLAMA_CPP_SOURCE_DIR}
     ${LLAMA_CPP_SOURCE_DIR}/include
 )
 
 # Link libraries
+# llama.cpp creates a static library target named "llama"
 target_link_libraries(
-    llama
+    llama_jni
     PRIVATE
     ${log-lib}
     llama
 )
 
 # Compiler flags for Android
-target_compile_options(llama PRIVATE -O3 -DNDEBUG)
+target_compile_options(llama_jni PRIVATE -O3 -DNDEBUG)
