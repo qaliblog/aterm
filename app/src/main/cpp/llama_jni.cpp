@@ -127,20 +127,16 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         
         LOGI("Tokenized prompt into %zu tokens", tokens.size());
         
-        // Create batch for prompt
-        llama_batch batch = llama_batch_init(tokens.size(), 0, 1);
-        for (size_t i = 0; i < tokens.size(); i++) {
-            batch.token[i] = tokens[i];
-            batch.pos[i] = i;
-            batch.n_seq_id[i] = 1;
-            batch.seq_id[i][0] = 0;
-            batch.logits[i] = (i == tokens.size() - 1);
-        }
-        batch.n_tokens = tokens.size();
+        // Clear memory/KV cache before starting new generation
+        llama_memory_clear(llama_get_memory(g_ctx));
+        
+        // Create batch for prompt using helper function
+        llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
         
         // Evaluate prompt
-        if (llama_decode(g_ctx, batch) < 0) {
-            LOGE("Failed to evaluate prompt");
+        int decode_result = llama_decode(g_ctx, batch);
+        if (decode_result != 0) {
+            LOGE("Failed to evaluate prompt, error code: %d", decode_result);
             llama_batch_free(batch);
             llama_sampler_free(smpl);
             env->ReleaseStringUTFChars(prompt, prompt_str);
@@ -172,18 +168,13 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
                 response += buf;
             }
             
-            // Create batch for new token
-            llama_batch batch_new = llama_batch_init(1, 0, 1);
-            batch_new.token[0] = new_token_id;
-            batch_new.pos[0] = n_cur;
-            batch_new.n_seq_id[0] = 1;
-            batch_new.seq_id[0][0] = 0;
-            batch_new.logits[0] = true;
-            batch_new.n_tokens = 1;
+            // Create batch for new token using helper function
+            llama_batch batch_new = llama_batch_get_one(&new_token_id, 1);
             
             // Evaluate this new token
-            if (llama_decode(g_ctx, batch_new) < 0) {
-                LOGE("Failed to evaluate token");
+            int decode_result = llama_decode(g_ctx, batch_new);
+            if (decode_result != 0) {
+                LOGE("Failed to evaluate token, error code: %d", decode_result);
                 llama_batch_free(batch_new);
                 break;
             }
