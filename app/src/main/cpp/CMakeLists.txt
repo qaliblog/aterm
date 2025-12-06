@@ -5,13 +5,10 @@ project("llama")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add llama.cpp source files
-# Note: This is a placeholder - actual llama.cpp integration requires:
-# 1. Clone llama.cpp repository
-# 2. Add llama.cpp source files to this CMakeLists
-# 3. Link against required libraries (ggml, etc.)
+# Build llama.cpp as a static library
+add_subdirectory(llama.cpp)
 
-# For now, just compile the JNI bridge
+# JNI bridge library
 add_library(
     llama
     SHARED
@@ -24,13 +21,20 @@ find_library(
     log
 )
 
+# Include directories
+target_include_directories(
+    llama
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp
+)
+
 # Link libraries
 target_link_libraries(
     llama
+    PRIVATE
     ${log-lib}
+    llama
 )
 
-# Include directories (will be needed for llama.cpp)
-# include_directories(
-#     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp
-# )
+# Compiler flags for Android
+target_compile_options(llama PRIVATE -O3 -DNDEBUG)

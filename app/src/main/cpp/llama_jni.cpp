@@ -1,27 +1,39 @@
 #include <jni.h>
 #include <string>
-#include <memory>
+#include <vector>
 #include <android/log.h>
+#include "llama.h"
 
 #define LOG_TAG "LlamaJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// Forward declarations for llama.cpp functions
-// These will be implemented when llama.cpp is integrated
-extern "C" {
-    // Placeholder implementations - will be replaced with actual llama.cpp integration
-    int llama_load_model(const char* path);
-    char* llama_generate(const char* prompt);
-    void llama_unload_model();
-}
-
 // Global state
+static llama_model* g_model = nullptr;
+static llama_context* g_ctx = nullptr;
 static bool model_loaded = false;
-static std::string current_model_path;
+
+// Default generation parameters
+static const int DEFAULT_N_CTX = 2048;
+static const int DEFAULT_N_THREADS = 4;
+static const int DEFAULT_N_PREDICT = 256;
+static const float DEFAULT_TEMP = 0.7f;
+static const float DEFAULT_TOP_P = 0.9f;
+static const float DEFAULT_REPEAT_PENALTY = 1.1f;
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thiz, jstring path) {
+    // Unload existing model if any
+    if (g_ctx != nullptr) {
+        llama_free(g_ctx);
+        g_ctx = nullptr;
+    }
+    if (g_model != nullptr) {
+        llama_free_model(g_model);
+        g_model = nullptr;
+    }
+    model_loaded = false;
+    
     const char *path_str = env->GetStringUTFChars(path, nullptr);
     if (path_str == nullptr) {
         LOGE("Failed to get path string");
@@ -30,28 +42,48 @@ Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thi
     
     LOGI("Loading model from: %s", path_str);
     
-    // TODO: Integrate actual llama.cpp model loading
-    // For now, return success if file exists
-    FILE* file = fopen(path_str, "rb");
-    if (file != nullptr) {
-        fclose(file);
-        model_loaded = true;
-        current_model_path = std::string(path_str);
-        LOGI("Model file exists, marking as loaded");
+    // Initialize model parameters
+    llama_model_params model_params = llama_model_default_params();
+    model_params.n_gpu_layers = 0; // CPU only for now
+    
+    // Load model
+    g_model = llama_load_model_from_file(path_str, model_params);
+    if (g_model == nullptr) {
+        LOGE("Failed to load model from: %s", path_str);
         env->ReleaseStringUTFChars(path, path_str);
-        return JNI_TRUE;
+        return JNI_FALSE;
     }
     
-    LOGE("Model file does not exist: %s", path_str);
+    LOGI("Model loaded successfully");
+    
+    // Initialize context parameters
+    llama_context_params ctx_params = llama_context_default_params();
+    ctx_params.n_ctx = DEFAULT_N_CTX;
+    ctx_params.n_threads = DEFAULT_N_THREADS;
+    ctx_params.n_threads_batch = DEFAULT_N_THREADS;
+    
+    // Create context
+    g_ctx = llama_new_context_with_model(g_model, ctx_params);
+    if (g_ctx == nullptr) {
+        LOGE("Failed to create context");
+        llama_free_model(g_model);
+        g_model = nullptr;
+        env->ReleaseStringUTFChars(path, path_str);
+        return JNI_FALSE;
+    }
+    
+    LOGI("Context created successfully (n_ctx=%d, n_threads=%d)", DEFAULT_N_CTX, DEFAULT_N_THREADS);
+    model_loaded = true;
+    
     env->ReleaseStringUTFChars(path, path_str);
-    return JNI_FALSE;
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz, jstring prompt) {
-    if (!model_loaded) {
+    if (!model_loaded || g_ctx == nullptr || g_model == nullptr) {
         LOGE("Model not loaded");
-        return env->NewStringUTF("Error: Model not loaded");
+        return env->NewStringUTF("Error: Model not loaded. Please load a model first.");
     }
     
     const char *prompt_str = env->GetStringUTFChars(prompt, nullptr);
@@ -61,18 +93,121 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
     
     LOGI("Generating response for prompt: %s", prompt_str);
     
-    // TODO: Integrate actual llama.cpp generation
-    // For now, return placeholder response
-    std::string response = "This is a placeholder response. llama.cpp integration pending.";
+    std::string response;
+    
+    try {
+        // Tokenize prompt
+        std::vector<llama_token> tokens;
+        tokens = llama_tokenize(g_ctx, prompt_str, true);
+        
+        if (tokens.empty()) {
+            LOGE("Failed to tokenize prompt");
+            env->ReleaseStringUTFChars(prompt, prompt_str);
+            return env->NewStringUTF("Error: Failed to tokenize prompt");
+        }
+        
+        LOGI("Tokenized prompt into %zu tokens", tokens.size());
+        
+        // Evaluate prompt
+        if (llama_decode(g_ctx, llama_batch_get_one(&tokens[0], tokens.size(), 0, 0)) < 0) {
+            LOGE("Failed to evaluate prompt");
+            env->ReleaseStringUTFChars(prompt, prompt_str);
+            return env->NewStringUTF("Error: Failed to evaluate prompt");
+        }
+        
+        // Generate tokens
+        int n_cur = tokens.size();
+        int n_predict = DEFAULT_N_PREDICT;
+        
+        std::vector<llama_token> new_tokens;
+        new_tokens.reserve(n_predict);
+        
+        while (n_cur < tokens.size() + n_predict) {
+            // Sample next token
+            llama_token new_token_id = 0;
+            
+            {
+                auto logits = llama_get_logits_ith(g_ctx, -1);
+                auto n_vocab = llama_n_vocab(g_model);
+                
+                std::vector<llama_token_data> candidates;
+                candidates.reserve(n_vocab);
+                
+                for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+                    candidates.emplace_back(llama_token_data{token_id, logits[token_id], 0.0f});
+                }
+                
+                llama_token_data_array candidates_p = {candidates.data(), candidates.size(), false};
+                
+                // Apply penalties
+                auto n_prev = tokens.size();
+                auto last_n_repeat = std::min(std::min((int)n_prev, 64), DEFAULT_N_CTX);
+                llama_sample_repetition_penalties(g_ctx, &candidates_p,
+                    (tokens.empty() ? nullptr : &tokens.back()) - last_n_repeat,
+                    last_n_repeat, DEFAULT_REPEAT_PENALTY, 0.0f, 0.0f);
+                
+                // Sample
+                new_token_id = llama_sample_token_greedy(g_ctx, &candidates_p);
+            }
+            
+            // Check for EOS
+            if (new_token_id == llama_token_eos(g_model)) {
+                LOGI("EOS token generated");
+                break;
+            }
+            
+            new_tokens.push_back(new_token_id);
+            
+            // Decode and append to response
+            std::string token_str = llama_token_to_piece(g_ctx, new_token_id);
+            response += token_str;
+            
+            // Evaluate this new token
+            if (llama_decode(g_ctx, llama_batch_get_one(&new_token_id, 1, n_cur, 0)) < 0) {
+                LOGE("Failed to evaluate token");
+                break;
+            }
+            
+            n_cur++;
+            
+            // Check if we should stop (simple check)
+            if (response.length() > 2048) {
+                LOGI("Response length limit reached");
+                break;
+            }
+        }
+        
+        LOGI("Generated %zu tokens, response length: %zu", new_tokens.size(), response.length());
+        
+    } catch (const std::exception& e) {
+        LOGE("Exception during generation: %s", e.what());
+        response = "Error: Exception during generation: ";
+        response += e.what();
+    }
     
     env->ReleaseStringUTFChars(prompt, prompt_str);
+    
+    if (response.empty()) {
+        response = "Error: No response generated";
+    }
+    
     return env->NewStringUTF(response.c_str());
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_qali_aterm_llm_LocalLlamaModel_unloadModelNative(JNIEnv *env, jobject thiz) {
     LOGI("Unloading model");
+    
+    if (g_ctx != nullptr) {
+        llama_free(g_ctx);
+        g_ctx = nullptr;
+    }
+    
+    if (g_model != nullptr) {
+        llama_free_model(g_model);
+        g_model = nullptr;
+    }
+    
     model_loaded = false;
-    current_model_path.clear();
-    // TODO: Call actual llama.cpp unload
+    LOGI("Model unloaded");
 }
