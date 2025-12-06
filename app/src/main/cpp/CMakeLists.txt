@@ -27,6 +27,9 @@ set(LLAMA_GGML_USE_MPI OFF CACHE BOOL "" FORCE)
 set(LLAMA_GGML_USE_KOMPUTE OFF CACHE BOOL "" FORCE)
 set(LLAMA_GGML_USE_SYCL OFF CACHE BOOL "" FORCE)
 
+# Ensure llama.cpp builds as a static library (not shared)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 # Check if llama.cpp submodule exists, if not use FetchContent
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/CMakeLists.txt")
     # Submodule exists, use it directly
