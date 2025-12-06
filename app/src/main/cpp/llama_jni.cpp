@@ -80,7 +80,7 @@ Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thi
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz, jstring prompt) {
+Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz, jstring prompt, jint maxResponseLength) {
     if (!model_loaded || g_ctx == nullptr || g_model == nullptr) {
         LOGE("Model not loaded");
         return env->NewStringUTF("Error: Model not loaded. Please load a model first.");
@@ -168,7 +168,8 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         int repetition_count_30 = 0;
         int repetition_count_20 = 0;
         const int MAX_REPETITION = 2; // Reduced from 3
-        const size_t MAX_RESPONSE_LENGTH = 800; // Further reduced from 1024
+        // Use provided max length, or default to 800 for chat, 8000 for code/blueprint
+        const size_t MAX_RESPONSE_LENGTH = (maxResponseLength > 0) ? (size_t)maxResponseLength : 800;
         const int MAX_REPEATED_PHRASES = 4; // Reduced from 5
         
         while (n_cur < tokens.size() + n_predict) {

@@ -156,9 +156,10 @@ object LocalLlamaModel {
      * Generate response from prompt
      * This function runs on a background thread to avoid blocking the UI
      * @param prompt Input prompt
+     * @param maxResponseLength Maximum response length in characters. Use 8000 for code/blueprint generation, 800 for chat
      * @return Generated response text
      */
-    suspend fun generate(prompt: String): String = withContext(Dispatchers.IO) {
+    suspend fun generate(prompt: String, maxResponseLength: Int = 800): String = withContext(Dispatchers.IO) {
         if (!isModelLoaded) {
             // Try to load model from saved path
             val savedPath = getSavedModelPath()
@@ -171,9 +172,10 @@ object LocalLlamaModel {
         }
         
         return@withContext try {
-            // Add timeout to prevent hanging (60 seconds max)
-            withTimeout(60000) {
-                generateNative(prompt)
+            // Add timeout to prevent hanging (60 seconds max for chat, 120 seconds for code/blueprint)
+            val timeoutMs = if (maxResponseLength > 2000) 120000 else 60000
+            withTimeout(timeoutMs.toLong()) {
+                generateNative(prompt, maxResponseLength)
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             Log.e(TAG, "Generation timed out after 60 seconds")
@@ -243,6 +245,6 @@ object LocalLlamaModel {
     
     // Native methods
     private external fun loadModelNative(path: String): Boolean
-    private external fun generateNative(prompt: String): String
+    private external fun generateNative(prompt: String, maxResponseLength: Int): String
     private external fun unloadModelNative()
 }

@@ -128,7 +128,9 @@ class PpeApiClient(
                 val prompt = promptBuilder.toString()
                 
                 val response = try {
-                    val rawResponse = com.qali.aterm.llm.LocalLlamaModel.generate(prompt)
+                    // Use larger limit for code/blueprint generation (8000 chars), smaller for chat (800 chars)
+                    val maxLength = if (isCodeTask) 8000 else 800
+                    val rawResponse = com.qali.aterm.llm.LocalLlamaModel.generate(prompt, maxLength)
                     // Clean up response - remove any repeated "Assistant:" prefixes
                     rawResponse.trim().removePrefix("Assistant:").trim()
                 } catch (e: Exception) {
