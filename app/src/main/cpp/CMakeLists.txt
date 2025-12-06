@@ -44,8 +44,7 @@ set(LLAMA_GGML_USE_KOMPUTE OFF CACHE BOOL "" FORCE)
 set(LLAMA_GGML_USE_SYCL OFF CACHE BOOL "" FORCE)
 
 # Build llama.cpp as a static library
-# Use a unique binary directory to avoid conflicts
-add_subdirectory(${LLAMA_CPP_SOURCE_DIR} llama_cpp_build EXCLUDE_FROM_ALL)
+add_subdirectory(${LLAMA_CPP_SOURCE_DIR} llama_cpp_build)
 
 # JNI bridge library (renamed to avoid conflict with llama.cpp target)
 add_library(
