@@ -147,13 +147,19 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         int n_predict = DEFAULT_N_PREDICT;
         llama_token eos_token = llama_vocab_eos(vocab);
         
+        // Repetition detection
+        std::string last_50_chars = "";
+        int repetition_count = 0;
+        const int MAX_REPETITION = 3;
+        const size_t MAX_RESPONSE_LENGTH = 1024; // Reduced from 2048
+        
         while (n_cur < tokens.size() + n_predict) {
             // Sample next token (idx is the logits position, -1 means last)
             llama_token new_token_id = llama_sampler_sample(smpl, g_ctx, -1);
             
-            // Check for EOS
-            if (new_token_id == eos_token) {
-                LOGI("EOS token generated");
+            // Check for EOS or EOG (end of generation)
+            if (new_token_id == eos_token || llama_vocab_is_eog(vocab, new_token_id)) {
+                LOGI("EOS/EOG token generated");
                 break;
             }
             
@@ -163,6 +169,21 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
             if (n_chars > 0 && n_chars < (int)sizeof(buf)) {
                 buf[n_chars] = '\0';
                 response += buf;
+                
+                // Repetition detection: check last 50 characters
+                if (response.length() >= 50) {
+                    std::string current_50 = response.substr(response.length() - 50);
+                    if (current_50 == last_50_chars) {
+                        repetition_count++;
+                        if (repetition_count >= MAX_REPETITION) {
+                            LOGI("Repetition detected, stopping generation");
+                            break;
+                        }
+                    } else {
+                        repetition_count = 0;
+                    }
+                    last_50_chars = current_50;
+                }
             }
             
             // Create batch for new token using helper function
@@ -178,8 +199,8 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
             
             n_cur++;
             
-            // Check if we should stop (simple check)
-            if (response.length() > 2048) {
+            // Check if we should stop (response length limit)
+            if (response.length() > MAX_RESPONSE_LENGTH) {
                 LOGI("Response length limit reached");
                 break;
             }

@@ -85,7 +85,28 @@ class PpeApiClient(
             val currentProvider = com.qali.aterm.api.ApiProviderManager.selectedProvider
             if (currentProvider == com.qali.aterm.api.ApiProviderType.BUILTIN_LOCAL) {
                 // Use local model for generation
-                val prompt = messages.joinToString("\n") { msg ->
+                // Build a better formatted prompt for code/blueprint generation
+                val promptBuilder = StringBuilder()
+                
+                // Detect if this is a code/blueprint generation task
+                val allText = messages.joinToString(" ") { msg ->
+                    msg.parts.joinToString(" ") { part ->
+                        when (part) {
+                            is Part.TextPart -> part.text ?: ""
+                            else -> ""
+                        }
+                    }
+                }.lowercase()
+                
+                val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
+                
+                if (isCodeTask) {
+                    // Add system instruction for code generation
+                    promptBuilder.append("You are a helpful coding assistant. Generate clean, working code based on the user's request.\n\n")
+                }
+                
+                // Format conversation history
+                messages.forEach { msg ->
                     val role = when (msg.role) {
                         "user" -> "User"
                         "model", "assistant" -> "Assistant"
@@ -93,15 +114,23 @@ class PpeApiClient(
                     }
                     val text = msg.parts.joinToString(" ") { part ->
                         when (part) {
-                            is Part.TextPart -> part.text
+                            is Part.TextPart -> part.text ?: ""
                             else -> ""
                         }
                     }
-                    "$role: $text"
+                    if (text.isNotBlank()) {
+                        promptBuilder.append("$role: $text\n")
+                    }
                 }
                 
+                promptBuilder.append("Assistant: ")
+                
+                val prompt = promptBuilder.toString()
+                
                 val response = try {
-                    com.qali.aterm.llm.LocalLlamaModel.generate(prompt)
+                    val rawResponse = com.qali.aterm.llm.LocalLlamaModel.generate(prompt)
+                    // Clean up response - remove any repeated "Assistant:" prefixes
+                    rawResponse.trim().removePrefix("Assistant:").trim()
                 } catch (e: Exception) {
                     Log.e("PpeApiClient", "Local model generation failed: ${e.message}", e)
                     return@withContext Result.failure(e)
