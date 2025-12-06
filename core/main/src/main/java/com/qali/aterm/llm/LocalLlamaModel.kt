@@ -5,6 +5,7 @@ import android.util.Log
 import com.rk.settings.Preference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -170,7 +171,13 @@ object LocalLlamaModel {
         }
         
         return@withContext try {
-            generateNative(prompt)
+            // Add timeout to prevent hanging (60 seconds max)
+            withTimeout(60000) {
+                generateNative(prompt)
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.e(TAG, "Generation timed out after 60 seconds")
+            "Error: Generation timed out. The model is taking too long to respond. Try a shorter prompt or check if the model is working correctly."
         } catch (e: Exception) {
             Log.e(TAG, "Exception generating response: ${e.message}", e)
             "Error generating response: ${e.message}"

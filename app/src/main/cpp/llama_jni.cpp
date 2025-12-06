@@ -16,7 +16,7 @@ static bool model_loaded = false;
 // Default generation parameters
 static const int DEFAULT_N_CTX = 2048;
 static const int DEFAULT_N_THREADS = 4;
-static const int DEFAULT_N_PREDICT = 256;
+static const int DEFAULT_N_PREDICT = 128; // Reduced from 256 to prevent context overflow
 static const float DEFAULT_TEMP = 0.7f;
 static const float DEFAULT_TOP_P = 0.9f;
 static const float DEFAULT_REPEAT_PENALTY = 1.1f;
@@ -136,15 +136,30 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         // Evaluate prompt
         int decode_result = llama_decode(g_ctx, batch);
         if (decode_result != 0) {
-            LOGE("Failed to evaluate prompt, error code: %d", decode_result);
-            llama_sampler_free(smpl);
-            env->ReleaseStringUTFChars(prompt, prompt_str);
-            return env->NewStringUTF("Error: Failed to evaluate prompt");
+            if (decode_result == 1) {
+                LOGE("Context full - cannot find KV slot for prompt (error code: %d)", decode_result);
+                llama_sampler_free(smpl);
+                env->ReleaseStringUTFChars(prompt, prompt_str);
+                return env->NewStringUTF("Error: Context is full. Prompt is too long. Please reduce the prompt size or increase context window.");
+            } else {
+                LOGE("Failed to evaluate prompt, error code: %d", decode_result);
+                llama_sampler_free(smpl);
+                env->ReleaseStringUTFChars(prompt, prompt_str);
+                return env->NewStringUTF("Error: Failed to evaluate prompt");
+            }
         }
         
         // Generate tokens
         int n_cur = tokens.size();
-        int n_predict = DEFAULT_N_PREDICT;
+        // Limit prediction to prevent context overflow - ensure we don't exceed context size
+        int max_available = DEFAULT_N_CTX - tokens.size() - 10; // Leave some buffer
+        int n_predict = (DEFAULT_N_PREDICT < max_available) ? DEFAULT_N_PREDICT : max_available;
+        if (n_predict <= 0) {
+            LOGE("No room for generation - prompt too long (tokens: %zu, ctx: %d)", tokens.size(), DEFAULT_N_CTX);
+            llama_sampler_free(smpl);
+            env->ReleaseStringUTFChars(prompt, prompt_str);
+            return env->NewStringUTF("Error: Prompt is too long. No room for generation. Please reduce the prompt size.");
+        }
         llama_token eos_token = llama_vocab_eos(vocab);
         
         // Enhanced repetition detection
@@ -153,8 +168,8 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         int repetition_count_30 = 0;
         int repetition_count_20 = 0;
         const int MAX_REPETITION = 2; // Reduced from 3
-        const size_t MAX_RESPONSE_LENGTH = 1024;
-        const int MAX_REPEATED_PHRASES = 5; // Max times a phrase can appear
+        const size_t MAX_RESPONSE_LENGTH = 800; // Further reduced from 1024
+        const int MAX_REPEATED_PHRASES = 4; // Reduced from 5
         
         while (n_cur < tokens.size() + n_predict) {
             // Sample next token (idx is the logits position, -1 means last)
@@ -225,8 +240,18 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
             // Evaluate this new token
             int decode_result = llama_decode(g_ctx, batch_new);
             if (decode_result != 0) {
-                LOGE("Failed to evaluate token, error code: %d", decode_result);
-                break;
+                if (decode_result == 1) {
+                    // Context full - stop generation gracefully
+                    LOGI("Context full during generation (error code: 1), stopping");
+                    break;
+                } else if (decode_result == 2) {
+                    // Aborted - stop generation
+                    LOGI("Generation aborted (error code: 2), stopping");
+                    break;
+                } else {
+                    LOGE("Failed to evaluate token, error code: %d", decode_result);
+                    break;
+                }
             }
             llama_sampler_accept(smpl, new_token_id);
             
