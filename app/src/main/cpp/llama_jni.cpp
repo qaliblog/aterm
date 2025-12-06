@@ -96,77 +96,98 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
     std::string response;
     
     try {
+        // Initialize sampler chain
+        auto sparams = llama_sampler_chain_default_params();
+        llama_sampler * smpl = llama_sampler_chain_init(sparams);
+        
+        // Add samplers: top_k -> top_p -> temp -> greedy
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(DEFAULT_TOP_P, 1));
+        llama_sampler_chain_add(smpl, llama_sampler_init_temp(DEFAULT_TEMP));
+        llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+        
         // Tokenize prompt
+        const llama_vocab * vocab = llama_get_vocab(g_model);
         std::vector<llama_token> tokens;
-        tokens = llama_tokenize(g_ctx, prompt_str, true);
+        int n_tokens = llama_tokenize(vocab, prompt_str, strlen(prompt_str), nullptr, 0, true, false);
+        if (n_tokens < 0) {
+            n_tokens = -n_tokens;
+        }
+        tokens.resize(n_tokens);
+        llama_tokenize(vocab, prompt_str, strlen(prompt_str), tokens.data(), tokens.size(), true, false);
         
         if (tokens.empty()) {
             LOGE("Failed to tokenize prompt");
+            llama_sampler_free(smpl);
             env->ReleaseStringUTFChars(prompt, prompt_str);
             return env->NewStringUTF("Error: Failed to tokenize prompt");
         }
         
         LOGI("Tokenized prompt into %zu tokens", tokens.size());
         
+        // Create batch for prompt
+        llama_batch batch = llama_batch_init(tokens.size(), 0, 1);
+        for (size_t i = 0; i < tokens.size(); i++) {
+            batch.token[i] = tokens[i];
+            batch.pos[i] = i;
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = (i == tokens.size() - 1);
+        }
+        batch.n_tokens = tokens.size();
+        
         // Evaluate prompt
-        if (llama_decode(g_ctx, llama_batch_get_one(&tokens[0], tokens.size(), 0, 0)) < 0) {
+        if (llama_decode(g_ctx, batch) < 0) {
             LOGE("Failed to evaluate prompt");
+            llama_batch_free(batch);
+            llama_sampler_free(smpl);
             env->ReleaseStringUTFChars(prompt, prompt_str);
             return env->NewStringUTF("Error: Failed to evaluate prompt");
         }
         
+        llama_batch_free(batch);
+        
         // Generate tokens
         int n_cur = tokens.size();
         int n_predict = DEFAULT_N_PREDICT;
-        
-        std::vector<llama_token> new_tokens;
-        new_tokens.reserve(n_predict);
+        llama_token eos_token = llama_token_eos(g_model);
         
         while (n_cur < tokens.size() + n_predict) {
             // Sample next token
-            llama_token new_token_id = 0;
-            
-            {
-                auto logits = llama_get_logits_ith(g_ctx, -1);
-                auto n_vocab = llama_n_vocab(g_model);
-                
-                std::vector<llama_token_data> candidates;
-                candidates.reserve(n_vocab);
-                
-                for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
-                    candidates.emplace_back(llama_token_data{token_id, logits[token_id], 0.0f});
-                }
-                
-                llama_token_data_array candidates_p = {candidates.data(), candidates.size(), false};
-                
-                // Apply penalties
-                auto n_prev = tokens.size();
-                auto last_n_repeat = std::min(std::min((int)n_prev, 64), DEFAULT_N_CTX);
-                llama_sample_repetition_penalties(g_ctx, &candidates_p,
-                    (tokens.empty() ? nullptr : &tokens.back()) - last_n_repeat,
-                    last_n_repeat, DEFAULT_REPEAT_PENALTY, 0.0f, 0.0f);
-                
-                // Sample
-                new_token_id = llama_sample_token_greedy(g_ctx, &candidates_p);
-            }
+            llama_token new_token_id = llama_sampler_sample(smpl, g_ctx, nullptr, -1);
             
             // Check for EOS
-            if (new_token_id == llama_token_eos(g_model)) {
+            if (new_token_id == eos_token) {
                 LOGI("EOS token generated");
                 break;
             }
             
-            new_tokens.push_back(new_token_id);
-            
             // Decode and append to response
-            std::string token_str = llama_token_to_piece(g_ctx, new_token_id);
-            response += token_str;
+            char buf[256];
+            int n_chars = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, false);
+            if (n_chars > 0 && n_chars < (int)sizeof(buf)) {
+                buf[n_chars] = '\0';
+                response += buf;
+            }
+            
+            // Create batch for new token
+            llama_batch batch_new = llama_batch_init(1, 0, 1);
+            batch_new.token[0] = new_token_id;
+            batch_new.pos[0] = n_cur;
+            batch_new.n_seq_id[0] = 1;
+            batch_new.seq_id[0][0] = 0;
+            batch_new.logits[0] = true;
+            batch_new.n_tokens = 1;
             
             // Evaluate this new token
-            if (llama_decode(g_ctx, llama_batch_get_one(&new_token_id, 1, n_cur, 0)) < 0) {
+            if (llama_decode(g_ctx, batch_new) < 0) {
                 LOGE("Failed to evaluate token");
+                llama_batch_free(batch_new);
                 break;
             }
+            
+            llama_batch_free(batch_new);
+            llama_sampler_accept(smpl, g_ctx, new_token_id, -1);
             
             n_cur++;
             
@@ -177,7 +198,8 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
             }
         }
         
-        LOGI("Generated %zu tokens, response length: %zu", new_tokens.size(), response.length());
+        llama_sampler_free(smpl);
+        LOGI("Generated response, length: %zu", response.length());
         
     } catch (const std::exception& e) {
         LOGE("Exception during generation: %s", e.what());
