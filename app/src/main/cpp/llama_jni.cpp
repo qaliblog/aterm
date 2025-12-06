@@ -137,13 +137,10 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         int decode_result = llama_decode(g_ctx, batch);
         if (decode_result != 0) {
             LOGE("Failed to evaluate prompt, error code: %d", decode_result);
-            llama_batch_free(batch);
             llama_sampler_free(smpl);
             env->ReleaseStringUTFChars(prompt, prompt_str);
             return env->NewStringUTF("Error: Failed to evaluate prompt");
         }
-        
-        llama_batch_free(batch);
         
         // Generate tokens
         int n_cur = tokens.size();
@@ -175,11 +172,8 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
             int decode_result = llama_decode(g_ctx, batch_new);
             if (decode_result != 0) {
                 LOGE("Failed to evaluate token, error code: %d", decode_result);
-                llama_batch_free(batch_new);
                 break;
             }
-            
-            llama_batch_free(batch_new);
             llama_sampler_accept(smpl, new_token_id);
             
             n_cur++;
