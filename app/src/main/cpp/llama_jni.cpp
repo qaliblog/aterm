@@ -128,7 +128,7 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         LOGI("Tokenized prompt into %zu tokens", tokens.size());
         
         // Clear memory/KV cache before starting new generation
-        llama_memory_clear(llama_get_memory(g_ctx));
+        llama_memory_clear(llama_get_memory(g_ctx), true);
         
         // Create batch for prompt using helper function
         llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
