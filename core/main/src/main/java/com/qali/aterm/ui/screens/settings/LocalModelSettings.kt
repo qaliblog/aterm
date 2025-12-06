@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.settings.Preference
 import com.qali.aterm.llm.LocalLlamaModel
@@ -149,11 +150,13 @@ private fun copyUriToCache(context: Context, uri: Uri): String? {
 @Composable
 fun LocalModelSettings() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var localModelPath by remember { 
         mutableStateOf(Preference.getString("localModelPath", ""))
     }
     var showTestDialog by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
+    var isTesting by remember { mutableStateOf(false) }
     
     // File picker launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -221,10 +224,10 @@ fun LocalModelSettings() {
                 title = { Text("Test Model") },
                 description = { 
                     Text(
-                        if (LocalLlamaModel.isLoaded()) {
-                            "Model is loaded and ready"
-                        } else {
-                            "Click to load and test the model"
+                        when {
+                            isTesting -> "Testing model..."
+                            LocalLlamaModel.isLoaded() -> "Model is loaded and ready"
+                            else -> "Click to load and test the model"
                         }
                     )
                 },
@@ -241,19 +244,26 @@ fun LocalModelSettings() {
                         LocalLlamaModel.init(context)
                     }
                     
-                    val loaded = LocalLlamaModel.loadModel(localModelPath)
-                    if (loaded) {
-                        // Test generation
-                        try {
-                            val testResponse = LocalLlamaModel.generate("Hello")
-                            testResult = "Test successful! Response: $testResponse"
-                        } catch (e: Exception) {
-                            testResult = "Test failed: ${e.message}"
+                    scope.launch {
+                        isTesting = true
+                        testResult = null
+                        
+                        val loaded = LocalLlamaModel.loadModel(localModelPath)
+                        if (loaded) {
+                            // Test generation (runs on background thread)
+                            try {
+                                val testResponse = LocalLlamaModel.generate("Hello")
+                                testResult = "Test successful! Response: $testResponse"
+                            } catch (e: Exception) {
+                                testResult = "Test failed: ${e.message}"
+                            }
+                        } else {
+                            testResult = "Failed to load model"
                         }
-                    } else {
-                        testResult = "Failed to load model"
+                        
+                        isTesting = false
+                        showTestDialog = true
                     }
-                    showTestDialog = true
                 }
             )
         }

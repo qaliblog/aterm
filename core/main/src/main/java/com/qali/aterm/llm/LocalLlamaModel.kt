@@ -3,6 +3,8 @@ package com.qali.aterm.llm
 import android.content.Context
 import android.util.Log
 import com.rk.settings.Preference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -151,22 +153,23 @@ object LocalLlamaModel {
     
     /**
      * Generate response from prompt
+     * This function runs on a background thread to avoid blocking the UI
      * @param prompt Input prompt
      * @return Generated response text
      */
-    fun generate(prompt: String): String {
+    suspend fun generate(prompt: String): String = withContext(Dispatchers.IO) {
         if (!isModelLoaded) {
             // Try to load model from saved path
             val savedPath = getSavedModelPath()
             if (savedPath != null && !loadModel(savedPath)) {
-                return "Error: Model not loaded. Please select a model file in settings."
+                return@withContext "Error: Model not loaded. Please select a model file in settings."
             }
             if (!isModelLoaded) {
-                return "Error: Model not loaded. Please select a model file in settings."
+                return@withContext "Error: Model not loaded. Please select a model file in settings."
             }
         }
         
-        return try {
+        return@withContext try {
             generateNative(prompt)
         } catch (e: Exception) {
             Log.e(TAG, "Exception generating response: ${e.message}", e)
