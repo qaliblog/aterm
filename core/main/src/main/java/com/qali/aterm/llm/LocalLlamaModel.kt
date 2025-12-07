@@ -41,6 +41,70 @@ object LocalLlamaModel {
     private var cachedModelPath: String? = null
     
     /**
+     * Get app models directory (faster than cache, persists across app updates)
+     */
+    fun getModelsDirectory(): File? {
+        val context = appContext ?: return null
+        val modelsDir = File(context.filesDir, "models")
+        modelsDir.mkdirs()
+        return modelsDir
+    }
+    
+    /**
+     * List all models in app folder
+     */
+    fun listAppModels(): List<String> {
+        val modelsDir = getModelsDirectory() ?: return emptyList()
+        return try {
+            modelsDir.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".gguf", ignoreCase = true) }
+                ?.map { it.absolutePath }
+                ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to list models: ${e.message}", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Copy model file to app folder for faster access
+     * @param sourceFile Source model file
+     * @return Path to copied file in app folder, or null if failed
+     */
+    fun copyToAppFolder(sourceFile: File): String? {
+        val context = appContext ?: return null
+        val modelsDir = getModelsDirectory() ?: return null
+        
+        return try {
+            val targetFile = File(modelsDir, sourceFile.name)
+            
+            // Check if already copied and up-to-date
+            if (targetFile.exists() && targetFile.length() == sourceFile.length() && 
+                targetFile.lastModified() >= sourceFile.lastModified()) {
+                Log.d(TAG, "Using existing model in app folder: ${targetFile.absolutePath}")
+                return targetFile.absolutePath
+            }
+            
+            Log.d(TAG, "Copying model to app folder: ${sourceFile.name} (${sourceFile.length()} bytes)")
+            
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            // Set last modified to match source
+            targetFile.setLastModified(sourceFile.lastModified())
+            
+            Log.d(TAG, "Model copied to app folder: ${targetFile.absolutePath}")
+            targetFile.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to copy model to app folder: ${e.message}", e)
+            null
+        }
+    }
+    
+    /**
      * Load model from file path
      * @param path Path to model file (e.g., /sdcard/models/qwen-2.5-coder-7b.q4.gguf)
      * @return true if model loaded successfully
@@ -53,15 +117,39 @@ object LocalLlamaModel {
                 return false
             }
             
-            // Check if file is accessible from native code
-            // Files in /storage/emulated/0/ may not be accessible due to scoped storage
-            val accessiblePath = if (isPathAccessible(path)) {
-                path
-            } else {
-                // Copy to cache directory where native code can access it
-                copyToCache(sourceFile) ?: run {
-                    Log.e(TAG, "Failed to copy model to cache directory")
-                    return false
+            // Check if file is already in app folder (fastest access)
+            val context = appContext
+            val modelsDir = getModelsDirectory()
+            val appFolderModel = if (modelsDir != null) {
+                File(modelsDir, sourceFile.name)
+            } else null
+            
+            val accessiblePath = when {
+                // Already in app folder - use directly
+                appFolderModel != null && appFolderModel.exists() && 
+                appFolderModel.length() == sourceFile.length() -> {
+                    Log.d(TAG, "Using model from app folder: ${appFolderModel.absolutePath}")
+                    appFolderModel.absolutePath
+                }
+                // In app folder but different - use it anyway (might be updated)
+                path.startsWith(context?.filesDir?.absolutePath ?: "") -> {
+                    Log.d(TAG, "Using model from app folder: $path")
+                    path
+                }
+                // Check if accessible from native code
+                isPathAccessible(path) -> {
+                    Log.d(TAG, "Using model from accessible path: $path")
+                    path
+                }
+                // Copy to app folder for faster access
+                else -> {
+                    copyToAppFolder(sourceFile) ?: run {
+                        // Fallback to cache if app folder copy fails
+                        copyToCache(sourceFile) ?: run {
+                            Log.e(TAG, "Failed to copy model to app folder or cache")
+                            return false
+                        }
+                    }
                 }
             }
             
@@ -235,11 +323,46 @@ object LocalLlamaModel {
      */
     private fun getSavedModelPath(): String? {
         return try {
+            // First check if there's a selected model in app folder
+            val selectedModel = Preference.getString("selectedLocalModel", "")
+            if (selectedModel.isNotBlank()) {
+                val modelsDir = getModelsDirectory()
+                if (modelsDir != null) {
+                    val modelFile = File(modelsDir, selectedModel)
+                    if (modelFile.exists()) {
+                        return modelFile.absolutePath
+                    }
+                }
+            }
+            
+            // Fallback to legacy path preference
             val path = Preference.getString("localModelPath", "")
             if (path.isNotBlank()) path else null
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get saved model path: ${e.message}", e)
             null
+        }
+    }
+    
+    /**
+     * Delete model from app folder
+     */
+    fun deleteAppModel(fileName: String): Boolean {
+        val modelsDir = getModelsDirectory() ?: return false
+        return try {
+            val modelFile = File(modelsDir, fileName)
+            if (modelFile.exists()) {
+                val deleted = modelFile.delete()
+                if (deleted) {
+                    Log.d(TAG, "Deleted model: $fileName")
+                }
+                deleted
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete model: ${e.message}", e)
+            false
         }
     }
     

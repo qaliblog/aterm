@@ -85,47 +85,20 @@ class PpeApiClient(
             val currentProvider = com.qali.aterm.api.ApiProviderManager.selectedProvider
             if (currentProvider == com.qali.aterm.api.ApiProviderType.BUILTIN_LOCAL) {
                 // Use local model for generation
-                // Build a better formatted prompt for code/blueprint generation
-                val promptBuilder = StringBuilder()
+                // Detect model type from path to use appropriate chat template
+                val modelPath = com.qali.aterm.llm.LocalLlamaModel.getModelPath() ?: ""
+                val isQwenCoder = modelPath.contains("qwen", ignoreCase = true) && 
+                                 (modelPath.contains("coder", ignoreCase = true) || 
+                                  modelPath.contains("code", ignoreCase = true))
                 
-                // Detect if this is a code/blueprint generation task
-                val allText = messages.joinToString(" ") { msg ->
-                    msg.parts.joinToString(" ") { part ->
-                        when (part) {
-                            is Part.TextPart -> part.text ?: ""
-                            else -> ""
-                        }
-                    }
-                }.lowercase()
-                
-                val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
-                
-                if (isCodeTask) {
-                    // Add system instruction for code generation
-                    promptBuilder.append("You are a helpful coding assistant. Generate clean, working code based on the user's request.\n\n")
+                // Build prompt with appropriate format
+                val prompt = if (isQwenCoder) {
+                    // Qwen2.5 Coder chat template format
+                    buildQwenCoderPrompt(messages)
+                } else {
+                    // Default format for other models
+                    buildDefaultPrompt(messages)
                 }
-                
-                // Format conversation history
-                messages.forEach { msg ->
-                    val role = when (msg.role) {
-                        "user" -> "User"
-                        "model", "assistant" -> "Assistant"
-                        else -> msg.role
-                    }
-                    val text = msg.parts.joinToString(" ") { part ->
-                        when (part) {
-                            is Part.TextPart -> part.text ?: ""
-                            else -> ""
-                        }
-                    }
-                    if (text.isNotBlank()) {
-                        promptBuilder.append("$role: $text\n")
-                    }
-                }
-                
-                promptBuilder.append("Assistant: ")
-                
-                val prompt = promptBuilder.toString()
                 
                 val response = try {
                     // Use larger limit for code/blueprint generation (8000 chars), smaller for chat (800 chars)
@@ -458,6 +431,102 @@ class PpeApiClient(
     /**
      * Sanitize request for logging (remove sensitive data)
      */
+    /**
+     * Build prompt using Qwen2.5 Coder chat template format
+     */
+    private fun buildQwenCoderPrompt(messages: List<Content>): String {
+        val promptBuilder = StringBuilder()
+        
+        // Detect if this is a code/blueprint generation task
+        val allText = messages.joinToString(" ") { msg ->
+            msg.parts.joinToString(" ") { part ->
+                when (part) {
+                    is Part.TextPart -> part.text ?: ""
+                    else -> ""
+                }
+            }
+        }.lowercase()
+        
+        val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
+        
+        // Qwen2.5 Coder chat template
+        if (isCodeTask) {
+            promptBuilder.append("<|im_start|>system\n")
+            promptBuilder.append("You are a helpful coding assistant. Generate clean, working code based on the user's request.<|im_end|>\n")
+        }
+        
+        // Format conversation history
+        messages.forEach { msg ->
+            val role = when (msg.role) {
+                "user" -> "user"
+                "model", "assistant" -> "assistant"
+                else -> msg.role.lowercase()
+            }
+            val text = msg.parts.joinToString(" ") { part ->
+                when (part) {
+                    is Part.TextPart -> part.text ?: ""
+                    else -> ""
+                }
+            }
+            if (text.isNotBlank()) {
+                promptBuilder.append("<|im_start|>$role\n")
+                promptBuilder.append(text)
+                promptBuilder.append("<|im_end|>\n")
+            }
+        }
+        
+        // Start assistant response
+        promptBuilder.append("<|im_start|>assistant\n")
+        
+        return promptBuilder.toString()
+    }
+    
+    /**
+     * Build prompt using default format for other models
+     */
+    private fun buildDefaultPrompt(messages: List<Content>): String {
+        val promptBuilder = StringBuilder()
+        
+        // Detect if this is a code/blueprint generation task
+        val allText = messages.joinToString(" ") { msg ->
+            msg.parts.joinToString(" ") { part ->
+                when (part) {
+                    is Part.TextPart -> part.text ?: ""
+                    else -> ""
+                }
+            }
+        }.lowercase()
+        
+        val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
+        
+        if (isCodeTask) {
+            // Add system instruction for code generation
+            promptBuilder.append("You are a helpful coding assistant. Generate clean, working code based on the user's request.\n\n")
+        }
+        
+        // Format conversation history
+        messages.forEach { msg ->
+            val role = when (msg.role) {
+                "user" -> "User"
+                "model", "assistant" -> "Assistant"
+                else -> msg.role
+            }
+            val text = msg.parts.joinToString(" ") { part ->
+                when (part) {
+                    is Part.TextPart -> part.text ?: ""
+                    else -> ""
+                }
+            }
+            if (text.isNotBlank()) {
+                promptBuilder.append("$role: $text\n")
+            }
+        }
+        
+        promptBuilder.append("Assistant: ")
+        
+        return promptBuilder.toString()
+    }
+    
     private fun sanitizeRequest(request: String): String {
         // Remove API keys and sensitive tokens
         return request

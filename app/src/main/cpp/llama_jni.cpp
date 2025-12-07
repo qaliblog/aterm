@@ -14,12 +14,12 @@ static llama_context* g_ctx = nullptr;
 static bool model_loaded = false;
 
 // Default generation parameters
-static const int DEFAULT_N_CTX = 2048;
+static const int DEFAULT_N_CTX = 4096; // Increased for Qwen2.5 Coder models
 static const int DEFAULT_N_THREADS = 4;
-static const int DEFAULT_N_PREDICT = 128; // Reduced from 256 to prevent context overflow
-static const float DEFAULT_TEMP = 0.7f;
-static const float DEFAULT_TOP_P = 0.9f;
-static const float DEFAULT_REPEAT_PENALTY = 1.1f;
+static const int DEFAULT_N_PREDICT = 512; // Increased for code generation tasks
+static const float DEFAULT_TEMP = 0.2f; // Lower temperature for more deterministic code generation
+static const float DEFAULT_TOP_P = 0.95f; // Slightly higher for better code quality
+static const float DEFAULT_REPEAT_PENALTY = 1.15f; // Slightly higher to reduce repetition
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thiz, jstring path) {
@@ -101,9 +101,11 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         llama_sampler * smpl = llama_sampler_chain_init(sparams);
         
         // Add samplers: top_k -> top_p -> temp -> greedy
+        // Optimized for code generation models like Qwen2.5 Coder
         llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
         llama_sampler_chain_add(smpl, llama_sampler_init_top_p(DEFAULT_TOP_P, 1));
         llama_sampler_chain_add(smpl, llama_sampler_init_temp(DEFAULT_TEMP));
+        llama_sampler_chain_add(smpl, llama_sampler_init_repeat_penalty(DEFAULT_REPEAT_PENALTY, 64)); // Add repeat penalty
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
         
         // Get vocab from model
