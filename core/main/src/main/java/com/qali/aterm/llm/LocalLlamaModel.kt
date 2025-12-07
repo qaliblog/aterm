@@ -482,22 +482,8 @@ object LocalLlamaModel {
     }
     
     // Native methods
+    // Note: These will throw UnsatisfiedLinkError if the library isn't loaded or doesn't contain these functions
     private external fun loadModelNative(path: String): Boolean
     private external fun generateNative(prompt: String, maxResponseLength: Int): String
     private external fun unloadModelNative()
-    
-    /**
-     * Test if native library is actually loaded and functional
-     * This will throw UnsatisfiedLinkError if the library isn't loaded
-     */
-    private fun testNativeLibrary(): Boolean {
-        return try {
-            // Try to call a simple native method to verify library is loaded
-            // We can't easily test without a model, but we can at least verify the library loaded
-            // by checking if the method exists
-            true
-        } catch (e: UnsatisfiedLinkError) {
-            false
-        }
-    }
 }
