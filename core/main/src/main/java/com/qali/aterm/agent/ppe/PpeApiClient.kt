@@ -85,6 +85,18 @@ class PpeApiClient(
             val currentProvider = com.qali.aterm.api.ApiProviderManager.selectedProvider
             if (currentProvider == com.qali.aterm.api.ApiProviderType.BUILTIN_LOCAL) {
                 // Use local model for generation
+                // Detect if this is a code/blueprint generation task
+                val allText = messages.joinToString(" ") { msg ->
+                    msg.parts.joinToString(" ") { part ->
+                        when (part) {
+                            is Part.TextPart -> part.text ?: ""
+                            else -> ""
+                        }
+                    }
+                }.lowercase()
+                
+                val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
+                
                 // Detect model type from path to use appropriate chat template
                 val modelPath = com.qali.aterm.llm.LocalLlamaModel.getModelPath() ?: ""
                 val isQwenCoder = modelPath.contains("qwen", ignoreCase = true) && 
@@ -94,10 +106,10 @@ class PpeApiClient(
                 // Build prompt with appropriate format
                 val prompt = if (isQwenCoder) {
                     // Qwen2.5 Coder chat template format
-                    buildQwenCoderPrompt(messages)
+                    buildQwenCoderPrompt(messages, isCodeTask)
                 } else {
                     // Default format for other models
-                    buildDefaultPrompt(messages)
+                    buildDefaultPrompt(messages, isCodeTask)
                 }
                 
                 val response = try {
@@ -429,25 +441,10 @@ class PpeApiClient(
     }
     
     /**
-     * Sanitize request for logging (remove sensitive data)
-     */
-    /**
      * Build prompt using Qwen2.5 Coder chat template format
      */
-    private fun buildQwenCoderPrompt(messages: List<Content>): String {
+    private fun buildQwenCoderPrompt(messages: List<Content>, isCodeTask: Boolean): String {
         val promptBuilder = StringBuilder()
-        
-        // Detect if this is a code/blueprint generation task
-        val allText = messages.joinToString(" ") { msg ->
-            msg.parts.joinToString(" ") { part ->
-                when (part) {
-                    is Part.TextPart -> part.text ?: ""
-                    else -> ""
-                }
-            }
-        }.lowercase()
-        
-        val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
         
         // Qwen2.5 Coder chat template
         if (isCodeTask) {
@@ -484,20 +481,8 @@ class PpeApiClient(
     /**
      * Build prompt using default format for other models
      */
-    private fun buildDefaultPrompt(messages: List<Content>): String {
+    private fun buildDefaultPrompt(messages: List<Content>, isCodeTask: Boolean): String {
         val promptBuilder = StringBuilder()
-        
-        // Detect if this is a code/blueprint generation task
-        val allText = messages.joinToString(" ") { msg ->
-            msg.parts.joinToString(" ") { part ->
-                when (part) {
-                    is Part.TextPart -> part.text ?: ""
-                    else -> ""
-                }
-            }
-        }.lowercase()
-        
-        val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
         
         if (isCodeTask) {
             // Add system instruction for code generation
