@@ -100,12 +100,12 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         auto sparams = llama_sampler_chain_default_params();
         llama_sampler * smpl = llama_sampler_chain_init(sparams);
         
-        // Add samplers: top_k -> top_p -> temp -> greedy
+        // Add samplers: top_k -> top_p -> temp -> penalties -> greedy
         // Optimized for code generation models like Qwen2.5 Coder
         llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
         llama_sampler_chain_add(smpl, llama_sampler_init_top_p(DEFAULT_TOP_P, 1));
         llama_sampler_chain_add(smpl, llama_sampler_init_temp(DEFAULT_TEMP));
-        llama_sampler_chain_add(smpl, llama_sampler_init_repeat_penalty(DEFAULT_REPEAT_PENALTY, 64)); // Add repeat penalty
+        llama_sampler_chain_add(smpl, llama_sampler_init_penalties(DEFAULT_REPEAT_PENALTY, 0.0f, 0.0f)); // Add repeat penalty (freq and presence penalties disabled)
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
         
         // Get vocab from model
