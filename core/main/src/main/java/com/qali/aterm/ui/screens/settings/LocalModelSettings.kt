@@ -172,19 +172,6 @@ fun LocalModelSettings() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    // Ensure LocalLlamaModel is initialized
-    LaunchedEffect(Unit) {
-        if (!LocalLlamaModel.isInitialized()) {
-            try {
-                LocalLlamaModel.init(context)
-            } catch (e: UnsatisfiedLinkError) {
-                android.util.Log.e("LocalModelSettings", "Failed to initialize native library: ${e.message}", e)
-                testResult = "Error: Native library not available. The app may need to be reinstalled."
-                showTestDialog = true
-            }
-        }
-    }
-    
     var selectedModel by remember { 
         mutableStateOf(Preference.getString("selectedLocalModel", ""))
     }
@@ -200,8 +187,17 @@ fun LocalModelSettings() {
         appModels = LocalLlamaModel.listAppModels()
     }
     
-    // Load models on first composition
+    // Ensure LocalLlamaModel is initialized and load models on first composition
     LaunchedEffect(Unit) {
+        if (!LocalLlamaModel.isInitialized()) {
+            try {
+                LocalLlamaModel.init(context)
+            } catch (e: UnsatisfiedLinkError) {
+                android.util.Log.e("LocalModelSettings", "Failed to initialize native library: ${e.message}", e)
+                testResult = "Error: Native library not available. The app may need to be reinstalled."
+                showTestDialog = true
+            }
+        }
         refreshModels()
     }
     
@@ -424,21 +420,37 @@ fun LocalModelSettings() {
                             isTesting = true
                             testResult = null
                             
-                            val loaded = LocalLlamaModel.loadModel(selectedModelPath)
-                            if (loaded) {
-                                // Test generation (runs on background thread)
-                                try {
-                                    val testResponse = LocalLlamaModel.generate("Hello")
-                                    testResult = "Test successful! Response: ${testResponse.take(100)}..."
-                                } catch (e: Exception) {
-                                    testResult = "Test failed: ${e.message}"
+                            try {
+                                // Ensure library is initialized
+                                if (!LocalLlamaModel.isInitialized()) {
+                                    try {
+                                        LocalLlamaModel.init(context)
+                                    } catch (e: UnsatisfiedLinkError) {
+                                        testResult = "Error: Native library not available. The app may need to be reinstalled."
+                                        showTestDialog = true
+                                        isTesting = false
+                                        return@launch
+                                    }
                                 }
-                            } else {
-                                testResult = "Failed to load model"
+                                
+                                val loaded = LocalLlamaModel.loadModel(selectedModelPath)
+                                if (loaded) {
+                                    // Test generation (runs on background thread)
+                                    try {
+                                        val testResponse = LocalLlamaModel.generate("Hello")
+                                        testResult = "Test successful! Response: ${testResponse.take(100)}..."
+                                    } catch (e: Exception) {
+                                        testResult = "Test failed: ${e.message}"
+                                    }
+                                } else {
+                                    testResult = "Failed to load model"
+                                }
+                            } catch (e: Exception) {
+                                testResult = "Error: ${e.message}"
+                            } finally {
+                                isTesting = false
+                                showTestDialog = true
                             }
-                            
-                            isTesting = false
-                            showTestDialog = true
                         }
                     }
                 )
