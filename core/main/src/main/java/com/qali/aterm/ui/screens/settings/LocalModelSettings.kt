@@ -175,7 +175,13 @@ fun LocalModelSettings() {
     // Ensure LocalLlamaModel is initialized
     LaunchedEffect(Unit) {
         if (!LocalLlamaModel.isInitialized()) {
-            LocalLlamaModel.init(context)
+            try {
+                LocalLlamaModel.init(context)
+            } catch (e: UnsatisfiedLinkError) {
+                android.util.Log.e("LocalModelSettings", "Failed to initialize native library: ${e.message}", e)
+                testResult = "Error: Native library not available. The app may need to be reinstalled."
+                showTestDialog = true
+            }
         }
     }
     
@@ -204,37 +210,49 @@ fun LocalModelSettings() {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            scope.launch {
-                isCopying = true
-                try {
-                    // Copy to app folder
-                    val appFolderPath = copyUriToAppFolder(context, it)
-                    if (appFolderPath != null) {
-                        val fileName = File(appFolderPath).name
-                        // Auto-select the newly added model
-                        selectedModel = fileName
-                        Preference.setString("selectedLocalModel", fileName)
-                        refreshModels()
-                        
-                        // Try to load the model
-                        val loaded = LocalLlamaModel.loadModel(appFolderPath)
-                        if (loaded) {
-                            testResult = "Model added and loaded successfully!"
-                        } else {
-                            testResult = "Model added but failed to load. Please try selecting it manually."
+                scope.launch {
+                    isCopying = true
+                    try {
+                        // Ensure library is initialized
+                        if (!LocalLlamaModel.isInitialized()) {
+                            try {
+                                LocalLlamaModel.init(context)
+                            } catch (e: UnsatisfiedLinkError) {
+                                testResult = "Error: Native library not available. The app may need to be reinstalled."
+                                showTestDialog = true
+                                isCopying = false
+                                return@launch
+                            }
                         }
+                        
+                        // Copy to app folder
+                        val appFolderPath = copyUriToAppFolder(context, it)
+                        if (appFolderPath != null) {
+                            val fileName = File(appFolderPath).name
+                            // Auto-select the newly added model
+                            selectedModel = fileName
+                            Preference.setString("selectedLocalModel", fileName)
+                            refreshModels()
+                            
+                            // Try to load the model
+                            val loaded = LocalLlamaModel.loadModel(appFolderPath)
+                            if (loaded) {
+                                testResult = "Model added and loaded successfully!"
+                            } else {
+                                testResult = "Model added but failed to load. Please try selecting it manually."
+                            }
+                            showTestDialog = true
+                        } else {
+                            testResult = "Failed to copy model to app folder. Please try again."
+                            showTestDialog = true
+                        }
+                    } catch (e: Exception) {
+                        testResult = "Error: ${e.message}"
                         showTestDialog = true
-                    } else {
-                        testResult = "Failed to copy model to app folder. Please try again."
-                        showTestDialog = true
+                    } finally {
+                        isCopying = false
                     }
-                } catch (e: Exception) {
-                    testResult = "Error: ${e.message}"
-                    showTestDialog = true
-                } finally {
-                    isCopying = false
                 }
-            }
         }
     }
     
@@ -338,15 +356,31 @@ fun LocalModelSettings() {
                                 // Load the selected model
                                 scope.launch {
                                     isTesting = true
-                                    val loaded = LocalLlamaModel.loadModel(modelPath)
-                                    isTesting = false
-                                    
-                                    if (loaded) {
-                                        testResult = "Model selected and loaded successfully!"
-                                    } else {
-                                        testResult = "Failed to load model. Please check if the file is valid."
+                                    try {
+                                        // Ensure library is initialized
+                                        if (!LocalLlamaModel.isInitialized()) {
+                                            try {
+                                                LocalLlamaModel.init(context)
+                                            } catch (e: UnsatisfiedLinkError) {
+                                                testResult = "Error: Native library not available. The app may need to be reinstalled."
+                                                showTestDialog = true
+                                                isTesting = false
+                                                return@launch
+                                            }
+                                        }
+                                        
+                                        val loaded = LocalLlamaModel.loadModel(modelPath)
+                                        if (loaded) {
+                                            testResult = "Model selected and loaded successfully!"
+                                        } else {
+                                            testResult = "Failed to load model. Please check if the file is valid."
+                                        }
+                                    } catch (e: Exception) {
+                                        testResult = "Error loading model: ${e.message}"
+                                    } finally {
+                                        isTesting = false
+                                        showTestDialog = true
                                     }
-                                    showTestDialog = true
                                 }
                             }
                         }

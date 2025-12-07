@@ -24,13 +24,15 @@ object LocalLlamaModel {
     fun init(context: Context) {
         if (!isInitialized) {
             appContext = context.applicationContext
-        try {
-            System.loadLibrary("llama_jni")
-            Log.d(TAG, "Loaded llama_jni native library")
-        } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "Failed to load llama_jni native library: ${e.message}", e)
-        }
-            isInitialized = true
+            try {
+                System.loadLibrary("llama_jni")
+                Log.d(TAG, "Loaded llama_jni native library")
+                isInitialized = true
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to load llama_jni native library: ${e.message}", e)
+                isInitialized = false
+                throw e // Re-throw to indicate initialization failure
+            }
         }
     }
     
@@ -110,6 +112,21 @@ object LocalLlamaModel {
      * @return true if model loaded successfully
      */
     fun loadModel(path: String): Boolean {
+        // Ensure library is loaded
+        if (!isInitialized) {
+            val context = appContext
+            if (context == null) {
+                Log.e(TAG, "Cannot load model: LocalLlamaModel not initialized and no context available")
+                return false
+            }
+            try {
+                init(context)
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to initialize native library: ${e.message}", e)
+                return false
+            }
+        }
+        
         return try {
             val sourceFile = File(path)
             if (!sourceFile.exists()) {
