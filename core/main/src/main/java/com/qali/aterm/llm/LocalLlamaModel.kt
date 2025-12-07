@@ -26,16 +26,27 @@ object LocalLlamaModel {
             appContext = context.applicationContext
             try {
                 Log.d(TAG, "Attempting to load llama_jni native library...")
+                
+                // Try to load the library
+                // Android automatically adds 'lib' prefix and '.so' suffix
+                // So "llama_jni" becomes "libllama_jni.so"
                 System.loadLibrary("llama_jni")
-                Log.d(TAG, "Successfully loaded llama_jni native library")
+                
+                Log.d(TAG, "Successfully called System.loadLibrary(\"llama_jni\")")
                 
                 // The library is loaded if we get here without exception
-                // We can't test native methods without a model, but loadLibrary success means it's available
+                // Note: loadLibrary can succeed even if native methods aren't available
+                // We'll discover that when we try to call them
                 isInitialized = true
-                Log.d(TAG, "Native library initialization complete")
+                Log.d(TAG, "Native library initialization marked as complete")
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Failed to load llama_jni native library: ${e.message}", e)
-                Log.e(TAG, "Library path check: ${System.getProperty("java.library.path")}")
+                val errorMsg = "Failed to load llama_jni native library: ${e.message}"
+                Log.e(TAG, errorMsg, e)
+                Log.e(TAG, "This usually means:")
+                Log.e(TAG, "  1. The native library (libllama_jni.so) is not in the APK")
+                Log.e(TAG, "  2. The library was not built for this device architecture")
+                Log.e(TAG, "  3. The library name doesn't match")
+                Log.e(TAG, "Library path: ${System.getProperty("java.library.path")}")
                 isInitialized = false
                 throw e // Re-throw to indicate initialization failure
             } catch (e: Exception) {
@@ -43,6 +54,8 @@ object LocalLlamaModel {
                 isInitialized = false
                 throw UnsatisfiedLinkError("Failed to load native library: ${e.message}")
             }
+        } else {
+            Log.d(TAG, "Library already initialized, skipping init()")
         }
     }
     
@@ -205,11 +218,21 @@ object LocalLlamaModel {
             
             Log.d(TAG, "Using model path: $accessiblePath")
             
+            // Double-check library is initialized before calling native method
+            if (!isInitialized) {
+                Log.e(TAG, "Library not initialized, cannot load model")
+                throw UnsatisfiedLinkError("Native library not initialized")
+            }
+            
             // Call native method with error handling
             val success = try {
+                Log.d(TAG, "Calling loadModelNative...")
                 loadModelNative(accessiblePath)
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Native library not loaded: ${e.message}", e)
+                Log.e(TAG, "Native library not loaded when calling loadModelNative: ${e.message}", e)
+                Log.e(TAG, "isInitialized=$isInitialized, appContext=${appContext != null}")
+                // Reset initialization state since library clearly isn't working
+                isInitialized = false
                 throw e // Re-throw to indicate library issue
             } catch (e: Exception) {
                 Log.e(TAG, "Exception calling native method: ${e.message}", e)

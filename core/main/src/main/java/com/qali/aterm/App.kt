@@ -31,6 +31,14 @@ class App : Application() {
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate() {
         super.onCreate()
+        
+        // Initialize LocalLlamaModel early in Application lifecycle
+        try {
+            com.qali.aterm.llm.LocalLlamaModel.init(this)
+        } catch (e: UnsatisfiedLinkError) {
+            android.util.Log.e("App", "Failed to load native library in Application.onCreate: ${e.message}", e)
+            // Continue - the app can still work without the native library
+        }
         application = this
         Res.application = this
 
