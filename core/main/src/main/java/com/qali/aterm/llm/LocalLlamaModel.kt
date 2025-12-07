@@ -35,10 +35,14 @@ object LocalLlamaModel {
                 Log.d(TAG, "Successfully called System.loadLibrary(\"llama_jni\")")
                 
                 // The library is loaded if we get here without exception
-                // Note: loadLibrary can succeed even if native methods aren't available
-                // We'll discover that when we try to call them
+                // However, loadLibrary can succeed even if native methods aren't available
+                // We'll discover that when we try to call them, but at least we know the library file exists
                 isInitialized = true
                 Log.d(TAG, "Native library initialization marked as complete")
+                
+                // Note: We can't verify native methods exist without calling them
+                // If the library loaded but methods aren't found, we'll get UnsatisfiedLinkError
+                // when we try to call them, which we handle in loadModel() and generate()
             } catch (e: UnsatisfiedLinkError) {
                 val errorMsg = "Failed to load llama_jni native library: ${e.message}"
                 Log.e(TAG, errorMsg, e)
