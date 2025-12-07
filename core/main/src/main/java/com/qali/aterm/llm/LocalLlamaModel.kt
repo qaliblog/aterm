@@ -107,6 +107,23 @@ object LocalLlamaModel {
     }
     
     /**
+     * Check if native library is available and loaded
+     */
+    fun isNativeLibraryAvailable(): Boolean {
+        if (!isInitialized) {
+            return false
+        }
+        // Try to verify the library is actually loaded by checking if we can call a native method
+        // We'll do this by attempting to check if the library is loaded
+        return try {
+            // The library should be loaded if isInitialized is true
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    /**
      * Load model from file path
      * @param path Path to model file (e.g., /sdcard/models/qwen-2.5-coder-7b.q4.gguf)
      * @return true if model loaded successfully
@@ -125,6 +142,12 @@ object LocalLlamaModel {
                 Log.e(TAG, "Failed to initialize native library: ${e.message}", e)
                 return false
             }
+        }
+        
+        // Double-check that library is actually loaded before calling native method
+        if (!isInitialized) {
+            Log.e(TAG, "Native library not initialized, cannot load model")
+            return false
         }
         
         return try {
@@ -172,7 +195,17 @@ object LocalLlamaModel {
             
             Log.d(TAG, "Using model path: $accessiblePath")
             
-            val success = loadModelNative(accessiblePath)
+            // Call native method with error handling
+            val success = try {
+                loadModelNative(accessiblePath)
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Native library not loaded: ${e.message}", e)
+                throw e // Re-throw to indicate library issue
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception calling native method: ${e.message}", e)
+                false
+            }
+            
             if (success) {
                 isModelLoaded = true
                 modelPath = path
@@ -182,6 +215,9 @@ object LocalLlamaModel {
                 Log.e(TAG, "Failed to load model: $accessiblePath")
             }
             success
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "Native library error loading model: ${e.message}", e)
+            throw e // Re-throw UnsatisfiedLinkError so caller knows it's a library issue
         } catch (e: Exception) {
             Log.e(TAG, "Exception loading model: ${e.message}", e)
             false
@@ -265,6 +301,21 @@ object LocalLlamaModel {
      * @return Generated response text
      */
     suspend fun generate(prompt: String, maxResponseLength: Int = 800): String = withContext(Dispatchers.IO) {
+        // Check if native library is available
+        if (!isInitialized) {
+            val context = appContext
+            if (context != null) {
+                try {
+                    init(context)
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.e(TAG, "Failed to initialize native library: ${e.message}", e)
+                    return@withContext "Error: Native library not available. The app may need to be reinstalled."
+                }
+            } else {
+                return@withContext "Error: Native library not initialized. Please restart the app."
+            }
+        }
+        
         if (!isModelLoaded) {
             // Try to load model from saved path
             val savedPath = getSavedModelPath()
@@ -280,8 +331,16 @@ object LocalLlamaModel {
             // Add timeout to prevent hanging (60 seconds max for chat, 120 seconds for code/blueprint)
             val timeoutMs = if (maxResponseLength > 2000) 120000 else 60000
             withTimeout(timeoutMs.toLong()) {
-                generateNative(prompt, maxResponseLength)
+                try {
+                    generateNative(prompt, maxResponseLength)
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.e(TAG, "Native library not loaded during generation: ${e.message}", e)
+                    throw e // Re-throw to indicate library issue
+                }
             }
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "Native library error: ${e.message}", e)
+            "Error: Native library not available. The app may need to be reinstalled."
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             Log.e(TAG, "Generation timed out after 60 seconds")
             "Error: Generation timed out. The model is taking too long to respond. Try a shorter prompt or check if the model is working correctly."

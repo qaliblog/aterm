@@ -140,8 +140,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Initialize LocalLlamaModel with context
-        com.qali.aterm.llm.LocalLlamaModel.init(this)
+        // Initialize LocalLlamaModel with context (don't crash if library not available)
+        try {
+            com.qali.aterm.llm.LocalLlamaModel.init(this)
+        } catch (e: UnsatisfiedLinkError) {
+            android.util.Log.e("MainActivity", "Failed to load native library: ${e.message}", e)
+            // Continue without native library - user can still use other features
+        }
         
         enableEdgeToEdge()
         requestPermission()

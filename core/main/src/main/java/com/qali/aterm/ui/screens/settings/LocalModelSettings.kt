@@ -231,7 +231,16 @@ fun LocalModelSettings() {
                             refreshModels()
                             
                             // Try to load the model
-                            val loaded = LocalLlamaModel.loadModel(appFolderPath)
+                            val loaded = try {
+                                LocalLlamaModel.loadModel(appFolderPath)
+                            } catch (e: UnsatisfiedLinkError) {
+                                android.util.Log.e("LocalModelSettings", "Native library error: ${e.message}", e)
+                                testResult = "Error: Native library not available. The app may need to be reinstalled."
+                                showTestDialog = true
+                                isCopying = false
+                                return@launch
+                            }
+                            
                             if (loaded) {
                                 testResult = "Model added and loaded successfully!"
                             } else {
@@ -365,7 +374,16 @@ fun LocalModelSettings() {
                                             }
                                         }
                                         
-                                        val loaded = LocalLlamaModel.loadModel(modelPath)
+                                        val loaded = try {
+                                            LocalLlamaModel.loadModel(modelPath)
+                                        } catch (e: UnsatisfiedLinkError) {
+                                            android.util.Log.e("LocalModelSettings", "Native library error: ${e.message}", e)
+                                            testResult = "Error: Native library not available. The app may need to be reinstalled."
+                                            showTestDialog = true
+                                            isTesting = false
+                                            return@launch
+                                        }
+                                        
                                         if (loaded) {
                                             testResult = "Model selected and loaded successfully!"
                                         } else {
@@ -433,12 +451,23 @@ fun LocalModelSettings() {
                                     }
                                 }
                                 
-                                val loaded = LocalLlamaModel.loadModel(selectedModelPath)
+                                val loaded = try {
+                                    LocalLlamaModel.loadModel(selectedModelPath)
+                                } catch (e: UnsatisfiedLinkError) {
+                                    android.util.Log.e("LocalModelSettings", "Native library error: ${e.message}", e)
+                                    testResult = "Error: Native library not available. The app may need to be reinstalled."
+                                    showTestDialog = true
+                                    isTesting = false
+                                    return@launch
+                                }
+                                
                                 if (loaded) {
                                     // Test generation (runs on background thread)
                                     try {
                                         val testResponse = LocalLlamaModel.generate("Hello")
                                         testResult = "Test successful! Response: ${testResponse.take(100)}..."
+                                    } catch (e: UnsatisfiedLinkError) {
+                                        testResult = "Error: Native library not available. The app may need to be reinstalled."
                                     } catch (e: Exception) {
                                         testResult = "Test failed: ${e.message}"
                                     }
