@@ -80,7 +80,13 @@ target_link_libraries(
 )
 
 # Compiler flags for Android
-target_compile_options(llama_jni PRIVATE -O3 -DNDEBUG)
+# Ensure JNI functions are exported by using default visibility
+target_compile_options(llama_jni PRIVATE 
+    -O3 
+    -DNDEBUG
+    -fvisibility=default
+    -fvisibility-inlines-hidden=0
+)
 
 # Ensure JNI functions are exported (important for shared libraries)
 # This ensures all JNIEXPORT functions are visible
