@@ -85,7 +85,6 @@ target_compile_options(llama_jni PRIVATE
     -O3 
     -DNDEBUG
     -fvisibility=default
-    -fvisibility-inlines-hidden=0
 )
 
 # Ensure JNI functions are exported (important for shared libraries)
