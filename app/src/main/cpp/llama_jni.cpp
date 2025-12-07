@@ -21,9 +21,7 @@ static const float DEFAULT_TEMP = 0.2f; // Lower temperature for more determinis
 static const float DEFAULT_TOP_P = 0.95f; // Slightly higher for better code quality
 static const float DEFAULT_REPEAT_PENALTY = 1.15f; // Slightly higher to reduce repetition
 
-// Ensure JNI functions are exported with C linkage
-extern "C" {
-JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jboolean JNICALL
 Java_com_qali_aterm_llm_LocalLlamaModel_loadModelNative(JNIEnv *env, jobject thiz, jstring path) {
     // Unload existing model if any
     if (g_ctx != nullptr) {
