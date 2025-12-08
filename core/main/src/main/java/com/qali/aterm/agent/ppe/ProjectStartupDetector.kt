@@ -66,7 +66,8 @@ object ProjectStartupDetector {
         val newProjectKeywords = listOf(
             "make me", "create", "new project", "build", "initialize",
             "set up", "setup", "generate", "scaffold", "scaffolding", "new app",
-            "create a", "build a", "make a", "develop", "develop a"
+            "create a", "build a", "make a", "develop", "develop a",
+            "write me", "write a", "make a", "build me", "create me"
         )
         // Only match "start" if it's clearly about starting a NEW project
         val hasStartKeyword = message.contains("start") && 
@@ -92,7 +93,8 @@ object ProjectStartupDetector {
                     name.endsWith(".js") || name.endsWith(".ts") || name.endsWith(".py") ||
                     name.endsWith(".java") || name.endsWith(".kt") || name.endsWith(".go") ||
                     name.endsWith(".rs") || name.endsWith(".cpp") || name.endsWith(".c") ||
-                    name.endsWith(".jsx") || name.endsWith(".tsx") || name.endsWith(".vue")
+                    name.endsWith(".jsx") || name.endsWith(".tsx") || name.endsWith(".vue") ||
+                    name.endsWith(".html") || name.endsWith(".css") || name.endsWith(".htm")
                 }
                 .count()
         } else {
@@ -159,6 +161,21 @@ object ProjectStartupDetector {
                 projectType = ProjectType.ANGULAR,
                 suggestedTemplate = "angular",
                 detectedLanguage = "typescript"
+            )
+        }
+        
+        // HTML/CSS/JS web project detection (check before Node.js)
+        if (lowerMessage.contains("html") || 
+            lowerMessage.contains("css") ||
+            lowerMessage.contains("javascript") ||
+            lowerMessage.contains("web page") ||
+            lowerMessage.contains("webpage") ||
+            lowerMessage.contains("website") ||
+            (lowerMessage.contains("page") && (lowerMessage.contains("html") || lowerMessage.contains("css") || lowerMessage.contains("js")))) {
+            return ProjectTypeDetection(
+                projectType = ProjectType.NODEJS, // Use NODEJS type for HTML/CSS/JS projects
+                suggestedTemplate = "html-css-js",
+                detectedLanguage = "html"
             )
         }
         
