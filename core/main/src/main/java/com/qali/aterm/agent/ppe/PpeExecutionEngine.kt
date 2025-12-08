@@ -1147,8 +1147,13 @@ class PpeExecutionEngine(
                 appendLine(finalMessageContent)
             }
             
+            // Detect if this is a code/blueprint generation task
+            val isCodeTask = finalMessageContent.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build|html|css|js|javascript)\b"""), ignoreCase = true)
+            
             val response = try {
-                com.qali.aterm.llm.LocalLlamaModel.generate(fullPrompt)
+                // Use larger limit for code/blueprint generation (8000 chars), smaller for chat (800 chars)
+                val maxLength = if (isCodeTask) 8000 else 800
+                com.qali.aterm.llm.LocalLlamaModel.generate(fullPrompt, maxLength)
             } catch (e: Exception) {
                 android.util.Log.e("PpeExecutionEngine", "Local model generation failed: ${e.message}", e)
                 "Error: Failed to generate response from local model. ${e.message}"

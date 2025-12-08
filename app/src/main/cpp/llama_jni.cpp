@@ -169,10 +169,11 @@ Java_com_qali_aterm_llm_LocalLlamaModel_generateNative(JNIEnv *env, jobject thiz
         std::string last_20_chars = "";
         int repetition_count_30 = 0;
         int repetition_count_20 = 0;
-        const int MAX_REPETITION = 2; // Reduced from 3
+        // More lenient repetition detection for longer responses (blueprint/code generation)
+        const int MAX_REPETITION = (maxResponseLength > 2000) ? 5 : 3; // More lenient for long responses
         // Use provided max length, or default to 800 for chat, 8000 for code/blueprint
         const size_t MAX_RESPONSE_LENGTH = (maxResponseLength > 0) ? (size_t)maxResponseLength : 800;
-        const int MAX_REPEATED_PHRASES = 4; // Reduced from 5
+        const int MAX_REPEATED_PHRASES = (maxResponseLength > 2000) ? 8 : 5; // More lenient for long responses
         
         while (n_cur < tokens.size() + n_predict) {
             // Sample next token (idx is the logits position, -1 means last)
