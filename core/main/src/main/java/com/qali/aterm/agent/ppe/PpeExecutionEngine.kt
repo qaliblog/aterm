@@ -1148,7 +1148,7 @@ class PpeExecutionEngine(
             }
             
             // Detect if this is a code/blueprint generation task
-            val isCodeTask = finalMessageContent.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build|html|css|js|javascript)\b"""), ignoreCase = true)
+            val isCodeTask = Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build|html|css|js|javascript)\b""", RegexOption.IGNORE_CASE).containsMatchIn(finalMessageContent)
             
             val response = try {
                 // Use larger limit for code/blueprint generation (8000 chars), smaller for chat (800 chars)
@@ -2986,6 +2986,8 @@ Return ONLY the raw code content. No markdown, no explanations, no code blocks. 
         val blueprintPrompt = """
 You are a senior software project architect specializing in file coherence and dependency management.
 Your task is to understand the user's request and design a comprehensive JSON blueprint that ensures perfect file coherence and relativeness.
+
+IMPORTANT: You must return ONLY valid JSON. Do not include any explanations, markdown formatting, or debug information. Return pure JSON only.
 
 User Request (natural language from user):
 $userMessage
