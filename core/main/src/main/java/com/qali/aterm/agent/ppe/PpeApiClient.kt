@@ -95,7 +95,8 @@ class PpeApiClient(
                     }
                 }.lowercase()
                 
-                val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build)\b"""))
+                // More comprehensive detection for code/blueprint tasks
+                val isCodeTask = allText.contains(Regex("""\b(code|blueprint|function|class|file|generate|create|write|implement|build|html|css|js|javascript|python|java|kotlin|typescript|react|vue|angular|component|page|app|website|web|youtube|replicat)\b"""), ignoreCase = true)
                 
                 // Detect model type from path to use appropriate chat template
                 val modelPath = com.qali.aterm.llm.LocalLlamaModel.getModelPath() ?: ""
