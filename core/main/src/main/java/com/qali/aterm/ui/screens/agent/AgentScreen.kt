@@ -1883,26 +1883,44 @@ fun AgentScreen(
     var currentAgentJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val clipboardManager = LocalClipboardManager.current
     
-    // ChatGPT Python Script settings (reusing Ollama settings for compatibility)
-    val useChatGPTScript = Settings.use_ollama
-    val chatGPTHost = Settings.ollama_host
-    val chatGPTPort = Settings.ollama_port
-    val chatGPTApiKey = Settings.ollama_model // Reusing model field for API key
-    val chatGPTModel = "gptfree" // Your script uses "gptfree" model name
-    val chatGPTUrl = "http://$chatGPTHost:$chatGPTPort"
+    // Check if GPTSCRIPT provider is selected
+    val selectedProvider = ApiProviderManager.selectedProvider
+    val useGptScript = selectedProvider == ApiProviderType.GPTSCRIPT
+    val useChatGPTScript = Settings.use_ollama || useGptScript // Backward compatibility
+    
+    // Get GPT Script settings from ApiProviderManager if GPTSCRIPT is selected, otherwise use Ollama settings
+    val gptScriptBaseUrl = if (useGptScript) {
+        ApiProviderManager.getCurrentBaseUrl().takeIf { it.isNotEmpty() } ?: "http://localhost:1201"
+    } else {
+        val chatGPTHost = Settings.ollama_host
+        val chatGPTPort = Settings.ollama_port
+        "http://$chatGPTHost:$chatGPTPort"
+    }
+    
+    val gptScriptApiKey = if (useGptScript) {
+        ApiProviderManager.getNextApiKey() ?: ""
+    } else {
+        Settings.ollama_model.takeIf { it.isNotBlank() && it != "llama3.2" } ?: ""
+    }
+    
+    val gptScriptModel = if (useGptScript) {
+        ApiProviderManager.getCurrentModel().takeIf { it.isNotEmpty() } ?: "gptfree"
+    } else {
+        "gptfree"
+    }
     
     // Initialize client for ChatGPT Python Script
     // Use sessionId in key to ensure per-session clients
-    val aiClient = remember(sessionId, workspaceRoot, useChatGPTScript, chatGPTHost, chatGPTPort, chatGPTApiKey) {
-        if (useChatGPTScript) {
+    val aiClient = remember(sessionId, workspaceRoot, useChatGPTScript, useGptScript, gptScriptBaseUrl, gptScriptApiKey, gptScriptModel) {
+        if (useChatGPTScript || useGptScript) {
             // Initialize OllamaClient for ChatGPT Python Script
-            val toolRegistry = AgentService.createToolRegistry(workspaceRoot, sessionId, mainActivity, chatGPTUrl, chatGPTModel)
+            val toolRegistry = AgentService.createToolRegistry(workspaceRoot, sessionId, mainActivity, gptScriptBaseUrl, gptScriptModel)
             OllamaClient(
                 toolRegistry = toolRegistry,
                 workspaceRoot = workspaceRoot,
-                baseUrl = chatGPTUrl,
-                model = chatGPTModel,
-                apiKey = chatGPTApiKey.takeIf { it.isNotBlank() && it != "llama3.2" } // Use API key if available (not default llama model)
+                baseUrl = gptScriptBaseUrl,
+                model = gptScriptModel,
+                apiKey = gptScriptApiKey.takeIf { it.isNotBlank() }
             )
         } else {
             // Fallback to regular AgentService for Gemini

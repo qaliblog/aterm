@@ -276,12 +276,35 @@ object ProviderAdapter {
                 )
                 Pair(url, headers)
             }
+            ApiProviderType.GPTSCRIPT -> {
+                // GPT Script uses Ollama-compatible API format
+                val baseUrl = com.qali.aterm.api.ApiProviderManager.getCurrentBaseUrl()
+                val url = if (baseUrl.isNotEmpty()) {
+                    // Use configured base URL
+                    if (baseUrl.endsWith("/api/chat")) {
+                        baseUrl
+                    } else {
+                        val cleanBaseUrl = baseUrl.trimEnd('/')
+                        "$cleanBaseUrl/api/chat"
+                    }
+                } else {
+                    // Default to localhost:1201
+                    "http://localhost:1201/api/chat"
+                }
+                // Add API key as Bearer token if provided
+                val headers = if (apiKey.isNotEmpty()) {
+                    mapOf("Authorization" to "Bearer $apiKey")
+                } else {
+                    emptyMap()
+                }
+                Pair(url, headers)
+            }
             ApiProviderType.CUSTOM -> {
                 // Custom provider - use baseUrl from ApiProviderManager
                 val baseUrl = com.qali.aterm.api.ApiProviderManager.getCurrentBaseUrl()
                 if (baseUrl.isNotEmpty()) {
                     // Use configured base URL
-                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434")) {
+                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434") || baseUrl.contains(":1201")) {
                         // Ollama format: append /api/chat if not already present
                         if (baseUrl.endsWith("/api/chat")) {
                             baseUrl
@@ -296,10 +319,11 @@ object ProviderAdapter {
                     Pair(url, emptyMap())
                 } else {
                     // Fallback: check if apiKey contains URL (for backward compatibility)
-                    if (apiKey.contains("localhost") || apiKey.contains("127.0.0.1") || apiKey.contains("ollama") || apiKey.contains(":11434")) {
+                    if (apiKey.contains("localhost") || apiKey.contains("127.0.0.1") || apiKey.contains("ollama") || apiKey.contains(":11434") || apiKey.contains(":1201")) {
                         val fallbackBaseUrl = when {
                             apiKey.startsWith("http") -> apiKey.split("/api").first()
                             apiKey.contains(":11434") -> "http://$apiKey"
+                            apiKey.contains(":1201") -> "http://$apiKey"
                             else -> "http://localhost:11434"
                         }
                         val url = "$fallbackBaseUrl/api/chat"

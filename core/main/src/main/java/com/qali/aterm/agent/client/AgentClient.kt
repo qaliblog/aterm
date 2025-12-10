@@ -367,12 +367,36 @@ class AgentClient(
                 val convertedBody = convertRequestToAnthropic(requestBody, model)
                 Triple(url, convertedBody, headers)
             }
+            ApiProviderType.GPTSCRIPT -> {
+                // GPT Script uses Ollama-compatible API format
+                val baseUrl = ApiProviderManager.getCurrentBaseUrl()
+                val url = if (baseUrl.isNotEmpty()) {
+                    // Use configured base URL
+                    if (baseUrl.endsWith("/api/chat")) {
+                        baseUrl
+                    } else {
+                        val cleanBaseUrl = baseUrl.trimEnd('/')
+                        "$cleanBaseUrl/api/chat"
+                    }
+                } else {
+                    // Default to localhost:1201
+                    "http://localhost:1201/api/chat"
+                }
+                val convertedBody = convertRequestToOllama(requestBody, model)
+                // Add API key as Bearer token if provided
+                val headers = if (apiKey.isNotEmpty()) {
+                    mapOf("Authorization" to "Bearer $apiKey")
+                } else {
+                    emptyMap<String, String>()
+                }
+                Triple(url, convertedBody, headers)
+            }
             ApiProviderType.CUSTOM -> {
                 // Custom provider - use baseUrl from ApiProviderManager
                 val baseUrl = ApiProviderManager.getCurrentBaseUrl()
                 if (baseUrl.isNotEmpty()) {
                     // Use configured base URL
-                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434")) {
+                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434") || baseUrl.contains(":1201")) {
                         // Ollama format: append /api/chat if not already present
                         if (baseUrl.endsWith("/api/chat")) {
                             baseUrl
@@ -384,7 +408,7 @@ class AgentClient(
                         // Generic custom API - use baseUrl as-is (should be full endpoint URL)
                         baseUrl
                     }
-                    val convertedBody = if (url.contains("ollama") || url.contains(":11434")) {
+                    val convertedBody = if (url.contains("ollama") || url.contains(":11434") || url.contains(":1201")) {
                         convertRequestToOllama(requestBody, model)
                     } else {
                         requestBody // Assume Gemini-compatible format
@@ -531,8 +555,12 @@ class AgentClient(
                             ApiProviderType.ANTHROPIC -> {
                                 parseAnthropicResponse(bodyString, onChunk, onToolCall, onToolResult, toolCallsToExecute)
                             }
+                            ApiProviderType.GPTSCRIPT -> {
+                                // GPT Script uses Ollama-compatible response format
+                                parseOllamaResponse(bodyString, onChunk, onToolCall, onToolResult, toolCallsToExecute)
+                            }
                             ApiProviderType.CUSTOM -> {
-                                if (apiKey.contains("localhost") || apiKey.contains("127.0.0.1") || apiKey.contains("ollama") || apiKey.contains(":11434")) {
+                                if (apiKey.contains("localhost") || apiKey.contains("127.0.0.1") || apiKey.contains("ollama") || apiKey.contains(":11434") || apiKey.contains(":1201")) {
                                     parseOllamaResponse(bodyString, onChunk, onToolCall, onToolResult, toolCallsToExecute)
                                 } else {
                                     // Generic custom - try Gemini format

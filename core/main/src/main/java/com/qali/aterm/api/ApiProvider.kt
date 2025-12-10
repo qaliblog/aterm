@@ -10,6 +10,7 @@ enum class ApiProviderType(val displayName: String) {
     GOOGLE("Google Gemini"),
     COHERE("Cohere"),
     MISTRAL("Mistral AI"),
+    GPTSCRIPT("GPT Script"),
     CUSTOM("Custom")
 }
 
@@ -256,6 +257,7 @@ object ApiProviderManager {
             ApiProviderType.GOOGLE -> "gemini-2.0-flash" // Default Gemini model
             ApiProviderType.COHERE -> "command-r-plus"
             ApiProviderType.MISTRAL -> "mistral-large-latest"
+            ApiProviderType.GPTSCRIPT -> "gptfree"
             ApiProviderType.CUSTOM -> ""
         }
     }
@@ -264,6 +266,7 @@ object ApiProviderManager {
     fun getDefaultBaseUrl(providerType: ApiProviderType): String {
         return when (providerType) {
             ApiProviderType.GOOGLE -> "https://generativelanguage.googleapis.com/v1beta"
+            ApiProviderType.GPTSCRIPT -> "http://localhost:1201"
             else -> ""
         }
     }

@@ -29,7 +29,7 @@ fun ModelSelectionDialog(
     var baseUrl by remember { mutableStateOf(currentBaseUrl ?: "") }
     
     val suggestedModels = getSuggestedModels(providerType)
-    val isCustomProvider = providerType == ApiProviderType.CUSTOM
+    val isCustomProvider = providerType == ApiProviderType.CUSTOM || providerType == ApiProviderType.GPTSCRIPT
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -307,6 +307,13 @@ private fun getSuggestedModels(providerType: ApiProviderType): List<ModelSuggest
                 name = "Mistral Medium",
                 value = "mistral-medium-latest",
                 description = "Balanced Mistral model."
+            )
+        )
+        ApiProviderType.GPTSCRIPT -> listOf(
+            ModelSuggestion(
+                name = "GPT Free",
+                value = "gptfree",
+                description = "Default model for GPT Script (ChatGPT via Selenium)."
             )
         )
         ApiProviderType.CUSTOM -> emptyList()

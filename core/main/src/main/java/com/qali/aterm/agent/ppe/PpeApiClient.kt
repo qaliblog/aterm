@@ -593,12 +593,36 @@ class PpeApiClient(
                 convertedBody.put("max_tokens", maxTokens ?: 2048)
                 Triple(url, convertedBody, headers)
             }
+            com.qali.aterm.api.ApiProviderType.GPTSCRIPT -> {
+                // GPT Script uses Ollama-compatible API format
+                val baseUrl = com.qali.aterm.api.ApiProviderManager.getCurrentBaseUrl()
+                val url = if (baseUrl.isNotEmpty()) {
+                    // Use configured base URL
+                    if (baseUrl.endsWith("/api/chat")) {
+                        baseUrl
+                    } else {
+                        val cleanBaseUrl = baseUrl.trimEnd('/')
+                        "$cleanBaseUrl/api/chat"
+                    }
+                } else {
+                    // Default to localhost:1201
+                    "http://localhost:1201/api/chat"
+                }
+                val convertedBody = ProviderAdapter.convertRequestToOllama(requestBody, model)
+                // Add API key as Bearer token if provided
+                val headers = if (apiKey.isNotEmpty()) {
+                    mapOf("Authorization" to "Bearer $apiKey")
+                } else {
+                    emptyMap<String, String>()
+                }
+                Triple(url, convertedBody, headers)
+            }
             com.qali.aterm.api.ApiProviderType.CUSTOM -> {
                 // Custom provider - use baseUrl from ApiProviderManager
                 val baseUrl = com.qali.aterm.api.ApiProviderManager.getCurrentBaseUrl()
                 if (baseUrl.isNotEmpty()) {
                     // Use configured base URL
-                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434")) {
+                    val url = if (baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1") || baseUrl.contains("ollama") || baseUrl.contains(":11434") || baseUrl.contains(":1201")) {
                         // Ollama format: append /api/chat if not already present
                         if (baseUrl.endsWith("/api/chat")) {
                             baseUrl
@@ -740,8 +764,19 @@ class PpeApiClient(
                     jsonObjectToMap = ::jsonObjectToMap
                 )
             }
+            com.qali.aterm.api.ApiProviderType.GPTSCRIPT -> {
+                // GPT Script uses Ollama-compatible response format
+                finishReason = ApiResponseParser.parseOllamaResponse(
+                    bodyString,
+                    onChunk = { chunks.add(it) },
+                    onToolCall = { functionCalls.add(it) },
+                    onToolResult = { _, _ -> },
+                    toolCallsToExecute = toolCallsToExecute,
+                    jsonObjectToMap = ::jsonObjectToMap
+                )
+            }
             com.qali.aterm.api.ApiProviderType.CUSTOM -> {
-                if (apiKey.contains("ollama") || apiKey.contains(":11434")) {
+                if (apiKey.contains("ollama") || apiKey.contains(":11434") || apiKey.contains(":1201")) {
                     finishReason = ApiResponseParser.parseOllamaResponse(
                         bodyString,
                         onChunk = { chunks.add(it) },

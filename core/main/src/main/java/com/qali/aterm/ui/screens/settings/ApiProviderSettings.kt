@@ -107,12 +107,12 @@ fun ApiProviderSettings() {
                     onClick = { showModelDialog = true }
                 )
                 
-                // Show base URL for custom provider
-                if (selectedProvider == ApiProviderType.CUSTOM) {
+                // Show base URL for custom provider and GPTSCRIPT
+                if (selectedProvider == ApiProviderType.CUSTOM || selectedProvider == ApiProviderType.GPTSCRIPT) {
                     SettingsCard(
                         title = { Text("Base URL") },
                         description = { 
-                            val urlText = (currentBaseUrl ?: "").takeIf { it.isNotBlank() } ?: "Not set"
+                            val urlText = (currentBaseUrl ?: "").takeIf { it.isNotBlank() } ?: if (selectedProvider == ApiProviderType.GPTSCRIPT) "http://localhost:1201" else "Not set"
                             Text(urlText)
                         },
                         endWidget = {
