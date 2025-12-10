@@ -3742,11 +3742,27 @@ fun AgentScreen(
             onCopy = { text ->
                 clipboardManager.setText(AnnotatedString(text))
             },
-            useOllama = useChatGPTScript,
-            ollamaHost = chatGPTHost,
-            ollamaPort = chatGPTPort,
-            ollamaModel = chatGPTApiKey, // Using API key field for model
-            ollamaUrl = chatGPTUrl,
+            useOllama = useChatGPTScript || useGptScript,
+            ollamaHost = if (useGptScript) {
+                gptScriptBaseUrl.removePrefix("http://").removePrefix("https://").split(":").firstOrNull() ?: "localhost"
+            } else {
+                Settings.ollama_host
+            },
+            ollamaPort = if (useGptScript) {
+                gptScriptBaseUrl.split(":").lastOrNull()?.toIntOrNull() ?: 1201
+            } else {
+                Settings.ollama_port
+            },
+            ollamaModel = if (useGptScript) {
+                gptScriptApiKey.takeIf { it.isNotBlank() } ?: gptScriptModel
+            } else {
+                Settings.ollama_model
+            },
+            ollamaUrl = if (useGptScript) {
+                gptScriptBaseUrl
+            } else {
+                "http://${Settings.ollama_host}:${Settings.ollama_port}"
+            },
             workspaceRoot = workspaceRoot,
             messages = messages,
             aiClient = aiClient
