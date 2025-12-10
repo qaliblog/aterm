@@ -124,6 +124,21 @@ object AgentService {
         }
     }
     
+    /**
+     * Create a ToolRegistry with all tools registered
+     */
+    fun createToolRegistry(
+        workspaceRoot: String,
+        sessionId: String? = null,
+        mainActivity: MainActivity? = null,
+        ollamaUrl: String? = null,
+        ollamaModel: String? = null
+    ): ToolRegistry {
+        val toolRegistry = ToolRegistry()
+        registerAllTools(toolRegistry, workspaceRoot, sessionId, mainActivity, ollamaUrl, ollamaModel)
+        return toolRegistry
+    }
+    
     private fun registerAllTools(
         toolRegistry: ToolRegistry, 
         workspaceRoot: String, 

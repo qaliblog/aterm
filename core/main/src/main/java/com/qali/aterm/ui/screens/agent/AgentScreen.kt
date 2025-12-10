@@ -1896,7 +1896,7 @@ fun AgentScreen(
     val aiClient = remember(sessionId, workspaceRoot, useChatGPTScript, chatGPTHost, chatGPTPort, chatGPTApiKey) {
         if (useChatGPTScript) {
             // Initialize OllamaClient for ChatGPT Python Script
-            val toolRegistry = com.qali.aterm.agent.tools.ToolRegistry.getInstance()
+            val toolRegistry = AgentService.createToolRegistry(workspaceRoot, sessionId, mainActivity, chatGPTUrl, chatGPTModel)
             OllamaClient(
                 toolRegistry = toolRegistry,
                 workspaceRoot = workspaceRoot,

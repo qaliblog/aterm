@@ -141,14 +141,19 @@ class OllamaClient(
                             val tool = toolRegistry.getTool(functionCall.name)
                             if (tool != null) {
                                 try {
-                                    val result = tool.execute(
-                                        functionCall.args,
-                                        workspaceRoot,
-                                        toolResult.llmContent,
-                                        toolResult.returnDisplay
-                                    )
+                                    // Validate and convert parameters
+                                    val params = tool.validateParams(functionCall.args)
+                                    if (params == null) {
+                                        emit(AgentEvent.Error("Invalid parameters for tool: ${functionCall.name}"))
+                                        continue
+                                    }
                                     
-                                    emit(AgentEvent.ToolResult(callId, result.llmContent))
+                                    // Create invocation and execute
+                                    @Suppress("UNCHECKED_CAST")
+                                    val invocation = (tool as com.qali.aterm.agent.tools.DeclarativeTool<Any, com.qali.aterm.agent.tools.ToolResult>).createInvocation(params as Any)
+                                    val result = invocation.execute()
+                                    
+                                    emit(AgentEvent.ToolResult(functionCall.name, result))
                                     
                                     synchronized(chatHistory) {
                                         chatHistory.add(mapOf(
@@ -175,8 +180,8 @@ class OllamaClient(
                         }
                     }
                     
-                    // Fixed: Use AgentEvent.Done instead of Complete
-                    emit(AgentEvent.Done(finishReason ?: "STOP"))
+                    // Fixed: Use AgentEvent.Done (object, not data class)
+                    emit(AgentEvent.Done)
                 } else {
                     emit(AgentEvent.Error("Empty response body"))
                 }
