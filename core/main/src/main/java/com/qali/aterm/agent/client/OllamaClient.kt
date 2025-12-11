@@ -96,6 +96,8 @@ class OllamaClient(
             }
             
             requestBuilder.addHeader("X-Requested-With", "XMLHttpRequest")
+            requestBuilder.addHeader("X-Agent-Mode", "true") // Enable agent mode for script2.py
+            requestBuilder.addHeader("Accept", "application/json")
             
             val request = requestBuilder.build()
             

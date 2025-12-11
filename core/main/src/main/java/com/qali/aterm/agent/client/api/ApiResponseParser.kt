@@ -55,7 +55,25 @@ object ApiResponseParser {
                 
                 if (content.isNotEmpty()) {
                     android.util.Log.d("ApiResponseParser", "Received content: ${content.take(100)}...")
-                    onChunk(content)
+                    // Check if content is JSON (for script2.py responses)
+                    // If it's JSON, try to format it nicely, otherwise pass as-is
+                    val trimmedContent = content.trim()
+                    if (trimmedContent.startsWith("{") || trimmedContent.startsWith("[")) {
+                        try {
+                            // Try to parse and format JSON for better readability
+                            val jsonContent = JSONObject(trimmedContent)
+                            // Format JSON with indentation
+                            val formatted = jsonContent.toString(2)
+                            android.util.Log.d("ApiResponseParser", "Content is valid JSON, formatting...")
+                            onChunk(formatted)
+                        } catch (e: Exception) {
+                            // Not valid JSON or is array, pass as-is
+                            android.util.Log.d("ApiResponseParser", "Content is not valid JSON object, passing as-is")
+                            onChunk(content)
+                        }
+                    } else {
+                        onChunk(content)
+                    }
                 }
                 
                 // Check for tool calls (if the script supports them)
@@ -309,7 +327,25 @@ object ApiResponseParser {
             val content = message.optString("content", "")
             if (content.isNotEmpty()) {
                 android.util.Log.d("ApiResponseParser", "Ollama content: ${content.take(100)}...")
-                onChunk(content)
+                // Check if content is JSON (for script2.py responses)
+                // If it's JSON, try to format it nicely, otherwise pass as-is
+                val trimmedContent = content.trim()
+                if (trimmedContent.startsWith("{") || trimmedContent.startsWith("[")) {
+                    try {
+                        // Try to parse and format JSON for better readability
+                        val jsonContent = JSONObject(trimmedContent)
+                        // Format JSON with indentation
+                        val formatted = jsonContent.toString(2)
+                        android.util.Log.d("ApiResponseParser", "Content is valid JSON, formatting...")
+                        onChunk(formatted)
+                    } catch (e: Exception) {
+                        // Not valid JSON or is array, pass as-is
+                        android.util.Log.d("ApiResponseParser", "Content is not valid JSON object, passing as-is")
+                        onChunk(content)
+                    }
+                } else {
+                    onChunk(content)
+                }
             }
             
             // Ollama tool calls (if supported)

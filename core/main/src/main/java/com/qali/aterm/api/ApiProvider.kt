@@ -266,7 +266,7 @@ object ApiProviderManager {
     fun getDefaultBaseUrl(providerType: ApiProviderType): String {
         return when (providerType) {
             ApiProviderType.GOOGLE -> "https://generativelanguage.googleapis.com/v1beta"
-            ApiProviderType.GPTSCRIPT -> "http://localhost:1201"
+            ApiProviderType.GPTSCRIPT -> "http://localhost:1201" // Default port, but can be configured to any port (e.g., 1203)
             else -> ""
         }
     }

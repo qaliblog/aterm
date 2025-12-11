@@ -291,11 +291,18 @@ object ProviderAdapter {
                     // Default to localhost:1201
                     "http://localhost:1201/api/chat"
                 }
-                // Add API key as Bearer token if provided
+                // Add API key as Bearer token if provided, and enable agent mode for script2.py
                 val headers = if (apiKey.isNotEmpty()) {
-                    mapOf("Authorization" to "Bearer $apiKey")
+                    mapOf(
+                        "Authorization" to "Bearer $apiKey",
+                        "Accept" to "application/json",
+                        "X-Agent-Mode" to "true"
+                    )
                 } else {
-                    emptyMap()
+                    mapOf(
+                        "Accept" to "application/json",
+                        "X-Agent-Mode" to "true"
+                    )
                 }
                 Pair(url, headers)
             }
