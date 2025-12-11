@@ -803,19 +803,21 @@ class AgentClient(
                 // Handle different JSON response structures
                 val jsonResponse = JSONObject(content)
                 when {
-                    // Agent JSON structure
+                    // Agent JSON structure - keep full JSON intact (GPT-style)
                     jsonResponse.has("intent") -> {
-                        val intent = jsonResponse.optString("intent", "")
-                        val responseContent = jsonResponse.optString("response", "")
-                        val metadata = jsonResponse.optJSONObject("metadata")
-
-                        // Extract and format response
-                        finalContent = if (responseContent.isNotEmpty()) responseContent else content
+                        // Preserve full JSON structure, don't extract parts
+                        finalContent = content
                     }
 
                     // Standard JSON structure with response field
                     jsonResponse.has("response") -> {
-                        finalContent = jsonResponse.optString("response", content)
+                        // Only extract if response is a string, otherwise keep full JSON
+                        val responseObj = jsonResponse.opt("response")
+                        finalContent = if (responseObj is String) {
+                            responseObj
+                        } else {
+                            content // Keep full JSON if response is an object
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -824,14 +826,19 @@ class AgentClient(
                     try {
                         val jsonResponse = JSONObject(extractedJson)
                         when {
-                            // Agent JSON structure
+                            // Agent JSON structure - keep full JSON intact (GPT-style)
                             jsonResponse.has("intent") -> {
-                                finalContent = jsonResponse.optString("response", content)
+                                finalContent = extractedJson
                             }
 
                             // Standard JSON structure with response field
                             jsonResponse.has("response") -> {
-                                finalContent = jsonResponse.optString("response", content)
+                                val responseObj = jsonResponse.opt("response")
+                                finalContent = if (responseObj is String) {
+                                    responseObj
+                                } else {
+                                    extractedJson // Keep full JSON if response is an object
+                                }
                             }
                         }
                     } catch (e2: Exception) {
