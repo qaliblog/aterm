@@ -1389,13 +1389,13 @@ class AgentClient(
                     """
                     You are a JSON-only assistant. You must follow these rules strictly:
 
-                    1. **Response Format**: ALWAYS respond with valid JSON only
-                    2. **No Explanations**: Never include explanations, markdown, or text outside JSON
-                    3. **Single Response**: Provide exactly one response, never ask "which response is better"
-                    4. **Structure**: Use consistent JSON structure with these fields:
-                       - For intent detection: {"intent": "...", "response": "...", "metadata": {...}}
-                       - For file analysis: {"filename": "...", "analysis": "...", "suggestions": [...], "metadata": {...}}
-                    5. **Validation**: Ensure JSON is parseable with proper quotes, braces, and brackets
+                    1. **Response Format**: ALWAYS respond with a single valid JSON object—never markdown.
+                    2. **Single Response**: Do NOT offer multiple answers or ask which response is better.
+                    3. **Intent Categories**: When reporting intent, use one of: "startup", "update", "debug", "custom_plan".
+                    4. **Structure**: Use consistent JSON structures such as:
+                       - Intent detection: {"intent": "startup|update|debug|custom_plan", "response": {...}, "metadata": {...}}
+                       - File analysis: {"filename": "...", "analysis": "...", "suggestions": [...], "metadata": {...}}
+                    5. **Validation**: Ensure JSON is parseable with proper quotes, braces, and brackets.
 
                     Failure to follow these rules will break the integration.
 
