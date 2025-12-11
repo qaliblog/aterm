@@ -38,8 +38,8 @@ class AgentClient(
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)      // Increased timeout for agent mode
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
     
     // Client with longer timeout for complex requests (metadata generation can take longer)
@@ -91,7 +91,7 @@ class AgentClient(
         
         // Add first prompt to clarify and expand user intention
         val enhancedUserMessage = if (intent != null) {
-            enhanceUserIntent(userMessage, intent)
+            enhanceUserIntent(userMessage)
         } else {
             userMessage
         }
@@ -385,9 +385,16 @@ class AgentClient(
                 val convertedBody = convertRequestToOllama(requestBody, model)
                 // Add API key as Bearer token if provided
                 val headers = if (apiKey.isNotEmpty()) {
-                    mapOf("Authorization" to "Bearer $apiKey")
+                    mapOf(
+                        "Authorization" to "Bearer $apiKey",
+                        "Accept" to "application/json",
+                        "X-Agent-Mode" to "true"
+                    )
                 } else {
-                    emptyMap<String, String>()
+                    mapOf(
+                        "Accept" to "application/json",
+                        "X-Agent-Mode" to "true"
+                    )
                 }
                 Triple(url, convertedBody, headers)
             }
@@ -790,10 +797,53 @@ class AgentClient(
         val message = json.optJSONObject("message")
         if (message != null) {
             val content = message.optString("content", "")
-            if (content.isNotEmpty()) {
-                onChunk(content)
+            var finalContent = content
+
+            try {
+                // Handle different JSON response structures
+                val jsonResponse = JSONObject(content)
+                when {
+                    // Agent JSON structure
+                    jsonResponse.has("intent") -> {
+                        val intent = jsonResponse.optString("intent", "")
+                        val responseContent = jsonResponse.optString("response", "")
+                        val metadata = jsonResponse.optJSONObject("metadata")
+
+                        // Extract and format response
+                        finalContent = if (responseContent.isNotEmpty()) responseContent else content
+                    }
+
+                    // Standard JSON structure with response field
+                    jsonResponse.has("response") -> {
+                        finalContent = jsonResponse.optString("response", content)
+                    }
+                }
+            } catch (e: Exception) {
+                // If JSON parsing fails, try to extract JSON from text
+                extractJsonFromResponse(content)?.let { extractedJson ->
+                    try {
+                        val jsonResponse = JSONObject(extractedJson)
+                        when {
+                            // Agent JSON structure
+                            jsonResponse.has("intent") -> {
+                                finalContent = jsonResponse.optString("response", content)
+                            }
+
+                            // Standard JSON structure with response field
+                            jsonResponse.has("response") -> {
+                                finalContent = jsonResponse.optString("response", content)
+                            }
+                        }
+                    } catch (e2: Exception) {
+                        // Ignore, use original content
+                    }
+                }
             }
-            
+
+            if (finalContent.isNotEmpty()) {
+                onChunk(finalContent)
+            }
+
             // Ollama tool calls (if supported)
             val toolCalls = message.optJSONArray("tool_calls")
             if (toolCalls != null) {
@@ -804,13 +854,13 @@ class AgentClient(
                         val functionName = function.getString("name")
                         val functionArgs = function.optString("arguments", "{}")
                         val callId = toolCall.optString("id", "")
-                        
+
                         val argsMap = try {
                             jsonObjectToMap(JSONObject(functionArgs))
                         } catch (e: Exception) {
                             emptyMap<String, Any>()
                         }
-                        
+
                         val functionCall = FunctionCall(
                             name = functionName,
                             args = argsMap,
@@ -822,7 +872,7 @@ class AgentClient(
                 }
             }
         }
-        
+
         val done = json.optBoolean("done", false)
         return if (done) "STOP" else null
     }
@@ -1008,11 +1058,20 @@ class AgentClient(
     /**
      * Convert Gemini request format to Ollama format
      */
+    // Helper function to extract JSON from mixed responses
+    private fun extractJsonFromResponse(text: String): String? {
+        val jsonPattern = Regex("""(\{.*\})|(\[.*\])""", RegexOption.DOT_MATCHES_ALL)
+        val match = jsonPattern.find(text)
+        return match?.value
+    }
+
     private fun convertRequestToOllama(geminiRequest: JSONObject, model: String): JSONObject {
         val ollamaRequest = JSONObject()
         ollamaRequest.put("model", model)
         ollamaRequest.put("stream", false) // Standard
-        
+        ollamaRequest.put("agent_mode", true)
+        ollamaRequest.put("format", "json")
+
         val messages = JSONArray()
         val contents = geminiRequest.optJSONArray("contents")
         if (contents != null) {
@@ -1325,6 +1384,24 @@ class AgentClient(
         val hasWriteTodosTool = toolRegistry.getFunctionDeclarations().any { it.name == "write_todos" }
         
         val systemInstruction = buildString {
+            if (ApiProviderManager.selectedProvider == ApiProviderType.GPTSCRIPT) {
+                append(
+                    """
+                    You are a JSON-only assistant. You must follow these rules strictly:
+
+                    1. **Response Format**: ALWAYS respond with a single valid JSON object—never markdown.
+                    2. **Single Response**: Do NOT offer multiple answers or ask which response is better.
+                    3. **Intent Categories**: When reporting intent, use one of: "startup", "update", "debug", "custom_plan".
+                    4. **Structure**: Use consistent JSON structures such as:
+                       - Intent detection: {"intent": "startup|update|debug|custom_plan", "response": {...}, "metadata": {...}}
+                       - File analysis: {"filename": "...", "analysis": "...", "suggestions": [...], "metadata": {...}}
+                    5. **Validation**: Ensure JSON is parseable with proper quotes, braces, and brackets.
+
+                    Failure to follow these rules will break the integration.
+
+                    """.trimIndent()
+                )
+            }
             append("You are an interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficiently, adhering strictly to the following instructions and utilizing your available tools.\n\n")
             
             // Add system information
@@ -1922,35 +1999,15 @@ class AgentClient(
      * Enhance user intent with clarifying guidance to help AI understand goals, do's, and don'ts
      * Adds helpful context directly to the prompt without extra API calls
      */
-    private suspend fun enhanceUserIntent(userMessage: String, intent: IntentType): String {
-        val memoryContext = MemoryService.getSummarizedMemory()
-        
-        val intentDescription = when (intent) {
-            IntentType.CREATE_NEW -> "creating a new project"
-            IntentType.DEBUG_UPGRADE -> "debugging or upgrading an existing project"
-            IntentType.QUESTION_ONLY -> "answering a question"
+    private fun enhanceUserIntent(userMessage: String): String {
+        return """
+        {
+            "user_message": "$userMessage",
+            "request_type": "intent_detection",
+            "require_json": true,
+            "timestamp": "${System.currentTimeMillis()}"
         }
-        
-        // Add helpful guidance directly to the user message
-        val enhancement = """
-            === User Request ===
-            $userMessage
-            
-            === Context & Guidance ===
-            Task Type: $intentDescription
-            
-            Please ensure you understand:
-            - **Primary Goal**: What should the end result accomplish? What is the main objective?
-            - **Key Requirements**: What are the must-have features, constraints, or specifications?
-            - **Best Practices**: What should be included? Follow industry standards and best practices.
-            - **What to Avoid**: What are common pitfalls or anti-patterns to avoid?
-            - **Success Criteria**: How will we verify the project is complete and working correctly?
-            
-            Be thorough, consider edge cases, and ensure the implementation is production-ready and functional.
-            ${if (memoryContext.isNotEmpty()) "\nPrevious context:\n$memoryContext" else ""}
         """.trimIndent()
-        
-        return enhancement
     }
     
     /**
@@ -7818,39 +7875,26 @@ exports.$functionName = (req, res, next) => {
         onChunk("🔍 Phase 2: Analyzing what needs fixing...\n")
         
         val analysisPrompt = """
-            $systemContext
+            Process the following file content and respond ONLY in valid JSON format.
+            Do not include explanations, markdown, or additional text.
+            Provide exactly one JSON response.
+
+            File: $userMessage
             
-            **Project Goal:** $userMessage
-            
-            **Project Structure:**
+            Content:
             $projectStructure
             
-            Analyze this project and identify:
-            1. Which functions/classes need fixing or updating
-            2. Which specific lines need to be read for context
-            3. What issues exist that need to be resolved
-            
-            Format your response as JSON:
+            Respond with JSON in this format:
             {
-              "files_to_read": [
-                {
-                  "file_path": "path/to/file.ext",
-                  "functions": ["functionName1", "functionName2"],
-                  "line_ranges": [[start1, end1], [start2, end2]],
-                  "reason": "Why this needs to be read"
+                "filename": "$userMessage",
+                "analysis": "your analysis here",
+                "suggestions": ["suggestion1", "suggestion2"],
+                "metadata": {
+                    "processing_type": "file_analysis",
+                    "timestamp": "${System.currentTimeMillis()}"
                 }
-              ],
-              "issues": [
-                {
-                  "file_path": "path/to/file.ext",
-                  "function": "functionName",
-                  "line_range": [start, end],
-                  "issue": "Description of the issue",
-                  "priority": "high|medium|low"
-                }
-              ]
             }
-        """.trimIndent()
+            """.trimIndent()
         
         val analysisRequest = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -8808,30 +8852,26 @@ exports.$functionName = (req, res, next) => {
         onChunk("🔍 Phase 1: Determining if files need to be read...\n")
         
         val analysisPrompt = """
-            You are analyzing a user's question to determine if files need to be read to answer it.
+            Process the following file content and respond ONLY in valid JSON format.
+            Do not include explanations, markdown, or additional text.
+            Provide exactly one JSON response.
+
+            File: $userMessage
             
-            User Question: $userMessage
+            Content:
+            $userMessage
             
-            Analyze the question and determine:
-            1. Does this question require reading files from the workspace?
-            2. If yes, which files are relevant?
-            3. What specific information from those files is needed?
-            
-            Format your response as JSON:
+            Respond with JSON in this format:
             {
-              "needs_files": true/false,
-              "files_to_read": [
-                {
-                  "file_path": "path/to/file.ext",
-                  "reason": "Why this file is needed to answer the question",
-                  "sections": ["specific function/class names or line ranges if applicable"]
+                "filename": "$userMessage",
+                "analysis": "your analysis here",
+                "suggestions": ["suggestion1", "suggestion2"],
+                "metadata": {
+                    "processing_type": "file_analysis",
+                    "timestamp": "${System.currentTimeMillis()}"
                 }
-              ],
-              "question_type": "code_understanding|configuration|documentation|other"
             }
-            
-            If the question can be answered without reading files (general knowledge, explanation, etc.), set "needs_files" to false.
-        """.trimIndent()
+            """.trimIndent()
         
         val analysisRequest = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -9114,11 +9154,11 @@ exports.$functionName = (req, res, next) => {
                     sendMessageQuestionFlow(contextMessage, onChunk, onToolCall, onToolResult)
                 }
                 IntentType.DEBUG_UPGRADE -> {
-                    val enhancedMessage = enhanceUserIntent(contextMessage, intent)
+                    val enhancedMessage = enhanceUserIntent(contextMessage)
                     sendMessageStandardReverse(enhancedMessage, onChunk, onToolCall, onToolResult)
                 }
                 IntentType.CREATE_NEW -> {
-                    val enhancedMessage = enhanceUserIntent(contextMessage, intent)
+                    val enhancedMessage = enhanceUserIntent(contextMessage)
                     sendMessageStandard(enhancedMessage, onChunk, onToolCall, onToolResult)
                 }
             }
@@ -10000,6 +10040,37 @@ exports.$functionName = (req, res, next) => {
         } catch (e: Exception) {
             android.util.Log.e("AgentClient", "makeApiCallSimple: Error: ${e.message}", e)
             throw e
+        }
+    }
+
+    private fun isValidJson(text: String): Boolean {
+        return try {
+            JSONObject(text)
+            true
+        } catch (e: Exception) {
+            try {
+                JSONArray(text)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    private fun handleApiResponse(response: String): Result<String> {
+        return try {
+            if (isValidJson(response)) {
+                Result.success(response)
+            } else {
+                val fixedJson = extractJsonFromResponse(response)
+                if (fixedJson != null && isValidJson(fixedJson)) {
+                    Result.success(fixedJson)
+                } else {
+                    Result.failure(Exception("Invalid JSON response"))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }
