@@ -371,7 +371,7 @@ class AgentClient(
                 // GPT Script uses Ollama-compatible API format
                 val baseUrl = ApiProviderManager.getCurrentBaseUrl()
                 val url = if (baseUrl.isNotEmpty()) {
-                    // Use configured base URL
+                    // Use configured base URL (supports any port, e.g., 1201, 1203, or custom host:port)
                     if (baseUrl.endsWith("/api/chat")) {
                         baseUrl
                     } else {
@@ -379,7 +379,7 @@ class AgentClient(
                         "$cleanBaseUrl/api/chat"
                     }
                 } else {
-                    // Default to localhost:1201
+                    // Default to localhost:1201 (but can be configured to any port via settings)
                     "http://localhost:1201/api/chat"
                 }
                 val convertedBody = convertRequestToOllama(requestBody, model)

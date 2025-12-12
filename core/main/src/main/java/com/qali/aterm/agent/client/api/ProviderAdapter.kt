@@ -195,7 +195,31 @@ object ProviderAdapter {
         ollamaRequest.put("model", model)
         ollamaRequest.put("stream", false) // Standard API mode
         
+        // Check if this is for GPTSCRIPT provider to enforce JSON format
+        val isGptScript = try {
+            com.qali.aterm.api.ApiProviderManager.selectedProvider == com.qali.aterm.api.ApiProviderType.GPTSCRIPT
+        } catch (e: Exception) {
+            false
+        }
+        
         val messages = JSONArray()
+        
+        // Extract system instruction from Gemini request and add as system message
+        val systemInstruction = geminiRequest.optJSONObject("systemInstruction")
+        if (systemInstruction != null) {
+            val systemParts = systemInstruction.optJSONArray("parts")
+            if (systemParts != null && systemParts.length() > 0) {
+                val systemPart = systemParts.getJSONObject(0)
+                val systemText = systemPart.optString("text", "")
+                if (systemText.isNotEmpty()) {
+                    val systemMessage = JSONObject()
+                    systemMessage.put("role", "system")
+                    systemMessage.put("content", systemText)
+                    messages.put(systemMessage)
+                }
+            }
+        }
+        
         val contents = geminiRequest.optJSONArray("contents")
         if (contents != null) {
             for (i in 0 until contents.length()) {
@@ -217,7 +241,27 @@ object ProviderAdapter {
                             "model" -> "assistant"
                             else -> role
                         })
-                        message.put("content", messageContent.toString())
+                        
+                        // For GPTSCRIPT provider, wrap user messages with JSON format enforcement
+                        // This matches the same prompt structure used for Gemini
+                        val finalContent = if (isGptScript && role == "user") {
+                            buildString {
+                                append("Please respond in valid JSON format only. No explanations, no markdown, just pure JSON.\n\n")
+                                append(messageContent.toString())
+                                append("\n\n")
+                                append("Important:\n")
+                                append("1. Output ONLY the JSON object\n")
+                                append("2. Do not include any text before or after\n")
+                                append("3. Do not use markdown code blocks\n")
+                                append("4. Ensure the JSON is valid and complete\n")
+                                append("5. Use double quotes for strings\n")
+                                append("6. Include all closing braces and brackets")
+                            }
+                        } else {
+                            messageContent.toString()
+                        }
+                        
+                        message.put("content", finalContent)
                         messages.put(message)
                     }
                 }
@@ -291,11 +335,18 @@ object ProviderAdapter {
                     // Default to localhost:1201
                     "http://localhost:1201/api/chat"
                 }
-                // Add API key as Bearer token if provided
+                // Add API key as Bearer token if provided, and enable agent mode for script2.py
                 val headers = if (apiKey.isNotEmpty()) {
-                    mapOf("Authorization" to "Bearer $apiKey")
+                    mapOf(
+                        "Authorization" to "Bearer $apiKey",
+                        "Accept" to "application/json",
+                        "X-Agent-Mode" to "true"
+                    )
                 } else {
-                    emptyMap()
+                    mapOf(
+                        "Accept" to "application/json",
+                        "X-Agent-Mode" to "true"
+                    )
                 }
                 Pair(url, headers)
             }
