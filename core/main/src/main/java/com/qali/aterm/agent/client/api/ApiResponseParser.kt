@@ -10,8 +10,72 @@ import org.json.JSONObject
 
 /**
  * Parses API responses from different providers
+ * Includes JSON cleaning utilities similar to gemini-cli
  */
 object ApiResponseParser {
+    
+    /**
+     * Clean JSON response by removing markdown code blocks (like gemini-cli's cleanJsonResponse)
+     * Handles responses from script.py that may include markdown formatting
+     */
+    fun cleanJsonResponse(text: String, model: String = "gptfree"): String {
+        val trimmed = text.trim()
+        
+        // Remove markdown code blocks (```json ... ```)
+        val jsonPrefix = "```json"
+        val jsonSuffix = "```"
+        if (trimmed.startsWith(jsonPrefix, ignoreCase = true) && trimmed.endsWith(jsonSuffix)) {
+            android.util.Log.d("ApiResponseParser", "Removing markdown code blocks from JSON response")
+            return trimmed.substring(jsonPrefix.length, trimmed.length - jsonSuffix.length).trim()
+        }
+        
+        // Remove generic code blocks (``` ... ```)
+        val codePrefix = "```"
+        if (trimmed.startsWith(codePrefix) && trimmed.endsWith(codePrefix) && trimmed.length > codePrefix.length * 2) {
+            val withoutPrefix = trimmed.substring(codePrefix.length)
+            if (withoutPrefix.endsWith(codePrefix)) {
+                android.util.Log.d("ApiResponseParser", "Removing generic code blocks from response")
+                return withoutPrefix.substring(0, withoutPrefix.length - codePrefix.length).trim()
+            }
+        }
+        
+        return trimmed
+    }
+    
+    /**
+     * Extract JSON from mixed response text (handles cases where JSON is embedded in text)
+     */
+    fun extractJsonFromText(text: String): String? {
+        val trimmed = text.trim()
+        
+        // Try to find JSON object or array
+        val jsonObjectPattern = Regex("""\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}""", RegexOption.DOT_MATCHES_ALL)
+        val jsonArrayPattern = Regex("""\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]""", RegexOption.DOT_MATCHES_ALL)
+        
+        // Try object first
+        val objectMatch = jsonObjectPattern.find(trimmed)
+        if (objectMatch != null) {
+            try {
+                JSONObject(objectMatch.value)
+                return objectMatch.value
+            } catch (e: Exception) {
+                // Not valid JSON, continue
+            }
+        }
+        
+        // Try array
+        val arrayMatch = jsonArrayPattern.find(trimmed)
+        if (arrayMatch != null) {
+            try {
+                JSONArray(arrayMatch.value)
+                return arrayMatch.value
+            } catch (e: Exception) {
+                // Not valid JSON, continue
+            }
+        }
+        
+        return null
+    }
     
     /**
      * Parse ChatGPT Python Script API response format
@@ -320,31 +384,60 @@ object ApiResponseParser {
         toolCallsToExecute: MutableList<Triple<FunctionCall, ToolResult, String>>,
         jsonObjectToMap: (JSONObject) -> Map<String, Any>
     ): String? {
-        android.util.Log.d("ApiResponseParser", "Parsing Ollama format response")
+        android.util.Log.d("ApiResponseParser", "Parsing Ollama format response (script.py)")
         val json = JSONObject(bodyString)
         val message = json.optJSONObject("message")
+        val model = json.optString("model", "gptfree")
+        
         if (message != null) {
             val content = message.optString("content", "")
             if (content.isNotEmpty()) {
                 android.util.Log.d("ApiResponseParser", "Ollama content: ${content.take(100)}...")
-                // Check if content is JSON (for script2.py responses)
-                // If it's JSON, try to format it nicely, otherwise pass as-is
-                val trimmedContent = content.trim()
+                
+                // Clean JSON response (remove markdown code blocks like gemini-cli)
+                val cleanedContent = cleanJsonResponse(content, model)
+                
+                // Check if content is JSON (for script.py responses)
+                val trimmedContent = cleanedContent.trim()
                 if (trimmedContent.startsWith("{") || trimmedContent.startsWith("[")) {
                     try {
                         // Try to parse and format JSON for better readability
-                        val jsonContent = JSONObject(trimmedContent)
-                        // Format JSON with indentation
+                        val jsonContent = if (trimmedContent.startsWith("{")) {
+                            JSONObject(trimmedContent)
+                        } else {
+                            // It's an array, format it
+                            val arrayContent = JSONArray(trimmedContent)
+                            // Format array with indentation
+                            val formatted = arrayContent.toString(2)
+                            android.util.Log.d("ApiResponseParser", "Content is valid JSON array, formatting...")
+                            onChunk(formatted)
+                            return json.optBoolean("done", false).let { if (it) "STOP" else null }
+                        }
+                        // Format JSON object with indentation
                         val formatted = jsonContent.toString(2)
-                        android.util.Log.d("ApiResponseParser", "Content is valid JSON, formatting...")
+                        android.util.Log.d("ApiResponseParser", "Content is valid JSON object, formatting...")
                         onChunk(formatted)
                     } catch (e: Exception) {
-                        // Not valid JSON or is array, pass as-is
-                        android.util.Log.d("ApiResponseParser", "Content is not valid JSON object, passing as-is")
-                        onChunk(content)
+                        // Not valid JSON, try to extract JSON from text
+                        val extractedJson = extractJsonFromText(cleanedContent)
+                        if (extractedJson != null) {
+                            try {
+                                val jsonContent = JSONObject(extractedJson)
+                                val formatted = jsonContent.toString(2)
+                                android.util.Log.d("ApiResponseParser", "Extracted and formatted JSON from text")
+                                onChunk(formatted)
+                            } catch (e2: Exception) {
+                                android.util.Log.d("ApiResponseParser", "Could not parse extracted JSON, passing cleaned content as-is")
+                                onChunk(cleanedContent)
+                            }
+                        } else {
+                            android.util.Log.d("ApiResponseParser", "Content is not valid JSON, passing cleaned content as-is")
+                            onChunk(cleanedContent)
+                        }
                     }
                 } else {
-                    onChunk(content)
+                    // Not JSON, pass cleaned content as-is
+                    onChunk(cleanedContent)
                 }
             }
             
