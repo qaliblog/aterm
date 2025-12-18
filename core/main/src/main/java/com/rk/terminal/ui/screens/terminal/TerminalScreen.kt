@@ -119,7 +119,7 @@ import com.rk.resources.strings
 import com.rk.settings.Settings
 import com.qali.aterm.service.TabType
 import com.qali.aterm.ui.activities.terminal.MainActivity
-import com.qali.aterm.ui.screens.agent.AgentScreen
+import com.qali.aterm.ui.screens.os.OSScreen
 import com.qali.aterm.ui.screens.codeeditor.CodeEditorScreen
 import com.qali.aterm.ui.screens.fileexplorer.FileExplorerScreen
 import com.qali.aterm.ui.components.SettingsToggle
@@ -208,7 +208,7 @@ fun TerminalScreen(
         TabType.TERMINAL,
         TabType.FILE_EXPLORER,
         TabType.TEXT_EDITOR,
-        TabType.AGENT
+        TabType.OS
     )
     
     // Reset tab to Terminal when switching sessions
@@ -532,7 +532,7 @@ fun TerminalScreen(
                                                         TabType.TERMINAL -> "Terminal"
                                                         TabType.FILE_EXPLORER -> "File Explorer"
                                                         TabType.TEXT_EDITOR -> "Text Editor"
-                                                        TabType.AGENT -> "Agent"
+                                                        TabType.OS -> "OS"
                                                     }
                                                 )
                                             }
@@ -650,8 +650,8 @@ fun TerminalScreen(
                                         )
                                     }
                                     
-                                    TabType.AGENT -> {
-                                        AgentScreen(
+                                    TabType.OS -> {
+                                        OSScreen(
                                             mainActivity = mainActivityActivity,
                                             sessionId = currentMainSession
                                         )

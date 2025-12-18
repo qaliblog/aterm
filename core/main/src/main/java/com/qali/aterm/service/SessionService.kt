@@ -24,7 +24,7 @@ enum class TabType {
     TERMINAL,
     FILE_EXPLORER,
     TEXT_EDITOR,
-    AGENT
+    OS
 }
 
 class SessionService : Service() {
@@ -69,55 +69,9 @@ class SessionService : Service() {
             // Create the main visible session
             val mainSession = createSession(id, client, activity, workingMode)
             
-            // Only create agent hidden session - file explorer and text editor don't use terminal sessions
+            // File explorer and text editor don't use terminal sessions
             // They just use the sessionId for identification but don't need actual terminal sessions
-            val hiddenSessionIds = listOf(
-                "${id}_agent"
-            )
-            
-            // Create hidden session with a dummy client (it won't be displayed)
-            // IMPORTANT: Use the same workingMode as the main session to ensure matching distros
-            hiddenSessionIds.forEach { hiddenId ->
-                val hiddenClient = object : TerminalSessionClient {
-                    override fun onTextChanged(changedSession: TerminalSession) {}
-                    override fun onTitleChanged(changedSession: TerminalSession) {}
-                    override fun onSessionFinished(finishedSession: TerminalSession) {}
-                    override fun onCopyTextToClipboard(session: TerminalSession, text: String) {}
-                    override fun onPasteTextFromClipboard(session: TerminalSession?) {}
-                    override fun setTerminalShellPid(session: TerminalSession, pid: Int) {}
-                    override fun onBell(session: TerminalSession) {}
-                    override fun onColorsChanged(session: TerminalSession) {}
-                    override fun onTerminalCursorStateChange(state: Boolean) {}
-                    override fun getTerminalCursorStyle(): Int = com.termux.terminal.TerminalEmulator.DEFAULT_TERMINAL_CURSOR_STYLE
-                    override fun logError(tag: String?, message: String?) {}
-                    override fun logWarn(tag: String?, message: String?) {}
-                    override fun logInfo(tag: String?, message: String?) {}
-                    override fun logDebug(tag: String?, message: String?) {}
-                    override fun logVerbose(tag: String?, message: String?) {}
-                    override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {}
-                    override fun logStackTrace(tag: String?, e: Exception?) {}
-                }
-                
-                // Use the same workingMode as the main session to ensure matching distros
-                val hiddenSession = MkSession.createSession(activity, hiddenClient, hiddenId, workingMode = workingMode)
-                // Mark as hidden/headless - this prevents UI operations like text selection
-                hiddenSession.setVisible(false)
-                android.util.Log.d("SessionService", "Created hidden agent session: $hiddenId (workingMode: $workingMode)")
-                sessions[hiddenId] = hiddenSession
-                sessionWorkingModes[hiddenId] = workingMode // Store working mode for hidden session
-                // Don't add hidden sessions to sessionList - they should not appear in UI
-                hiddenSessions.add(hiddenId)
-                
-                // Ensure proper initialization of headless terminal
-                // Initialize emulator with default size if not already initialized
-                if (hiddenSession.emulator == null) {
-                    android.util.Log.d("SessionService", "Initializing headless terminal emulator for $hiddenId")
-                    hiddenSession.updateSize(80, 24, 10, 20) // Default terminal size
-                }
-            }
-            
-            // Track the relationship between main session and hidden sessions
-            sessionGroups[id] = hiddenSessionIds
+            // No hidden sessions needed anymore
             
             return mainSession
         }
@@ -301,13 +255,13 @@ class SessionService : Service() {
             TabType.TERMINAL -> mainSessionId
             TabType.FILE_EXPLORER -> mainSessionId // File explorer doesn't need separate terminal session
             TabType.TEXT_EDITOR -> mainSessionId // Text editor doesn't need separate terminal session
-            TabType.AGENT -> "${mainSessionId}_agent" // Only agent needs a separate terminal session
+            TabType.OS -> mainSessionId // OS tab uses main session
         }
     }
     
     fun getMainSessionIdFromTabId(tabSessionId: String): String? {
         return when {
-            tabSessionId.endsWith("_agent") -> tabSessionId.removeSuffix("_agent")
+            tabSessionId.endsWith("_os") -> tabSessionId.removeSuffix("_os")
             else -> if (!isHiddenSession(tabSessionId)) tabSessionId else null
         }
     }

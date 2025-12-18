@@ -24,7 +24,7 @@ enum class TabType {
     TERMINAL,
     FILE_EXPLORER,
     TEXT_EDITOR,
-    AGENT
+    OS
 }
 
 class SessionService : Service() {
@@ -62,11 +62,10 @@ class SessionService : Service() {
             // Create the main visible session
             val mainSession = createSession(id, client, activity, workingMode)
             
-            // Create 3 hidden sessions for file explorer, text editor, and agent
+            // Create 2 hidden sessions for file explorer and text editor
             val hiddenSessionIds = listOf(
                 "${id}_file_explorer",
-                "${id}_text_editor",
-                "${id}_agent"
+                "${id}_text_editor"
             )
             
             // Create hidden sessions with a dummy client (they won't be displayed)
@@ -263,7 +262,7 @@ class SessionService : Service() {
             TabType.TERMINAL -> mainSessionId
             TabType.FILE_EXPLORER -> "${mainSessionId}_file_explorer"
             TabType.TEXT_EDITOR -> "${mainSessionId}_text_editor"
-            TabType.AGENT -> "${mainSessionId}_agent"
+            TabType.OS -> mainSessionId // OS tab uses main session
         }
     }
     
@@ -271,7 +270,7 @@ class SessionService : Service() {
         return when {
             tabSessionId.endsWith("_file_explorer") -> tabSessionId.removeSuffix("_file_explorer")
             tabSessionId.endsWith("_text_editor") -> tabSessionId.removeSuffix("_text_editor")
-            tabSessionId.endsWith("_agent") -> tabSessionId.removeSuffix("_agent")
+            tabSessionId.endsWith("_os") -> tabSessionId.removeSuffix("_os")
             else -> if (!isHiddenSession(tabSessionId)) tabSessionId else null
         }
     }

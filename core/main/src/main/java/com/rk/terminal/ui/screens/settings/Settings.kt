@@ -140,8 +140,5 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
         
         // Ollama Settings
         com.qali.aterm.ui.screens.settings.OllamaSettings()
-        
-        // Agent Settings
-        com.qali.aterm.ui.screens.settings.AgentSettings()
     }
 }
