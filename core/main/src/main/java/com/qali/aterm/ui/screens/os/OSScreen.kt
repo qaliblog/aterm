@@ -523,71 +523,71 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             fi
             
             echo "[1/8] Updating package lists..."
-            $UPDATE_CMD || true
+            \${UPDATE_CMD} || true
             echo "✓ Package lists updated"
             echo ""
             
             echo "[2/8] Installing X server and display manager..."
-            if [ "$DISTRO_TYPE" = "alpine" ]; then
-                $INSTALL_CMD xorg-server xf86-video-fbdev xf86-input-libinput || true
+            if [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                \${INSTALL_CMD} xorg-server xf86-video-fbdev xf86-input-libinput || true
             else
-                $INSTALL_CMD xorg xorg-server xinit xserver-xorg-input-libinput || \
-                $INSTALL_CMD xorg-server xorg-xinit xf86-input-libinput || true
+                \${INSTALL_CMD} xorg xorg-server xinit xserver-xorg-input-libinput || \\
+                \${INSTALL_CMD} xorg-server xorg-xinit xf86-input-libinput || true
             fi
             echo "✓ X server installed"
             echo ""
             
             echo "[3/8] Installing window manager and compositor..."
-            if [ "$DISTRO_TYPE" = "alpine" ]; then
-                $INSTALL_CMD openbox obconf compton || true
+            if [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                \${INSTALL_CMD} openbox obconf compton || true
             else
-                $INSTALL_CMD openbox obconf compton || \
-                $INSTALL_CMD openbox obconf picom || true
+                \${INSTALL_CMD} openbox obconf compton || \\
+                \${INSTALL_CMD} openbox obconf picom || true
             fi
             echo "✓ Window manager installed"
             echo ""
             
             echo "[4/8] Installing mobile-optimized panel and launcher..."
-            if [ "$DISTRO_TYPE" = "alpine" ]; then
-                $INSTALL_CMD tint2 lxpanel || true
+            if [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                \${INSTALL_CMD} tint2 lxpanel || true
             else
-                $INSTALL_CMD tint2 lxpanel lxmenu-data || true
+                \${INSTALL_CMD} tint2 lxpanel lxmenu-data || true
             fi
             echo "✓ Panel installed"
             echo ""
             
             echo "[5/8] Installing web browsers..."
             # Install Chromium
-            if [ "$DISTRO_TYPE" = "debian" ]; then
-                $INSTALL_CMD chromium chromium-driver || \
-                $INSTALL_CMD chromium-browser chromium-chromedriver || true
-            elif [ "$DISTRO_TYPE" = "rhel" ]; then
-                $INSTALL_CMD chromium chromium-headless || true
-            elif [ "$DISTRO_TYPE" = "arch" ]; then
-                $INSTALL_CMD chromium chromium-driver || true
-            elif [ "$DISTRO_TYPE" = "alpine" ]; then
-                $INSTALL_CMD chromium chromium-chromedriver || true
+            if [ "\${DISTRO_TYPE}" = "debian" ]; then
+                \${INSTALL_CMD} chromium chromium-driver || \\
+                \${INSTALL_CMD} chromium-browser chromium-chromedriver || true
+            elif [ "\${DISTRO_TYPE}" = "rhel" ]; then
+                \${INSTALL_CMD} chromium chromium-headless || true
+            elif [ "\${DISTRO_TYPE}" = "arch" ]; then
+                \${INSTALL_CMD} chromium chromium-driver || true
+            elif [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                \${INSTALL_CMD} chromium chromium-chromedriver || true
             fi
             
             # Install Firefox
-            if [ "$DISTRO_TYPE" = "debian" ]; then
-                $INSTALL_CMD firefox firefox-esr || true
-            elif [ "$DISTRO_TYPE" = "rhel" ]; then
-                $INSTALL_CMD firefox || true
-            elif [ "$DISTRO_TYPE" = "arch" ]; then
-                $INSTALL_CMD firefox firefox-developer-edition || true
-            elif [ "$DISTRO_TYPE" = "alpine" ]; then
-                $INSTALL_CMD firefox || true
+            if [ "\${DISTRO_TYPE}" = "debian" ]; then
+                \${INSTALL_CMD} firefox firefox-esr || true
+            elif [ "\${DISTRO_TYPE}" = "rhel" ]; then
+                \${INSTALL_CMD} firefox || true
+            elif [ "\${DISTRO_TYPE}" = "arch" ]; then
+                \${INSTALL_CMD} firefox firefox-developer-edition || true
+            elif [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                \${INSTALL_CMD} firefox || true
             fi
             
             # Install Google Chrome (via direct download for better compatibility)
-            if [ "$DISTRO_TYPE" = "debian" ]; then
+            if [ "\${DISTRO_TYPE}" = "debian" ]; then
                 if ! command -v google-chrome >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1; then
                     echo "  Installing Google Chrome..."
-                    wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb 2>/dev/null || \
+                    wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb 2>/dev/null || \\
                     wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb 2>/dev/null || true
                     if [ -f /tmp/chrome.deb ]; then
-                        $INSTALL_CMD /tmp/chrome.deb 2>/dev/null || dpkg -i /tmp/chrome.deb 2>/dev/null || true
+                        \${INSTALL_CMD} /tmp/chrome.deb 2>/dev/null || dpkg -i /tmp/chrome.deb 2>/dev/null || true
                         rm -f /tmp/chrome.deb
                     fi
                 fi
@@ -599,10 +599,10 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "[6/8] Installing Selenium and dependencies..."
             # Install Python and pip if not available
             if ! command -v python3 >/dev/null 2>&1; then
-                if [ "$DISTRO_TYPE" = "alpine" ]; then
-                    $INSTALL_CMD python3 py3-pip || true
+                if [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                    \${INSTALL_CMD} python3 py3-pip || true
                 else
-                    $INSTALL_CMD python3 python3-pip || $INSTALL_CMD python3 python-pip || true
+                    \${INSTALL_CMD} python3 python3-pip || \${INSTALL_CMD} python3 python-pip || true
                 fi
             fi
             
@@ -619,14 +619,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             # Install Node.js and npm for Selenium WebDriver (if not available)
             if ! command -v node >/dev/null 2>&1; then
-                if [ "$DISTRO_TYPE" = "debian" ]; then
-                    $INSTALL_CMD nodejs npm || true
-                elif [ "$DISTRO_TYPE" = "rhel" ]; then
-                    $INSTALL_CMD nodejs npm || true
-                elif [ "$DISTRO_TYPE" = "arch" ]; then
-                    $INSTALL_CMD nodejs npm || true
-                elif [ "$DISTRO_TYPE" = "alpine" ]; then
-                    $INSTALL_CMD nodejs npm || true
+                if [ "\${DISTRO_TYPE}" = "debian" ]; then
+                    \${INSTALL_CMD} nodejs npm || true
+                elif [ "\${DISTRO_TYPE}" = "rhel" ]; then
+                    \${INSTALL_CMD} nodejs npm || true
+                elif [ "\${DISTRO_TYPE}" = "arch" ]; then
+                    \${INSTALL_CMD} nodejs npm || true
+                elif [ "\${DISTRO_TYPE}" = "alpine" ]; then
+                    \${INSTALL_CMD} nodejs npm || true
                 fi
             fi
             
@@ -640,25 +640,25 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             echo "[7/8] Installing essential mobile applications..."
             # File manager
-            $INSTALL_CMD pcmanfm || $INSTALL_CMD thunar || $INSTALL_CMD nautilus || true
+            \${INSTALL_CMD} pcmanfm || \${INSTALL_CMD} thunar || \${INSTALL_CMD} nautilus || true
             
             # Terminal
-            $INSTALL_CMD lxterminal || $INSTALL_CMD xterm || $INSTALL_CMD gnome-terminal || true
+            \${INSTALL_CMD} lxterminal || \${INSTALL_CMD} xterm || \${INSTALL_CMD} gnome-terminal || true
             
             # Text editor
-            $INSTALL_CMD mousepad || $INSTALL_CMD leafpad || $INSTALL_CMD gedit || true
+            \${INSTALL_CMD} mousepad || \${INSTALL_CMD} leafpad || \${INSTALL_CMD} gedit || true
             
             # Image viewer
-            $INSTALL_CMD feh || $INSTALL_CMD viewnior || $INSTALL_CMD eog || true
+            \${INSTALL_CMD} feh || \${INSTALL_CMD} viewnior || \${INSTALL_CMD} eog || true
             
             # Network tools
-            $INSTALL_CMD network-manager || $INSTALL_CMD wicd || true
+            \${INSTALL_CMD} network-manager || \${INSTALL_CMD} wicd || true
             
             # Additional Ubuntu Touch-like apps
-            $INSTALL_CMD rofi dmenu || true  # App launcher
-            $INSTALL_CMD dunst || true  # Notifications
-            $INSTALL_CMD xdotool || true  # For gestures
-            $INSTALL_CMD imagemagick || true  # For wallpaper generation
+            \${INSTALL_CMD} rofi dmenu || true  # App launcher
+            \${INSTALL_CMD} dunst || true  # Notifications
+            \${INSTALL_CMD} xdotool || true  # For gestures
+            \${INSTALL_CMD} imagemagick || true  # For wallpaper generation
             
             echo "✓ Applications installed"
             echo ""
@@ -965,23 +965,23 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             # Start notification daemon (Ubuntu Touch style)
             if command -v dunst >/dev/null 2>&1; then
                 dunst -config ~/.config/dunst/dunstrc &
-                DUNST_PID=$!
+                DUNST_PID=\$!
             fi
             
             # Start compositor for smooth animations (Ubuntu Touch style)
             if command -v picom >/dev/null 2>&1; then
-                picom --backend glx --vsync --animations --animation-window-mass 0.5 \
-                      --animation-stiffness 200 --animation-dampening 25 \
+                picom --backend glx --vsync --animations --animation-window-mass 0.5 \\
+                      --animation-stiffness 200 --animation-dampening 25 \\
                       --shadow --shadow-radius 12 --shadow-opacity 0.3 &
-                PICOM_PID=$!
+                PICOM_PID=\$!
             elif command -v compton >/dev/null 2>&1; then
                 compton --backend glx --vsync opengl-swc --shadow --shadow-radius 12 &
-                PICOM_PID=$!
+                PICOM_PID=\$!
             fi
             
             # Start panel (Ubuntu Touch style)
             tint2 &
-            TINT2_PID=$!
+            TINT2_PID=\$!
             
             # Start gesture support
             ~/.config/aterm-touch/gestures.sh &
@@ -995,7 +995,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                     feh --bg-scale /usr/share/pixmaps/backgrounds/default.png
                 else
                     # Create a simple gradient background
-                    convert -size 1920x1080 gradient:#1A1A1A-#2D2D2D /tmp/aterm-bg.png 2>/dev/null && \
+                    convert -size 1920x1080 gradient:#1A1A1A-#2D2D2D /tmp/aterm-bg.png 2>/dev/null && \\
                     feh --bg-scale /tmp/aterm-bg.png || true
                 fi
             fi
@@ -1007,7 +1007,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             exec openbox-session
             
             # Cleanup on exit
-            kill $PICOM_PID $TINT2_PID $DUNST_PID 2>/dev/null || true
+            kill \$PICOM_PID \$TINT2_PID \$DUNST_PID 2>/dev/null || true
             XINIT_EOF
             chmod +x ~/.xinitrc
             
@@ -1105,10 +1105,10 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             # Check Python
             if command -v python3 >/dev/null 2>&1; then
-                echo "✓ Python3 found: $(python3 --version)"
+                echo "✓ Python3 found: \$(python3 --version)"
                 PYTHON_CMD="python3"
             elif command -v python >/dev/null 2>&1; then
-                echo "✓ Python found: $(python --version)"
+                echo "✓ Python found: \$(python --version)"
                 PYTHON_CMD="python"
             else
                 echo "✗ Python not found. Please install Python first."
@@ -1116,8 +1116,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             fi
             
             # Check Selenium
-            if $PYTHON_CMD -c "import selenium" 2>/dev/null; then
-                echo "✓ Selenium installed: $($PYTHON_CMD -c 'import selenium; print(selenium.__version__)')"
+            if \${PYTHON_CMD} -c "import selenium" 2>/dev/null; then
+                echo "✓ Selenium installed: \$(\${PYTHON_CMD} -c 'import selenium; print(selenium.__version__)')"
             else
                 echo "Installing Selenium..."
                 if command -v pip3 >/dev/null 2>&1; then
@@ -1143,7 +1143,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             # Create test script
             cat > ~/selenium_test.py << 'PYTHON_EOF'
             #!/usr/bin/env python3
-            """Selenium Test Script for aTerm Touch"""
+            # Selenium Test Script for aTerm Touch
             
             from selenium import webdriver
             from selenium.webdriver.chrome.service import Service
@@ -1169,7 +1169,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                     driver.quit()
                     return True
                 except Exception as e:
-                    print(f"✗ Chromium test failed: {e}")
+                    print("✗ Chromium test failed: " + str(e))
                     return False
             
             def test_firefox():
@@ -1185,19 +1185,19 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                     driver.quit()
                     return True
                 except Exception as e:
-                    print(f"✗ Firefox test failed: {e}")
+                    print("✗ Firefox test failed: " + str(e))
                     return False
             
             if __name__ == "__main__":
-                print("Testing Selenium with browsers...\n")
+                print("Testing Selenium with browsers...\\n")
                 chromium_ok = test_chromium()
                 firefox_ok = test_firefox()
                 
                 if chromium_ok or firefox_ok:
-                    print("\n✓ Selenium is working!")
+                    print("\\n✓ Selenium is working!")
                     sys.exit(0)
                 else:
-                    print("\n✗ Selenium tests failed")
+                    print("\\n✗ Selenium tests failed")
                     sys.exit(1)
             PYTHON_EOF
             chmod +x ~/selenium_test.py
