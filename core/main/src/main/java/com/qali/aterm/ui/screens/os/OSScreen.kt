@@ -24,6 +24,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebSettings
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.ui.screens.terminal.TerminalBackEnd
 import com.termux.terminal.TerminalSession
@@ -56,6 +60,7 @@ fun OSScreen(
     var installationStatus by remember { mutableStateOf<InstallationStatus?>(null) }
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf("") }
+    var vncRunning by remember { mutableStateOf(false) }
     
     val desktopEnvironment = DesktopEnvironment(
         id = "aterm-touch",
@@ -271,12 +276,187 @@ fun OSScreen(
                         onStatusUpdate = { status, progress ->
                             installationStatus = status
                             installProgress = progress
+                            if (status is InstallationStatus.Success && "VNC" in status.message) {
+                                vncRunning = true
+                            }
                         }
                     )
                 }
             }
         )
+        
+        // VNC Viewer Widget
+        AnimatedVisibility(
+            visible = vncRunning,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Desktop Environment",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = { vncRunning = false }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close VNC viewer"
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    VNCViewer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(400.dp)
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+fun VNCViewer(
+    modifier: Modifier = Modifier
+) {
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.allowFileAccess = true
+                settings.allowContentAccess = true
+                settings.setSupportZoom(true)
+                settings.builtInZoomControls = true
+                settings.displayZoomControls = false
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                        return false
+                    }
+                }
+                
+                // Load noVNC HTML page
+                val htmlContent = """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+                        <title>aTerm Touch VNC</title>
+                        <style>
+                            body {
+                                margin: 0;
+                                padding: 0;
+                                overflow: hidden;
+                                background: #1A1A1A;
+                            }
+                            #noVNC_container {
+                                width: 100%;
+                                height: 100vh;
+                                position: relative;
+                            }
+                            #noVNC_status_bar {
+                                background: #2D2D2D;
+                                color: #FFFFFF;
+                                padding: 8px;
+                                font-family: sans-serif;
+                                font-size: 12px;
+                                text-align: center;
+                            }
+                            #noVNC_canvas {
+                                width: 100%;
+                                height: calc(100vh - 40px);
+                                display: block;
+                            }
+                            .loading {
+                                color: #FFFFFF;
+                                text-align: center;
+                                padding: 20px;
+                                font-family: sans-serif;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div id="noVNC_container">
+                            <div id="noVNC_status_bar">Connecting to VNC server...</div>
+                            <canvas id="noVNC_canvas"></canvas>
+                        </div>
+                        <script>
+                            // Simple VNC client using WebSocket
+                            const canvas = document.getElementById('noVNC_canvas');
+                            const ctx = canvas.getContext('2d');
+                            const statusBar = document.getElementById('noVNC_status_bar');
+                            
+                            // Set canvas size
+                            function resizeCanvas() {
+                                const container = document.getElementById('noVNC_container');
+                                canvas.width = container.clientWidth;
+                                canvas.height = container.clientHeight - 40;
+                            }
+                            resizeCanvas();
+                            window.addEventListener('resize', resizeCanvas);
+                            
+                            // Try to connect via WebSocket proxy or use iframe approach
+                            // For now, show connection info
+                            statusBar.textContent = 'VNC Server: localhost:5901 | Password: aterm';
+                            statusBar.style.background = '#0078D4';
+                            
+                            // Create a simple message
+                            ctx.fillStyle = '#1A1A1A';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            ctx.fillStyle = '#FFFFFF';
+                            ctx.font = '16px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('VNC Server Running', canvas.width / 2, canvas.height / 2 - 20);
+                            ctx.fillText('Connect using a VNC client:', canvas.width / 2, canvas.height / 2);
+                            ctx.fillText('localhost:5901', canvas.width / 2, canvas.height / 2 + 20);
+                            ctx.fillText('Password: aterm', canvas.width / 2, canvas.height / 2 + 40);
+                            
+                            // Try to connect via WebSocket if available
+                            try {
+                                const ws = new WebSocket('ws://localhost:6080/websockify');
+                                ws.onopen = function() {
+                                    statusBar.textContent = 'Connected to VNC';
+                                    statusBar.style.background = '#00AA00';
+                                };
+                                ws.onerror = function() {
+                                    statusBar.textContent = 'VNC: localhost:5901 (Use VNC client app)';
+                                };
+                            } catch(e) {
+                                // WebSocket not available, show connection info
+                            }
+                        </script>
+                    </body>
+                    </html>
+                """.trimIndent()
+                
+                loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+            }
+        },
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+    )
 }
 
 @Composable
