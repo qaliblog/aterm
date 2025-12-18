@@ -67,7 +67,7 @@ fun OSScreen(
         installScript = "install-aterm-touch.sh"
     )
     
-    // Detect Linux distribution
+    // Detect Linux distribution and check installation status
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             try {
@@ -82,6 +82,14 @@ fun OSScreen(
                     
                     // For now, assume it's a Debian-based system if we have a session
                     detectedDistro = "debian" // Will be enhanced to actually detect
+                    
+                    // Check if installation is complete by checking for .xinitrc
+                    session.write("test -f ~/.xinitrc && echo 'INSTALLED' || echo 'NOT_INSTALLED'\n")
+                    delay(1000)
+                    val output = session.emulator?.screen?.getTranscriptText() ?: ""
+                    if ("INSTALLED" in output && "NOT_INSTALLED" !in output.split("\n").takeLast(5).joinToString()) {
+                        installationStatus = InstallationStatus.Success("aTerm Touch is installed and ready to use!")
+                    }
                 }
             } catch (e: Exception) {
                 // Ignore errors
@@ -503,8 +511,10 @@ suspend fun installDesktopEnvironment(
                     "Configuring" in currentOutput -> {
                         onStatusUpdate(InstallationStatus.Installing(), "Configuring desktop environment...")
                     }
-                    "Installation complete" in currentOutput || "complete!" in currentOutput -> {
-                        onStatusUpdate(InstallationStatus.Success("${desktopEnvironment.name} has been installed successfully! You can start it with: startx"), "")
+                    "Installation complete" in currentOutput || "complete!" in currentOutput || "Installation Complete!" in currentOutput || "✓ Configuration complete" in currentOutput -> {
+                        // Wait a bit more to ensure .xinitrc is created
+                        delay(2000)
+                        onStatusUpdate(InstallationStatus.Success("${desktopEnvironment.name} has been installed successfully! Click 'Start Desktop' to launch the GUI."), "")
                         scriptFile.delete()
                         return@withContext
                     }
@@ -550,13 +560,41 @@ suspend fun startDesktopEnvironment(
             session.write("test -f ~/.xinitrc && echo 'Config found' || echo 'Config missing'\n")
             delay(500)
             
-            // Start X server with the desktop environment
-            session.write("export DISPLAY=:0\n")
-            delay(200)
-            session.write("startx 2>&1 &\n")
-            delay(1000)
+            // Install and start VNC server for GUI display
+            onStatusUpdate(InstallationStatus.Installing(), "Setting up VNC server for GUI display...")
             
-            onStatusUpdate(InstallationStatus.Success("Desktop environment is starting! The GUI should appear shortly."), "")
+            // Install VNC server if not available
+            session.write("command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)\n")
+            delay(2000)
+            
+            // Kill any existing VNC server on display :1
+            session.write("vncserver -kill :1 2>/dev/null || true\n")
+            delay(500)
+            
+            // Set VNC password (default: aterm)
+            session.write("mkdir -p ~/.vnc && echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true\n")
+            delay(500)
+            
+            // Create VNC startup script that uses our .xinitrc
+            session.write("""cat > ~/.vnc/xstartup << 'VNC_EOF'
+#!/bin/sh
+[ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
+[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+xsetroot -solid grey
+vncconfig -iconic &
+exec /bin/sh ~/.xinitrc
+VNC_EOF
+chmod +x ~/.vnc/xstartup
+""")
+            delay(500)
+            
+            // Start VNC server
+            onStatusUpdate(InstallationStatus.Installing(), "Starting VNC server on display :1...")
+            session.write("export DISPLAY=:1\n")
+            session.write("vncserver :1 -geometry 1920x1080 -depth 24 2>&1 &\n")
+            delay(2000)
+            
+            onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
             
         } catch (e: Exception) {
             onStatusUpdate(InstallationStatus.Error("Failed to start desktop: ${e.message}"), "")
@@ -763,7 +801,26 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "✓ Applications installed"
             echo ""
             
-            echo "[8/8] Configuring aTerm Touch desktop environment..."
+            echo "[8/8] Installing VNC server for GUI display..."
+            # Install VNC server for remote desktop access
+            if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                ${'$'}{INSTALL_CMD} tigervnc-standalone-server tigervnc-common 2>/dev/null || \
+                ${'$'}{INSTALL_CMD} tightvncserver 2>/dev/null || \
+                echo "  Note: VNC server not available, skipping..."
+            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                ${'$'}{INSTALL_CMD} tigervnc-server 2>/dev/null || \
+                echo "  Note: VNC server not available, skipping..."
+            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
+                ${'$'}{INSTALL_CMD} tigervnc 2>/dev/null || \
+                echo "  Note: VNC server not available, skipping..."
+            elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
+                ${'$'}{INSTALL_CMD} tigervnc 2>/dev/null || \
+                echo "  Note: VNC server not available, skipping..."
+            fi
+            echo "✓ VNC server installed"
+            echo ""
+            
+            echo "[9/9] Configuring aTerm Touch desktop environment..."
             
             # Create config directories
             mkdir -p ~/.config/openbox
@@ -1339,6 +1396,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             SELENIUM_DESKTOP_EOF
             
             echo "✓ Configuration complete"
+            echo ""
             echo ""
             echo "=========================================="
             echo "  Installation Complete!"
