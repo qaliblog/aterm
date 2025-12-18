@@ -937,10 +937,9 @@ suspend fun startDesktopEnvironment(
             // Install and start VNC server for GUI display
             onStatusUpdate(InstallationStatus.Installing(), "Setting up VNC server for GUI display...")
             
-            // Create a bash script to set up VNC and embed it directly in the command
-            // This avoids file deletion issues by using a heredoc
-            val vncSetupCommand = """bash << 'VNC_SETUP_EOF'
-command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
+            // Create a bash script to set up VNC and write it to /tmp inside Linux environment
+            // This avoids file deletion issues since /tmp is inside the chroot
+            val vncSetupScript = """command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
 vncserver -kill :1 2>/dev/null || true
 mkdir -p ~/.vnc
 echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
@@ -974,11 +973,17 @@ if command -v websockify >/dev/null 2>&1; then
     nohup websockify 6080 localhost:5901 >/dev/null 2>&1 &
     sleep 2
 fi
-VNC_SETUP_EOF
 """.trimIndent()
             
-            // Execute the script directly as a heredoc - no temp file needed
-            session.write("$vncSetupCommand\n")
+            // Write script to /tmp inside Linux environment using heredoc
+            // Split into multiple writes to ensure proper formatting
+            session.write("cat > /tmp/vnc_setup.sh << 'SCRIPT_EOF'\n")
+            session.write(vncSetupScript)
+            session.write("\nSCRIPT_EOF\n")
+            delay(500)
+            session.write("chmod +x /tmp/vnc_setup.sh\n")
+            delay(200)
+            session.write("bash /tmp/vnc_setup.sh 2>&1\n")
             delay(5000)
             
             // Check if VNC server is running
