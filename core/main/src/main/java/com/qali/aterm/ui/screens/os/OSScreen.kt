@@ -234,6 +234,7 @@ fun OSScreen(
             desktopEnvironment = desktopEnvironment,
             isSelected = true,
             isInstalling = isInstalling,
+            isInstalled = installationStatus is InstallationStatus.Success,
             onClick = {
                 // Card is always selected
             },
@@ -250,6 +251,18 @@ fun OSScreen(
                         }
                     )
                 }
+            },
+            onStartDesktop = {
+                scope.launch {
+                    startDesktopEnvironment(
+                        mainActivity = mainActivity,
+                        sessionId = sessionId,
+                        onStatusUpdate = { status, progress ->
+                            installationStatus = status
+                            installProgress = progress
+                        }
+                    )
+                }
             }
         )
     }
@@ -260,8 +273,10 @@ fun DesktopEnvironmentCard(
     desktopEnvironment: DesktopEnvironment,
     isSelected: Boolean,
     isInstalling: Boolean,
+    isInstalled: Boolean = false,
     onClick: () -> Unit,
-    onInstall: () -> Unit
+    onInstall: () -> Unit,
+    onStartDesktop: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -357,19 +372,54 @@ fun DesktopEnvironmentCard(
                 }
                 
                 if (isSelected && !isInstalling) {
-                    Button(
-                        onClick = onInstall,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Install")
+                    if (isInstalled) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = onStartDesktop,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Start Desktop")
+                            }
+                            OutlinedButton(
+                                onClick = onInstall,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Reinstall")
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = onInstall,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Install")
+                        }
                     }
                 }
             }
@@ -481,6 +531,39 @@ suspend fun installDesktopEnvironment(
     }
 }
 
+suspend fun startDesktopEnvironment(
+    mainActivity: MainActivity,
+    sessionId: String,
+    onStatusUpdate: (InstallationStatus, String) -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            onStatusUpdate(InstallationStatus.Installing(), "Starting desktop environment...")
+            
+            val session = mainActivity.sessionBinder?.getSession(sessionId)
+            if (session == null) {
+                onStatusUpdate(InstallationStatus.Error("No active session found. Please ensure you have a Linux session active."), "")
+                return@withContext
+            }
+            
+            // Check if .xinitrc exists
+            session.write("test -f ~/.xinitrc && echo 'Config found' || echo 'Config missing'\n")
+            delay(500)
+            
+            // Start X server with the desktop environment
+            session.write("export DISPLAY=:0\n")
+            delay(200)
+            session.write("startx 2>&1 &\n")
+            delay(1000)
+            
+            onStatusUpdate(InstallationStatus.Success("Desktop environment is starting! The GUI should appear shortly."), "")
+            
+        } catch (e: Exception) {
+            onStatusUpdate(InstallationStatus.Error("Failed to start desktop: ${e.message}"), "")
+        }
+    }
+}
+
 fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
     return when (desktopEnvironment.id) {
         "aterm-touch" -> """
@@ -530,9 +613,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "[2/8] Installing X server and display manager..."
             if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
                 ${'$'}{INSTALL_CMD} xorg-server xf86-video-fbdev xf86-input-libinput || true
-            else
-                ${'$'}{INSTALL_CMD} xorg xorg-server xinit xserver-xorg-input-libinput || \\
+            elif [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                ${'$'}{INSTALL_CMD} xorg xinit xserver-xorg-core xserver-xorg-input-libinput || true
+            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
                 ${'$'}{INSTALL_CMD} xorg-server xorg-xinit xf86-input-libinput || true
+            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                ${'$'}{INSTALL_CMD} xorg-x11-server-Xorg xorg-x11-xinit xorg-x11-drv-libinput || true
+            else
+                ${'$'}{INSTALL_CMD} xorg xinit || true
             fi
             echo "✓ X server installed"
             echo ""
@@ -541,8 +629,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
                 ${'$'}{INSTALL_CMD} openbox obconf compton || true
             else
-                ${'$'}{INSTALL_CMD} openbox obconf compton || \\
-                ${'$'}{INSTALL_CMD} openbox obconf picom || true
+                ${'$'}{INSTALL_CMD} openbox obconf || true
+                ${'$'}{INSTALL_CMD} picom || ${'$'}{INSTALL_CMD} compton || true
             fi
             echo "✓ Window manager installed"
             echo ""
@@ -559,7 +647,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "[5/8] Installing web browsers..."
             # Install Chromium
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-driver || \\
+                ${'$'}{INSTALL_CMD} chromium chromium-driver || true
                 ${'$'}{INSTALL_CMD} chromium-browser chromium-chromedriver || true
             elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
                 ${'$'}{INSTALL_CMD} chromium chromium-headless || true
@@ -584,8 +672,10 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
                 if ! command -v google-chrome >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1; then
                     echo "  Installing Google Chrome..."
-                    wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb 2>/dev/null || \\
-                    wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb 2>/dev/null || true
+                    wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb 2>/dev/null || true
+                    if [ ! -f /tmp/chrome.deb ]; then
+                        wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb 2>/dev/null || true
+                    fi
                     if [ -f /tmp/chrome.deb ]; then
                         ${'$'}{INSTALL_CMD} /tmp/chrome.deb 2>/dev/null || dpkg -i /tmp/chrome.deb 2>/dev/null || true
                         rm -f /tmp/chrome.deb
@@ -970,9 +1060,7 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             # Start compositor for smooth animations (Ubuntu Touch style)
             if command -v picom >/dev/null 2>&1; then
-                picom --backend glx --vsync --animations --animation-window-mass 0.5 \\
-                      --animation-stiffness 200 --animation-dampening 25 \\
-                      --shadow --shadow-radius 12 --shadow-opacity 0.3 &
+                picom --backend glx --vsync --animations --animation-window-mass 0.5 --animation-stiffness 200 --animation-dampening 25 --shadow --shadow-radius 12 --shadow-opacity 0.3 &
                 PICOM_PID=${'$'}!
             elif command -v compton >/dev/null 2>&1; then
                 compton --backend glx --vsync opengl-swc --shadow --shadow-radius 12 &
@@ -995,8 +1083,9 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                     feh --bg-scale /usr/share/pixmaps/backgrounds/default.png
                 else
                     # Create a simple gradient background
-                    convert -size 1920x1080 gradient:#1A1A1A-#2D2D2D /tmp/aterm-bg.png 2>/dev/null && \\
-                    feh --bg-scale /tmp/aterm-bg.png || true
+                    if command -v convert >/dev/null 2>&1; then
+                        convert -size 1920x1080 gradient:#1A1A1A-#2D2D2D /tmp/aterm-bg.png 2>/dev/null && feh --bg-scale /tmp/aterm-bg.png || true
+                    fi
                 fi
             fi
             
