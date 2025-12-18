@@ -3,9 +3,9 @@ package com.qali.aterm.ui.screens.settings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Card
@@ -32,6 +32,11 @@ import com.rk.settings.Settings
 import com.qali.aterm.ui.activities.terminal.MainActivity
 import com.qali.aterm.ui.components.SettingsToggle
 import com.qali.aterm.ui.routes.MainActivityRoutes
+import com.qali.aterm.ui.screens.os.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material.icons.filled.*
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -217,6 +222,145 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
         
         // Ollama Settings
         OllamaSettings()
+        
+        // aTerm Touch Desktop Environment
+        PreferenceGroup(heading = "aTerm Touch Desktop") {
+            val scope = rememberCoroutineScope()
+            val sessionId = mainActivity.sessionBinder?.getService()?.currentSession?.value?.first ?: "main"
+            var installationStatus by remember { mutableStateOf<InstallationStatus?>(null) }
+            var isInstalling by remember { mutableStateOf(false) }
+            var installProgress by remember { mutableStateOf("") }
+            
+            // Check installation status on load
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    try {
+                        val session = mainActivity.sessionBinder?.getSession(sessionId)
+                        if (session != null) {
+                            session.write("bash -c 'test -f ~/.xinitrc && echo INSTALLED || echo NOT_INSTALLED'\n")
+                            kotlinx.coroutines.delay(1500)
+                            val output = session.emulator?.screen?.getTranscriptText() ?: ""
+                            val recentLines = output.split("\n").takeLast(10).joinToString("\n")
+                            if ("INSTALLED" in recentLines && recentLines.indexOf("INSTALLED") > recentLines.lastIndexOf("NOT_INSTALLED")) {
+                                installationStatus = InstallationStatus.Success("aTerm Touch is installed and ready to use!")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore errors
+                    }
+                }
+            }
+            
+            val desktopEnvironment = DesktopEnvironment(
+                id = "aterm-touch",
+                name = "aTerm Touch",
+                description = "Mobile-first desktop environment inspired by Ubuntu Touch",
+                icon = Icons.Default.PhoneAndroid,
+                lightweight = true,
+                mobileOptimized = true,
+                installScript = "install-aterm-touch.sh"
+            )
+            
+            // Show installation status
+            if (installationStatus != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = when (installationStatus) {
+                            is InstallationStatus.Installing -> MaterialTheme.colorScheme.tertiaryContainer
+                            is InstallationStatus.Success -> MaterialTheme.colorScheme.primaryContainer
+                            is InstallationStatus.Error -> MaterialTheme.colorScheme.errorContainer
+                            else -> MaterialTheme.colorScheme.surface
+                        }
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        when (installationStatus) {
+                            is InstallationStatus.Installing -> {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                            }
+                            is InstallationStatus.Success -> {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            is InstallationStatus.Error -> {
+                                Icon(
+                                    imageVector = Icons.Default.Error,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                            else -> {}
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (installationStatus) {
+                                    is InstallationStatus.Installing -> "Installing..."
+                                    is InstallationStatus.Success -> "Installed"
+                                    is InstallationStatus.Error -> "Installation Failed"
+                                    else -> ""
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (installationStatus is InstallationStatus.Installing && installProgress.isNotEmpty()) {
+                                Text(
+                                    text = installProgress,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            
+            SettingsCard(
+                title = { Text("Install aTerm Touch") },
+                description = { 
+                    Text(
+                        if (installationStatus is InstallationStatus.Success) {
+                            "Desktop environment is installed. Start it from the OS tab."
+                        } else {
+                            "Install the mobile-first desktop environment"
+                        }
+                    )
+                },
+                endWidget = {
+                    if (isInstalling) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    } else {
+                        Icon(
+                            imageVector = if (installationStatus is InstallationStatus.Success) Icons.Default.CheckCircle else Icons.Default.Download,
+                            contentDescription = null,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                },
+                onClick = {
+                    if (!isInstalling) {
+                        scope.launch {
+                            installDesktopEnvironment(
+                                mainActivity = mainActivity,
+                                sessionId = sessionId,
+                                desktopEnvironment = desktopEnvironment,
+                                onStatusUpdate = { status, progress ->
+                                    installationStatus = status
+                                    installProgress = progress
+                                    isInstalling = status is InstallationStatus.Installing
+                                }
+                            )
+                        }
+                    }
+                }
+            )
+        }
         
         // Rootfs Settings
         RootfsSettings(mainActivity = mainActivity, navController = navController)

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +26,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.foundation.layout.Box
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebSettings
@@ -56,11 +59,10 @@ fun OSScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    var detectedDistro by remember { mutableStateOf<String?>(null) }
-    var installationStatus by remember { mutableStateOf<InstallationStatus?>(null) }
-    var isInstalling by remember { mutableStateOf(false) }
-    var installProgress by remember { mutableStateOf("") }
-    var vncRunning by remember { mutableStateOf(false) }
+    // Use rememberSaveable to preserve state when switching tabs
+    var detectedDistro by rememberSaveable { mutableStateOf<String?>(null) }
+    var vncRunning by rememberSaveable { mutableStateOf(false) }
+    var isStartingVNC by rememberSaveable { mutableStateOf(false) } // Guard against multiple executions
     
     val desktopEnvironment = DesktopEnvironment(
         id = "aterm-touch",
@@ -96,7 +98,14 @@ fun OSScreen(
                     // Check the last few lines for INSTALLED
                     val recentLines = output.split("\n").takeLast(10).joinToString("\n")
                     if ("INSTALLED" in recentLines && recentLines.indexOf("INSTALLED") > recentLines.lastIndexOf("NOT_INSTALLED")) {
-                        installationStatus = InstallationStatus.Success("aTerm Touch is installed and ready to use!")
+                        // Check if VNC is already running
+                        session.write("bash -c 'pgrep -f \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                        delay(1000)
+                        val vncOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                        val vncLines = vncOutput.split("\n").takeLast(10).joinToString("\n")
+                        if ("VNC_RUNNING" in vncLines) {
+                            vncRunning = true
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -105,227 +114,106 @@ fun OSScreen(
         }
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        // Header
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
+    // If VNC is running, show only the viewer
+    if (vncRunning) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            VNCViewer(
+                modifier = Modifier.fillMaxSize()
             )
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Devices,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "aTerm Touch",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Mobile-first desktop environment inspired by Ubuntu Touch",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center
-                )
-                if (detectedDistro != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = "Detected: ${detectedDistro!!.replaceFirstChar { it.uppercase() }}",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Installation Status
-        AnimatedVisibility(
-            visible = installationStatus != null,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
-        ) {
-            installationStatus?.let { status ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = when (status) {
-                            is InstallationStatus.Installing -> MaterialTheme.colorScheme.tertiaryContainer
-                            is InstallationStatus.Success -> MaterialTheme.colorScheme.primaryContainer
-                            is InstallationStatus.Error -> MaterialTheme.colorScheme.errorContainer
-                        }
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            when (status) {
-                                is InstallationStatus.Installing -> {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(24.dp),
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                                    )
-                                }
-                                is InstallationStatus.Success -> {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                }
-                                is InstallationStatus.Error -> {
-                                    Icon(
-                                        imageVector = Icons.Default.Error,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                }
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = when (status) {
-                                        is InstallationStatus.Installing -> "Installing..."
-                                        is InstallationStatus.Success -> "Installation Complete!"
-                                        is InstallationStatus.Error -> "Installation Failed"
-                                    },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = when (status) {
-                                        is InstallationStatus.Installing -> MaterialTheme.colorScheme.onTertiaryContainer
-                                        is InstallationStatus.Success -> MaterialTheme.colorScheme.onPrimaryContainer
-                                        is InstallationStatus.Error -> MaterialTheme.colorScheme.onErrorContainer
+            // Floating action button to start/restart VNC
+            FloatingActionButton(
+                onClick = {
+                    if (!isStartingVNC) {
+                        scope.launch {
+                            isStartingVNC = true
+                            startDesktopEnvironment(
+                                mainActivity = mainActivity,
+                                sessionId = sessionId,
+                                onStatusUpdate = { status, _ ->
+                                    if (status is InstallationStatus.Success && "VNC" in status.message) {
+                                        vncRunning = true
                                     }
-                                )
-                                if (status is InstallationStatus.Installing && installProgress.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = installProgress,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
-                                    )
+                                    isStartingVNC = false
                                 }
-                                if (status is InstallationStatus.Error) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = status.message,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-        
-        // Desktop Environment Card
-        DesktopEnvironmentCard(
-            desktopEnvironment = desktopEnvironment,
-            isSelected = true,
-            isInstalling = isInstalling,
-            isInstalled = installationStatus is InstallationStatus.Success,
-            onClick = {
-                // Card is always selected
-            },
-            onInstall = {
-                scope.launch {
-                    installDesktopEnvironment(
-                        mainActivity = mainActivity,
-                        sessionId = sessionId,
-                        desktopEnvironment = desktopEnvironment,
-                        onStatusUpdate = { status, progress ->
-                            installationStatus = status
-                            installProgress = progress
-                            isInstalling = status is InstallationStatus.Installing
-                        }
-                    )
-                }
-            },
-            onStartDesktop = {
-                scope.launch {
-                    startDesktopEnvironment(
-                        mainActivity = mainActivity,
-                        sessionId = sessionId,
-                        onStatusUpdate = { status, progress ->
-                            installationStatus = status
-                            installProgress = progress
-                            if (status is InstallationStatus.Success && "VNC" in status.message) {
-                                vncRunning = true
-                            }
-                        }
-                    )
-                }
-            }
-        )
-        
-        // VNC Viewer Widget
-        AnimatedVisibility(
-            visible = vncRunning,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
-        ) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Desktop Environment",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        IconButton(
-                            onClick = { vncRunning = false }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close VNC viewer"
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    VNCViewer(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(400.dp)
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp),
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = if (isStartingVNC) Icons.Default.Refresh else Icons.Default.PlayArrow,
+                    contentDescription = if (isStartingVNC) "Starting..." else "Start Desktop"
+                )
+            }
+        }
+    } else {
+        // Show setup screen when VNC is not running
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Devices,
+                contentDescription = null,
+                modifier = Modifier.size(64.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "aTerm Touch Desktop",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Install aTerm Touch from Settings to get started",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = {
+                    if (!isStartingVNC) {
+                        scope.launch {
+                            isStartingVNC = true
+                            startDesktopEnvironment(
+                                mainActivity = mainActivity,
+                                sessionId = sessionId,
+                                onStatusUpdate = { status, _ ->
+                                    if (status is InstallationStatus.Success && "VNC" in status.message) {
+                                        vncRunning = true
+                                    }
+                                    isStartingVNC = false
+                                }
+                            )
+                        }
+                    }
+                },
+                enabled = !isStartingVNC
+            ) {
+                if (isStartingVNC) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Starting...")
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Start Desktop")
                 }
             }
         }
@@ -915,24 +803,38 @@ suspend fun installDesktopEnvironment(
     }
 }
 
+// Global flag to prevent multiple simultaneous executions
+private var isVNCSetupRunning = false
+private val vncSetupLock = Any()
+
 suspend fun startDesktopEnvironment(
     mainActivity: MainActivity,
     sessionId: String,
     onStatusUpdate: (InstallationStatus, String) -> Unit
 ) {
-    withContext(Dispatchers.IO) {
-        try {
-            onStatusUpdate(InstallationStatus.Installing(), "Starting desktop environment...")
-            
-            val session = mainActivity.sessionBinder?.getSession(sessionId)
-            if (session == null) {
-                onStatusUpdate(InstallationStatus.Error("No active session found. Please ensure you have a Linux session active."), "")
-                return@withContext
-            }
-            
-            // Check if .xinitrc exists using bash
-            session.write("bash -c 'test -f ~/.xinitrc && echo Config found || echo Config missing'\n")
-            delay(500)
+    // Prevent multiple simultaneous executions
+    synchronized(vncSetupLock) {
+        if (isVNCSetupRunning) {
+            onStatusUpdate(InstallationStatus.Error("VNC setup is already in progress. Please wait."), "")
+            return
+        }
+        isVNCSetupRunning = true
+    }
+    
+    try {
+        withContext(Dispatchers.IO) {
+            try {
+                onStatusUpdate(InstallationStatus.Installing(), "Starting desktop environment...")
+                
+                val session = mainActivity.sessionBinder?.getSession(sessionId)
+                if (session == null) {
+                    onStatusUpdate(InstallationStatus.Error("No active session found. Please ensure you have a Linux session active."), "")
+                    return@withContext
+                }
+                
+                // Check if .xinitrc exists using bash
+                session.write("bash -c 'test -f ~/.xinitrc && echo Config found || echo Config missing'\n")
+                delay(500)
             
             // Install and start VNC server for GUI display
             onStatusUpdate(InstallationStatus.Installing(), "Setting up VNC server for GUI display...")
@@ -1006,8 +908,13 @@ fi
                 onStatusUpdate(InstallationStatus.Success("VNC server setup completed. Desktop environment should be accessible via VNC viewer at localhost:5901 (password: aterm). If connection fails, check terminal output."), "")
             }
             
-        } catch (e: Exception) {
-            onStatusUpdate(InstallationStatus.Error("Failed to start desktop: ${e.message}"), "")
+            } catch (e: Exception) {
+                onStatusUpdate(InstallationStatus.Error("Failed to start desktop: ${e.message}"), "")
+            }
+        }
+    } finally {
+        synchronized(vncSetupLock) {
+            isVNCSetupRunning = false
         }
     }
 }
