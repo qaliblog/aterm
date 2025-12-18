@@ -877,13 +877,15 @@ if command -v websockify >/dev/null 2>&1; then
 fi
 """.trimIndent()
             
-            // Write script to /tmp inside Linux environment using heredoc
-            // Split into multiple writes to ensure proper formatting
-            session.write("cat > /tmp/vnc_setup.sh << 'SCRIPT_EOF'\n")
-            session.write(vncSetupScript)
-            session.write("\nSCRIPT_EOF\n")
+            // Write script to /tmp inside Linux environment
+            // Use base64 encoding to avoid newline/special character issues
+            val scriptBytes = vncSetupScript.toByteArray(Charsets.UTF_8)
+            val base64Script = android.util.Base64.encodeToString(scriptBytes, android.util.Base64.NO_WRAP)
+            
+            // Decode and write using bash to ensure proper newlines
+            session.write("bash -c 'echo \"$base64Script\" | base64 -d > /tmp/vnc_setup.sh'\n")
             delay(500)
-            session.write("chmod +x /tmp/vnc_setup.sh\n")
+            session.write("bash -c 'chmod +x /tmp/vnc_setup.sh'\n")
             delay(200)
             session.write("bash /tmp/vnc_setup.sh 2>&1\n")
             delay(5000)

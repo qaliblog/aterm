@@ -219,9 +219,6 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
             )
         }
         
-        // API Provider Settings
-        ApiProviderSettings()
-        
         // Ollama Settings
         OllamaSettings()
         
