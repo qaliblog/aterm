@@ -108,11 +108,11 @@ fun OSScreen(
                     }
                     if (foundInstalled) {
                         // Check if VNC is already running using alternative method
-                        session.write("bash -c 'ps aux 2>/dev/null | grep -v grep | grep \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || (netstat -ln 2>/dev/null | grep \":5901\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING)'\n")
-                        delay(1000)
+                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || test -f ~/.vnc/localhost:1.pid) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                        delay(1500)
                         val vncOutput = session.emulator?.screen?.getTranscriptText() ?: ""
-                        val vncLines = vncOutput.split("\n").takeLast(10).joinToString("\n")
-                        if ("VNC_RUNNING" in vncLines) {
+                        val vncLines = vncOutput.split("\n").takeLast(15).joinToString("\n")
+                        if ("VNC_RUNNING" in vncLines || "New Xtigervnc server" in vncLines || "on port 5901" in vncLines) {
                             vncRunning = true
                         }
                     }
@@ -912,9 +912,13 @@ fi
             onStatusUpdate(InstallationStatus.Installing(), "Verifying VNC server...")
             delay(4000)
             
-            // Check if VNC port is listening (most reliable method)
-            // Try multiple methods: netstat, ss, or check if Xvnc process exists
-            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"[X]vnc.*:1\" >/dev/null) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+            // Get terminal output first to check for VNC success message
+            val outputBeforeCheck = session.emulator?.screen?.getTranscriptText() ?: ""
+            val recentOutput = outputBeforeCheck.split("\n").takeLast(50).joinToString("\n")
+            
+            // Check if VNC port is listening or if Xtigervnc/Xvnc process exists
+            // Also check for PID file which VNC creates (Xtigervnc creates localhost:1.pid)
+            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || ls ~/.vnc/*:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
             delay(1500)
             
             // Check websockify
@@ -922,9 +926,15 @@ fi
             delay(1000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
-            val recentLines = output.split("\n").takeLast(30).joinToString("\n")
+            val recentLines = output.split("\n").takeLast(40).joinToString("\n")
             
-            if ("VNC_RUNNING" in recentLines) {
+            // Check for the success message from VNC server or detection result
+            val vncStarted = "New Xtigervnc server" in recentLines || 
+                            "on port 5901" in recentLines || 
+                            "VNC_RUNNING" in recentLines ||
+                            "New Xtigervnc server" in recentOutput
+            
+            if (vncStarted) {
                 onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
             } else {
                 // Even if detection fails, VNC might still be running (hostname warnings are non-fatal)
