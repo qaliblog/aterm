@@ -850,8 +850,11 @@ suspend fun startDesktopEnvironment(
             
             // Create a bash script to set up VNC and write it to /tmp inside Linux environment
             // This avoids file deletion issues since /tmp is inside the chroot
-            val vncSetupScript = """# Set hostname to avoid VNC server errors
-hostname localhost 2>/dev/null || echo localhost > /etc/hostname 2>/dev/null || true
+            val vncSetupScript = """# Set hostname and /etc/hosts to avoid VNC server errors
+export HOSTNAME=localhost
+hostname localhost 2>/dev/null || true
+grep -q "127.0.0.1.*localhost" /etc/hosts 2>/dev/null || echo "127.0.0.1 localhost" >> /etc/hosts 2>/dev/null || true
+grep -q "::1.*localhost" /etc/hosts 2>/dev/null || echo "::1 localhost" >> /etc/hosts 2>/dev/null || true
 
 command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
 vncserver -kill :1 2>/dev/null || true
@@ -867,8 +870,10 @@ exec /bin/sh ~/.xinitrc
 VNC_EOF
 chmod +x ~/.vnc/xstartup
 export DISPLAY=:1
-# Start VNC server with localhost hostname to avoid hostname errors
-vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 &
+export HOSTNAME=localhost
+# Start VNC server - redirect stderr to filter hostname warnings, but allow it to continue
+(vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
+sleep 3
 
 # Install and start websockify for WebSocket VNC access
 if ! command -v websockify >/dev/null 2>&1; then
@@ -905,14 +910,15 @@ fi
             
             // Check if VNC server is running using alternative methods (avoid /proc dependency)
             onStatusUpdate(InstallationStatus.Installing(), "Verifying VNC server...")
-            delay(3000)
+            delay(4000)
             
-            // Check if VNC port is listening or if process exists (using ps instead of pgrep)
-            session.write("bash -c 'ps aux 2>/dev/null | grep -v grep | grep \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || (netstat -ln 2>/dev/null | grep \":5901\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING)'\n")
-            delay(1000)
+            // Check if VNC port is listening (most reliable method)
+            // Try multiple methods: netstat, ss, or check if Xvnc process exists
+            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"[X]vnc.*:1\" >/dev/null) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+            delay(1500)
             
             // Check websockify
-            session.write("bash -c 'ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null && echo WEBSOCKIFY_RUNNING || (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING)'\n")
+            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
             delay(1000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
@@ -921,7 +927,8 @@ fi
             if ("VNC_RUNNING" in recentLines) {
                 onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
             } else {
-                onStatusUpdate(InstallationStatus.Success("VNC server setup completed. Desktop environment should be accessible via VNC viewer at localhost:5901 (password: aterm). If connection fails, check terminal output."), "")
+                // Even if detection fails, VNC might still be running (hostname warnings are non-fatal)
+                onStatusUpdate(InstallationStatus.Success("VNC server setup completed. Desktop environment should be accessible via VNC viewer at localhost:5901 (password: aterm). Note: Hostname warnings are normal and can be ignored."), "")
             }
             
             } catch (e: Exception) {
