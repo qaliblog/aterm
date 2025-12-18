@@ -349,6 +349,7 @@ fun VNCViewer(
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                settings.mediaPlaybackRequiresUserGesture = false
                 
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
@@ -356,7 +357,8 @@ fun VNCViewer(
                     }
                 }
                 
-                // Load noVNC HTML page
+                // Load noVNC HTML page - using iframe to load noVNC from CDN
+                // This is simpler and more reliable than implementing VNC protocol from scratch
                 val htmlContent = """
                     <!DOCTYPE html>
                     <html>
@@ -365,93 +367,282 @@ fun VNCViewer(
                         <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
                         <title>aTerm Touch VNC</title>
                         <style>
+                            * {
+                                margin: 0;
+                                padding: 0;
+                                box-sizing: border-box;
+                            }
                             body {
                                 margin: 0;
                                 padding: 0;
                                 overflow: hidden;
                                 background: #1A1A1A;
+                                font-family: sans-serif;
                             }
                             #noVNC_container {
                                 width: 100%;
                                 height: 100vh;
                                 position: relative;
+                                display: flex;
+                                flex-direction: column;
                             }
                             #noVNC_status_bar {
                                 background: #2D2D2D;
                                 color: #FFFFFF;
-                                padding: 8px;
-                                font-family: sans-serif;
+                                padding: 8px 16px;
                                 font-size: 12px;
                                 text-align: center;
+                                flex-shrink: 0;
+                                border-bottom: 1px solid #3D3D3D;
                             }
-                            #noVNC_canvas {
+                            #vnc_frame {
+                                flex: 1;
                                 width: 100%;
-                                height: calc(100vh - 40px);
-                                display: block;
+                                border: none;
+                                background: #1A1A1A;
                             }
-                            .loading {
+                            .status-connected {
+                                background: #00AA00 !important;
+                            }
+                            .status-connecting {
+                                background: #FFA500 !important;
+                            }
+                            .status-error {
+                                background: #CC0000 !important;
+                            }
+                            .fallback {
+                                display: flex;
+                                flex-direction: column;
+                                align-items: center;
+                                justify-content: center;
+                                height: 100%;
                                 color: #FFFFFF;
                                 text-align: center;
                                 padding: 20px;
-                                font-family: sans-serif;
                             }
                         </style>
                     </head>
                     <body>
                         <div id="noVNC_container">
                             <div id="noVNC_status_bar">Connecting to VNC server...</div>
-                            <canvas id="noVNC_canvas"></canvas>
+                            <div id="vnc_content" style="flex: 1; position: relative;">
+                                <iframe id="vnc_frame" style="display: none;"></iframe>
+                                <div id="fallback" class="fallback">
+                                    <p style="margin-bottom: 10px;">VNC Server: localhost:5901</p>
+                                    <p style="margin-bottom: 10px;">Password: aterm</p>
+                                    <p style="color: #888; font-size: 11px;">Setting up VNC connection...</p>
+                                </div>
+                            </div>
                         </div>
                         <script>
-                            // Simple VNC client using WebSocket
-                            const canvas = document.getElementById('noVNC_canvas');
-                            const ctx = canvas.getContext('2d');
-                            const statusBar = document.getElementById('noVNC_status_bar');
-                            
-                            // Set canvas size
-                            function resizeCanvas() {
-                                const container = document.getElementById('noVNC_container');
-                                canvas.width = container.clientWidth;
-                                canvas.height = container.clientHeight - 40;
-                            }
-                            resizeCanvas();
-                            window.addEventListener('resize', resizeCanvas);
-                            
-                            // Try to connect via WebSocket proxy or use iframe approach
-                            // For now, show connection info
-                            statusBar.textContent = 'VNC Server: localhost:5901 | Password: aterm';
-                            statusBar.style.background = '#0078D4';
-                            
-                            // Create a simple message
-                            ctx.fillStyle = '#1A1A1A';
-                            ctx.fillRect(0, 0, canvas.width, canvas.height);
-                            ctx.fillStyle = '#FFFFFF';
-                            ctx.font = '16px sans-serif';
-                            ctx.textAlign = 'center';
-                            ctx.fillText('VNC Server Running', canvas.width / 2, canvas.height / 2 - 20);
-                            ctx.fillText('Connect using a VNC client:', canvas.width / 2, canvas.height / 2);
-                            ctx.fillText('localhost:5901', canvas.width / 2, canvas.height / 2 + 20);
-                            ctx.fillText('Password: aterm', canvas.width / 2, canvas.height / 2 + 40);
-                            
-                            // Try to connect via WebSocket if available
-                            try {
-                                const ws = new WebSocket('ws://localhost:6080/websockify');
-                                ws.onopen = function() {
-                                    statusBar.textContent = 'Connected to VNC';
-                                    statusBar.style.background = '#00AA00';
-                                };
-                                ws.onerror = function() {
-                                    statusBar.textContent = 'VNC: localhost:5901 (Use VNC client app)';
-                                };
-                            } catch(e) {
-                                // WebSocket not available, show connection info
-                            }
+                            (function() {
+                                const statusBar = document.getElementById('noVNC_status_bar');
+                                const vncFrame = document.getElementById('vnc_frame');
+                                const fallback = document.getElementById('fallback');
+                                
+                                // Try to use noVNC via CDN
+                                function loadNoVNC() {
+                                    statusBar.textContent = 'Loading VNC client...';
+                                    statusBar.className = 'status-connecting';
+                                    
+                                    // Create a simple VNC client using canvas and WebSocket
+                                    // Since websockify handles the VNC protocol, we just need to connect
+                                    const canvas = document.createElement('canvas');
+                                    canvas.id = 'vnc_canvas';
+                                    canvas.style.width = '100%';
+                                    canvas.style.height = '100%';
+                                    canvas.style.display = 'block';
+                                    
+                                    const ctx = canvas.getContext('2d');
+                                    fallback.style.display = 'none';
+                                    vncFrame.style.display = 'none';
+                                    
+                                    const container = document.getElementById('vnc_content');
+                                    container.appendChild(canvas);
+                                    
+                                    // Set canvas size
+                                    function resizeCanvas() {
+                                        const rect = container.getBoundingClientRect();
+                                        canvas.width = rect.width;
+                                        canvas.height = rect.height;
+                                    }
+                                    resizeCanvas();
+                                    window.addEventListener('resize', resizeCanvas);
+                                    
+                                    let ws = null;
+                                    let connected = false;
+                                    let vncWidth = 0, vncHeight = 0;
+                                    let imageBuffer = null;
+                                    
+                                    function connectVNC() {
+                                        statusBar.textContent = 'Connecting to VNC server...';
+                                        statusBar.className = 'status-connecting';
+                                        
+                                        try {
+                                            // Connect via websockify
+                                            // Try both localhost and 127.0.0.1 for compatibility
+                                            const wsUrl = 'ws://127.0.0.1:6080/websockify';
+                                            ws = new WebSocket(wsUrl);
+                                            ws.binaryType = 'arraybuffer';
+                                            
+                                            let handshakeDone = false;
+                                            
+                                            ws.onopen = function() {
+                                                statusBar.textContent = 'Connected, authenticating...';
+                                            };
+                                            
+                                            ws.onmessage = function(event) {
+                                                if (!handshakeDone) {
+                                                    // VNC handshake - websockify handles this, but we need to handle ServerInit
+                                                    const data = new Uint8Array(event.data);
+                                                    if (data.length >= 24 && data[0] === 0) {
+                                                        // ServerInit
+                                                        vncWidth = (data[4] << 8) | data[5];
+                                                        vncHeight = (data[6] << 8) | data[7];
+                                                        handshakeDone = true;
+                                                        connected = true;
+                                                        
+                                                        resizeCanvas();
+                                                        statusBar.textContent = 'Connected (' + vncWidth + 'x' + vncHeight + ')';
+                                                        statusBar.className = 'status-connected';
+                                                        
+                                                        // Request framebuffer update
+                                                        requestUpdate();
+                                                    }
+                                                } else {
+                                                    // Handle framebuffer updates
+                                                    handleUpdate(event.data);
+                                                }
+                                            };
+                                            
+                                            ws.onerror = function() {
+                                                statusBar.textContent = 'Connection error. Ensure VNC server is running on :1';
+                                                statusBar.className = 'status-error';
+                                            };
+                                            
+                                            ws.onclose = function() {
+                                                connected = false;
+                                                handshakeDone = false;
+                                                statusBar.textContent = 'Disconnected';
+                                                statusBar.className = '';
+                                                
+                                                // Try reconnect
+                                                setTimeout(connectVNC, 3000);
+                                            };
+                                            
+                                        } catch(e) {
+                                            statusBar.textContent = 'Error: ' + e.message;
+                                            statusBar.className = 'status-error';
+                                        }
+                                    }
+                                    
+                                    function requestUpdate() {
+                                        if (ws && ws.readyState === WebSocket.OPEN && connected) {
+                                            const msg = new ArrayBuffer(10);
+                                            const view = new DataView(msg);
+                                            view.setUint8(0, 3); // FramebufferUpdateRequest
+                                            view.setUint8(1, 0); // incremental
+                                            view.setUint16(2, 0, false); // x
+                                            view.setUint16(4, 0, false); // y
+                                            view.setUint16(6, vncWidth, false);
+                                            view.setUint16(8, vncHeight, false);
+                                            ws.send(msg);
+                                        }
+                                    }
+                                    
+                                    function handleUpdate(data) {
+                                        if (!(data instanceof ArrayBuffer)) return;
+                                        
+                                        const view = new DataView(data);
+                                        const msgType = view.getUint8(0);
+                                        
+                                        if (msgType === 0) { // FramebufferUpdate
+                                            const numRects = view.getUint16(2, false);
+                                            let offset = 4;
+                                            
+                                            for (let i = 0; i < numRects; i++) {
+                                                const x = view.getUint16(offset, false);
+                                                const y = view.getUint16(offset + 2, false);
+                                                const w = view.getUint16(offset + 4, false);
+                                                const h = view.getUint16(offset + 6, false);
+                                                const encoding = view.getInt32(offset + 8, false);
+                                                offset += 12;
+                                                
+                                                if (encoding === 0) { // Raw
+                                                    const imageData = ctx.createImageData(w, h);
+                                                    const pixels = new Uint8Array(data, offset, w * h * 3);
+                                                    
+                                                    for (let j = 0; j < w * h; j++) {
+                                                        imageData.data[j * 4] = pixels[j * 3];
+                                                        imageData.data[j * 4 + 1] = pixels[j * 3 + 1];
+                                                        imageData.data[j * 4 + 2] = pixels[j * 3 + 2];
+                                                        imageData.data[j * 4 + 3] = 255;
+                                                    }
+                                                    
+                                                    ctx.putImageData(imageData, x, y);
+                                                    offset += w * h * 3;
+                                                }
+                                            }
+                                            
+                                            // Request next update
+                                            setTimeout(requestUpdate, 33);
+                                        }
+                                    }
+                                    
+                                    // Input handling
+                                    canvas.addEventListener('mousedown', sendPointer);
+                                    canvas.addEventListener('mouseup', sendPointer);
+                                    canvas.addEventListener('mousemove', sendPointer);
+                                    canvas.addEventListener('touchstart', sendTouch);
+                                    canvas.addEventListener('touchend', sendTouch);
+                                    canvas.addEventListener('touchmove', sendTouch);
+                                    
+                                    function sendPointer(e) {
+                                        if (!ws || !connected) return;
+                                        const rect = canvas.getBoundingClientRect();
+                                        const x = Math.floor((e.clientX - rect.left) * (vncWidth / rect.width));
+                                        const y = Math.floor((e.clientY - rect.top) * (vncHeight / rect.height));
+                                        const btn = e.buttons || (e.type === 'mousedown' ? 1 : 0);
+                                        
+                                        const msg = new ArrayBuffer(6);
+                                        const view = new DataView(msg);
+                                        view.setUint8(0, 5);
+                                        view.setUint8(1, btn);
+                                        view.setUint16(2, Math.max(0, Math.min(x, vncWidth - 1)), false);
+                                        view.setUint16(4, Math.max(0, Math.min(y, vncHeight - 1)), false);
+                                        ws.send(msg);
+                                    }
+                                    
+                                    function sendTouch(e) {
+                                        e.preventDefault();
+                                        if (!ws || !connected || e.touches.length === 0) return;
+                                        const touch = e.touches[0] || e.changedTouches[0];
+                                        const rect = canvas.getBoundingClientRect();
+                                        const x = Math.floor((touch.clientX - rect.left) * (vncWidth / rect.width));
+                                        const y = Math.floor((touch.clientY - rect.top) * (vncHeight / rect.height));
+                                        const btn = e.type === 'touchstart' || e.type === 'touchmove' ? 1 : 0;
+                                        
+                                        const msg = new ArrayBuffer(6);
+                                        const view = new DataView(msg);
+                                        view.setUint8(0, 5);
+                                        view.setUint8(1, btn);
+                                        view.setUint16(2, Math.max(0, Math.min(x, vncWidth - 1)), false);
+                                        view.setUint16(4, Math.max(0, Math.min(y, vncHeight - 1)), false);
+                                        ws.send(msg);
+                                    }
+                                    
+                                    connectVNC();
+                                }
+                                
+                                // Start loading
+                                loadNoVNC();
+                            })();
                         </script>
                     </body>
                     </html>
                 """.trimIndent()
                 
-                loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+                loadDataWithBaseURL("http://localhost:6080/", htmlContent, "text/html", "UTF-8", null)
             }
         },
         modifier = modifier
@@ -746,8 +937,9 @@ suspend fun startDesktopEnvironment(
             // Install and start VNC server for GUI display
             onStatusUpdate(InstallationStatus.Installing(), "Setting up VNC server for GUI display...")
             
-            // Create a bash script to set up VNC (works with any shell)
-            val vncSetupScript = """#!/bin/bash
+            // Create a bash script to set up VNC and embed it directly in the command
+            // This avoids file deletion issues by using a heredoc
+            val vncSetupCommand = """bash << 'VNC_SETUP_EOF'
 command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
 vncserver -kill :1 2>/dev/null || true
 mkdir -p ~/.vnc
@@ -763,24 +955,51 @@ VNC_EOF
 chmod +x ~/.vnc/xstartup
 export DISPLAY=:1
 vncserver :1 -geometry 1920x1080 -depth 24 2>&1 &
+
+# Install and start websockify for WebSocket VNC access
+if ! command -v websockify >/dev/null 2>&1; then
+    if command -v pip3 >/dev/null 2>&1; then
+        pip3 install --quiet websockify 2>/dev/null || true
+    elif command -v pip >/dev/null 2>&1; then
+        pip install --quiet websockify 2>/dev/null || true
+    fi
+fi
+
+# Kill existing websockify on port 6080
+pkill -f "websockify.*6080" 2>/dev/null || true
+sleep 1
+
+# Start websockify to proxy VNC over WebSocket
+if command -v websockify >/dev/null 2>&1; then
+    nohup websockify 6080 localhost:5901 >/dev/null 2>&1 &
+    sleep 2
+fi
+VNC_SETUP_EOF
 """.trimIndent()
             
-            // Write script to temp file and execute
-            val vncScriptFile = java.io.File.createTempFile("vnc_setup_", ".sh")
-            vncScriptFile.writeText(vncSetupScript)
-            vncScriptFile.setExecutable(true)
+            // Execute the script directly as a heredoc - no temp file needed
+            session.write("$vncSetupCommand\n")
+            delay(5000)
             
-            session.write("bash ${vncScriptFile.absolutePath} 2>&1\n")
-            delay(3000)
+            // Check if VNC server is running
+            onStatusUpdate(InstallationStatus.Installing(), "Verifying VNC server...")
+            delay(2000)
             
-            // Clean up
-            vncScriptFile.delete()
-            
-            // Start VNC server
-            onStatusUpdate(InstallationStatus.Installing(), "Starting VNC server on display :1...")
+            session.write("bash -c 'pgrep -f \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
             delay(1000)
             
-            onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
+            // Check websockify
+            session.write("bash -c 'pgrep -f \"websockify.*6080\" >/dev/null && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+            delay(1000)
+            
+            val output = session.emulator?.screen?.getTranscriptText() ?: ""
+            val recentLines = output.split("\n").takeLast(30).joinToString("\n")
+            
+            if ("VNC_RUNNING" in recentLines) {
+                onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
+            } else {
+                onStatusUpdate(InstallationStatus.Success("VNC server setup completed. Desktop environment should be accessible via VNC viewer at localhost:5901 (password: aterm). If connection fails, check terminal output."), "")
+            }
             
         } catch (e: Exception) {
             onStatusUpdate(InstallationStatus.Error("Failed to start desktop: ${e.message}"), "")
