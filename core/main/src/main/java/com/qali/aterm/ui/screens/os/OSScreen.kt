@@ -579,7 +579,7 @@ suspend fun startDesktopEnvironment(
             session.write("""cat > ~/.vnc/xstartup << 'VNC_EOF'
 #!/bin/sh
 [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
-[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+[ -r ${'$'}HOME/.Xresources ] && xrdb ${'$'}HOME/.Xresources
 xsetroot -solid grey
 vncconfig -iconic &
 exec /bin/sh ~/.xinitrc
