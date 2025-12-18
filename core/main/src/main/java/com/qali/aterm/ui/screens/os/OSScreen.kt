@@ -139,8 +139,25 @@ fun OSScreen(
                                 mainActivity = mainActivity,
                                 sessionId = sessionId,
                                 onStatusUpdate = { status, _ ->
-                                    if (status is InstallationStatus.Success && "VNC" in status.message) {
-                                        vncRunning = true
+                                    if (status is InstallationStatus.Success) {
+                                        // Verify VNC is actually running
+                                        val session = mainActivity.sessionBinder?.getSession(sessionId)
+                                        if (session != null) {
+                                            withContext(Dispatchers.IO) {
+                                                delay(2000)
+                                                session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                                                delay(1500)
+                                                val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                                                val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
+                                                if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
+                                                    vncRunning = true
+                                                }
+                                            }
+                                        }
+                                        // Also set if message contains VNC (fallback)
+                                        if ("VNC" in status.message && "display :1" in status.message) {
+                                            vncRunning = true
+                                        }
                                     }
                                     isStartingVNC = false
                                 }
@@ -197,8 +214,25 @@ fun OSScreen(
                                 mainActivity = mainActivity,
                                 sessionId = sessionId,
                                 onStatusUpdate = { status, _ ->
-                                    if (status is InstallationStatus.Success && "VNC" in status.message) {
-                                        vncRunning = true
+                                    if (status is InstallationStatus.Success) {
+                                        // Verify VNC is actually running
+                                        val session = mainActivity.sessionBinder?.getSession(sessionId)
+                                        if (session != null) {
+                                            withContext(Dispatchers.IO) {
+                                                delay(2000)
+                                                session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                                                delay(1500)
+                                                val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                                                val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
+                                                if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
+                                                    vncRunning = true
+                                                }
+                                            }
+                                        }
+                                        // Also set if message contains VNC (fallback)
+                                        if ("VNC" in status.message && "display :1" in status.message) {
+                                            vncRunning = true
+                                        }
                                     }
                                     isStartingVNC = false
                                 }
@@ -890,15 +924,23 @@ sleep 1
 
 # Start websockify to proxy VNC over WebSocket
 if command -v websockify >/dev/null 2>&1; then
-    # Start websockify in background with proper error handling
-    nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    sleep 3
+    # Start websockify in background - use python -m websockify if direct command fails
+    (nohup websockify 6080 localhost:5901 >/tmp/websockify.log 2>&1 &) || \
+    (nohup python3 -m websockify 6080 localhost:5901 >/tmp/websockify.log 2>&1 &) || \
+    (nohup python -m websockify 6080 localhost:5901 >/tmp/websockify.log 2>&1 &) || true
+    sleep 4
     # Verify websockify started using multiple methods
-    if ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null || netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+    if ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null || \
+       netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+       ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
         echo "websockify started successfully"
     else
-        echo "websockify may have failed, check /tmp/websockify.log"
-        cat /tmp/websockify.log 2>/dev/null | head -5 || true
+        echo "websockify may have failed, checking log..."
+        cat /tmp/websockify.log 2>/dev/null | head -10 || true
+        # Try to start with python module directly
+        echo "Attempting to start websockify with python module..."
+        nohup python3 -m websockify 6080 localhost:5901 >/tmp/websockify2.log 2>&1 &
+        sleep 2
     fi
 fi
 """.trimIndent()
