@@ -890,8 +890,16 @@ sleep 1
 
 # Start websockify to proxy VNC over WebSocket
 if command -v websockify >/dev/null 2>&1; then
-    nohup websockify 6080 localhost:5901 >/dev/null 2>&1 &
-    sleep 2
+    # Start websockify in background with proper error handling
+    nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+    sleep 3
+    # Verify websockify started using multiple methods
+    if ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null || netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+        echo "websockify started successfully"
+    else
+        echo "websockify may have failed, check /tmp/websockify.log"
+        cat /tmp/websockify.log 2>/dev/null | head -5 || true
+    fi
 fi
 """.trimIndent()
             
@@ -938,7 +946,17 @@ fi
                 onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
             } else {
                 // Even if detection fails, VNC might still be running (hostname warnings are non-fatal)
-                onStatusUpdate(InstallationStatus.Success("VNC server setup completed. Desktop environment should be accessible via VNC viewer at localhost:5901 (password: aterm). Note: Hostname warnings are normal and can be ignored."), "")
+                // Check one more time after a delay
+                delay(2000)
+                session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                delay(1000)
+                val finalOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                val finalLines = finalOutput.split("\n").takeLast(10).joinToString("\n")
+                if ("VNC_RUNNING" in finalLines) {
+                    onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
+                } else {
+                    onStatusUpdate(InstallationStatus.Success("VNC server setup completed. Desktop environment should be accessible via VNC viewer at localhost:5901 (password: aterm). Note: Hostname warnings are normal and can be ignored."), "")
+                }
             }
             
             } catch (e: Exception) {
