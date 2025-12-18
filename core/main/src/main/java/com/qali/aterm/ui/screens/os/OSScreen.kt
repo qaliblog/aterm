@@ -91,15 +91,24 @@ fun OSScreen(
                     detectedDistro = "debian" // Will be enhanced to actually detect
                     
                     // Check if installation is complete by checking for .xinitrc
-                    // Use bash to ensure compatibility
-                    session.write("bash -c 'test -f ~/.xinitrc && echo INSTALLED || echo NOT_INSTALLED'\n")
-                    delay(1500)
+                    // Use bash to ensure compatibility and check more reliably
+                    session.write("bash -c 'if [ -f ~/.xinitrc ] && [ -f ~/.config/openbox/rc.xml ]; then echo INSTALLED; else echo NOT_INSTALLED; fi'\n")
+                    delay(2000)
                     val output = session.emulator?.screen?.getTranscriptText() ?: ""
-                    // Check the last few lines for INSTALLED
-                    val recentLines = output.split("\n").takeLast(10).joinToString("\n")
-                    if ("INSTALLED" in recentLines && recentLines.indexOf("INSTALLED") > recentLines.lastIndexOf("NOT_INSTALLED")) {
-                        // Check if VNC is already running
-                        session.write("bash -c 'pgrep -f \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                    // Check the last few lines for INSTALLED - look for the most recent INSTALLED
+                    val lines = output.split("\n")
+                    var foundInstalled = false
+                    for (i in lines.size - 1 downTo 0) {
+                        if (lines[i].contains("INSTALLED")) {
+                            foundInstalled = true
+                            break
+                        } else if (lines[i].contains("NOT_INSTALLED")) {
+                            break
+                        }
+                    }
+                    if (foundInstalled) {
+                        // Check if VNC is already running using alternative method
+                        session.write("bash -c 'ps aux 2>/dev/null | grep -v grep | grep \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || (netstat -ln 2>/dev/null | grep \":5901\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING)'\n")
                         delay(1000)
                         val vncOutput = session.emulator?.screen?.getTranscriptText() ?: ""
                         val vncLines = vncOutput.split("\n").takeLast(10).joinToString("\n")
@@ -841,7 +850,10 @@ suspend fun startDesktopEnvironment(
             
             // Create a bash script to set up VNC and write it to /tmp inside Linux environment
             // This avoids file deletion issues since /tmp is inside the chroot
-            val vncSetupScript = """command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
+            val vncSetupScript = """# Set hostname to avoid VNC server errors
+hostname localhost 2>/dev/null || echo localhost > /etc/hostname 2>/dev/null || true
+
+command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
 vncserver -kill :1 2>/dev/null || true
 mkdir -p ~/.vnc
 echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
@@ -855,7 +867,8 @@ exec /bin/sh ~/.xinitrc
 VNC_EOF
 chmod +x ~/.vnc/xstartup
 export DISPLAY=:1
-vncserver :1 -geometry 1920x1080 -depth 24 2>&1 &
+# Start VNC server with localhost hostname to avoid hostname errors
+vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 &
 
 # Install and start websockify for WebSocket VNC access
 if ! command -v websockify >/dev/null 2>&1; then
@@ -890,15 +903,16 @@ fi
             session.write("bash /tmp/vnc_setup.sh 2>&1\n")
             delay(5000)
             
-            // Check if VNC server is running
+            // Check if VNC server is running using alternative methods (avoid /proc dependency)
             onStatusUpdate(InstallationStatus.Installing(), "Verifying VNC server...")
-            delay(2000)
+            delay(3000)
             
-            session.write("bash -c 'pgrep -f \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+            // Check if VNC port is listening or if process exists (using ps instead of pgrep)
+            session.write("bash -c 'ps aux 2>/dev/null | grep -v grep | grep \"vncserver.*:1\" >/dev/null && echo VNC_RUNNING || (netstat -ln 2>/dev/null | grep \":5901\" >/dev/null && echo VNC_RUNNING || echo VNC_NOT_RUNNING)'\n")
             delay(1000)
             
             // Check websockify
-            session.write("bash -c 'pgrep -f \"websockify.*6080\" >/dev/null && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+            session.write("bash -c 'ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null && echo WEBSOCKIFY_RUNNING || (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING)'\n")
             delay(1000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""

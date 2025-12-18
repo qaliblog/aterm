@@ -219,9 +219,6 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
             )
         }
         
-        // Ollama Settings
-        OllamaSettings()
-        
         // aTerm Touch Desktop Environment
         PreferenceGroup(heading = "aTerm Touch Desktop") {
             val scope = rememberCoroutineScope()
@@ -236,11 +233,21 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
                     try {
                         val session = mainActivity.sessionBinder?.getSession(sessionId)
                         if (session != null) {
-                            session.write("bash -c 'test -f ~/.xinitrc && echo INSTALLED || echo NOT_INSTALLED'\n")
-                            kotlinx.coroutines.delay(1500)
+                            session.write("bash -c 'if [ -f ~/.xinitrc ] && [ -f ~/.config/openbox/rc.xml ]; then echo INSTALLED; else echo NOT_INSTALLED; fi'\n")
+                            kotlinx.coroutines.delay(2000)
                             val output = session.emulator?.screen?.getTranscriptText() ?: ""
-                            val recentLines = output.split("\n").takeLast(10).joinToString("\n")
-                            if ("INSTALLED" in recentLines && recentLines.indexOf("INSTALLED") > recentLines.lastIndexOf("NOT_INSTALLED")) {
+                            // Check the last few lines for INSTALLED - look for the most recent INSTALLED
+                            val lines = output.split("\n")
+                            var foundInstalled = false
+                            for (i in lines.size - 1 downTo 0) {
+                                if (lines[i].contains("INSTALLED")) {
+                                    foundInstalled = true
+                                    break
+                                } else if (lines[i].contains("NOT_INSTALLED")) {
+                                    break
+                                }
+                            }
+                            if (foundInstalled) {
                                 installationStatus = InstallationStatus.Success("aTerm Touch is installed and ready to use!")
                             }
                         }
