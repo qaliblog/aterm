@@ -647,25 +647,35 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "[5/8] Installing web browsers..."
             # Install Chromium
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-driver || true
-                ${'$'}{INSTALL_CMD} chromium-browser chromium-chromedriver || true
+                ${'$'}{INSTALL_CMD} chromium-browser chromium-chromedriver 2>/dev/null || \
+                ${'$'}{INSTALL_CMD} chromium chromium-driver 2>/dev/null || \
+                echo "  Note: Chromium not available in repositories, skipping..."
             elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-headless || true
+                ${'$'}{INSTALL_CMD} chromium chromium-headless 2>/dev/null || \
+                echo "  Note: Chromium not available, skipping..."
             elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-driver || true
+                ${'$'}{INSTALL_CMD} chromium chromium-driver 2>/dev/null || \
+                echo "  Note: Chromium not available, skipping..."
             elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-chromedriver || true
+                ${'$'}{INSTALL_CMD} chromium chromium-chromedriver 2>/dev/null || \
+                echo "  Note: Chromium not available, skipping..."
             fi
             
             # Install Firefox
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} firefox firefox-esr || true
+                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                ${'$'}{INSTALL_CMD} firefox-esr 2>/dev/null || \
+                echo "  Note: Firefox not available in repositories, skipping..."
             elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
-                ${'$'}{INSTALL_CMD} firefox || true
+                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                echo "  Note: Firefox not available, skipping..."
             elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
-                ${'$'}{INSTALL_CMD} firefox firefox-developer-edition || true
+                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                ${'$'}{INSTALL_CMD} firefox-developer-edition 2>/dev/null || \
+                echo "  Note: Firefox not available, skipping..."
             elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} firefox || true
+                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                echo "  Note: Firefox not available, skipping..."
             fi
             
             # Install Google Chrome (via direct download for better compatibility)
@@ -1003,6 +1013,9 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             GESTURES_EOF
             chmod +x ~/.config/aterm-touch/gestures.sh
             
+            # Create launcher script directory first
+            mkdir -p ~/.local/bin
+            
             # Create launcher script (Ubuntu Touch style app drawer - Premium)
             cat > ~/.local/bin/aterm-launcher << 'LAUNCHER_EOF'
             #!/bin/bash
@@ -1034,7 +1047,6 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             fi
             LAUNCHER_EOF
             chmod +x ~/.local/bin/aterm-launcher
-            mkdir -p ~/.local/bin
             
             # Create startup script (Premium Ubuntu Touch experience)
             cat > ~/.xinitrc << 'XINIT_EOF'
@@ -1183,6 +1195,9 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             Categories=Network;WebBrowser;
             MimeType=text/html;text/xml;application/xhtml+xml;
             FIREFOX_EOF
+            
+            # Ensure selenium-setup directory exists
+            mkdir -p ~/.local/bin
             
             # Create Selenium helper script
             cat > ~/.local/bin/selenium-setup << 'SELENIUM_EOF'
