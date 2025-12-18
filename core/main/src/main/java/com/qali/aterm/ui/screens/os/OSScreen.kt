@@ -84,10 +84,13 @@ fun OSScreen(
                     detectedDistro = "debian" // Will be enhanced to actually detect
                     
                     // Check if installation is complete by checking for .xinitrc
-                    session.write("test -f ~/.xinitrc && echo 'INSTALLED' || echo 'NOT_INSTALLED'\n")
-                    delay(1000)
+                    // Use bash to ensure compatibility
+                    session.write("bash -c 'test -f ~/.xinitrc && echo INSTALLED || echo NOT_INSTALLED'\n")
+                    delay(1500)
                     val output = session.emulator?.screen?.getTranscriptText() ?: ""
-                    if ("INSTALLED" in output && "NOT_INSTALLED" !in output.split("\n").takeLast(5).joinToString()) {
+                    // Check the last few lines for INSTALLED
+                    val recentLines = output.split("\n").takeLast(10).joinToString("\n")
+                    if ("INSTALLED" in recentLines && recentLines.indexOf("INSTALLED") > recentLines.lastIndexOf("NOT_INSTALLED")) {
                         installationStatus = InstallationStatus.Success("aTerm Touch is installed and ready to use!")
                     }
                 }
@@ -556,27 +559,20 @@ suspend fun startDesktopEnvironment(
                 return@withContext
             }
             
-            // Check if .xinitrc exists
-            session.write("test -f ~/.xinitrc && echo 'Config found' || echo 'Config missing'\n")
+            // Check if .xinitrc exists using bash
+            session.write("bash -c 'test -f ~/.xinitrc && echo Config found || echo Config missing'\n")
             delay(500)
             
             // Install and start VNC server for GUI display
             onStatusUpdate(InstallationStatus.Installing(), "Setting up VNC server for GUI display...")
             
-            // Install VNC server if not available
-            session.write("command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)\n")
-            delay(2000)
-            
-            // Kill any existing VNC server on display :1
-            session.write("vncserver -kill :1 2>/dev/null || true\n")
-            delay(500)
-            
-            // Set VNC password (default: aterm)
-            session.write("mkdir -p ~/.vnc && echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true\n")
-            delay(500)
-            
-            // Create VNC startup script that uses our .xinitrc
-            session.write("""cat > ~/.vnc/xstartup << 'VNC_EOF'
+            // Create a bash script to set up VNC (works with any shell)
+            val vncSetupScript = """#!/bin/bash
+command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
+vncserver -kill :1 2>/dev/null || true
+mkdir -p ~/.vnc
+echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
+cat > ~/.vnc/xstartup << 'VNC_EOF'
 #!/bin/sh
 [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
 [ -r ${'$'}HOME/.Xresources ] && xrdb ${'$'}HOME/.Xresources
@@ -585,14 +581,24 @@ vncconfig -iconic &
 exec /bin/sh ~/.xinitrc
 VNC_EOF
 chmod +x ~/.vnc/xstartup
-""")
-            delay(500)
+export DISPLAY=:1
+vncserver :1 -geometry 1920x1080 -depth 24 2>&1 &
+""".trimIndent()
+            
+            // Write script to temp file and execute
+            val vncScriptFile = java.io.File.createTempFile("vnc_setup_", ".sh")
+            vncScriptFile.writeText(vncSetupScript)
+            vncScriptFile.setExecutable(true)
+            
+            session.write("bash ${vncScriptFile.absolutePath} 2>&1\n")
+            delay(3000)
+            
+            // Clean up
+            vncScriptFile.delete()
             
             // Start VNC server
             onStatusUpdate(InstallationStatus.Installing(), "Starting VNC server on display :1...")
-            session.write("export DISPLAY=:1\n")
-            session.write("vncserver :1 -geometry 1920x1080 -depth 24 2>&1 &\n")
-            delay(2000)
+            delay(1000)
             
             onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
             
