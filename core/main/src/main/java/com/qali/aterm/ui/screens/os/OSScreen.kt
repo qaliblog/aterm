@@ -1011,7 +1011,11 @@ if command -v websockify >/dev/null 2>&1 || python3 -m websockify --help >/dev/n
             fi
         fi
     fi
-elif command -v python3 >/dev/null 2>&1 && python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+    # Close the main if statement for websockify availability check
+fi
+
+# Try alternative methods if direct websockify command not available
+if command -v python3 >/dev/null 2>&1 && python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
     echo "Starting websockify (python3 -m)..."
     nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
     sleep 3
