@@ -963,41 +963,58 @@ pkill -f "python.*websockify.*6080" 2>/dev/null || true
 sleep 2
 
 # Start websockify to proxy VNC over WebSocket
-WEBSOCKIFY_STARTED=0
 # Try direct command first
 if command -v websockify >/dev/null 2>&1; then
     echo "Starting websockify (direct command)..."
     nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    WEBSOCKIFY_PID=\$!
     sleep 3
-    if ps -p \$WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null; then
-        WEBSOCKIFY_STARTED=1
+    if ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null || \
+       netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+       ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
         echo "websockify started successfully (direct)"
+    else
+        # Try python3 -m websockify if direct command didn't work
+        if command -v python3 >/dev/null 2>&1; then
+            echo "Starting websockify (python3 -m)..."
+            nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+            sleep 3
+            if ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null || \
+               netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+               ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+                echo "websockify started successfully (python3 -m)"
+            else
+                # Try python -m websockify as last resort
+                if command -v python >/dev/null 2>&1; then
+                    echo "Starting websockify (python -m)..."
+                    nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+                    sleep 3
+                    if ps aux 2>/dev/null | grep -v grep | grep "python.*websockify.*6080" >/dev/null || \
+                       netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+                       ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+                        echo "websockify started successfully (python -m)"
+                    fi
+                fi
+            fi
+        fi
     fi
-fi
-
-# Try python3 -m websockify if direct command didn't work
-if [ \$WEBSOCKIFY_STARTED -eq 0 ] && command -v python3 >/dev/null 2>&1; then
+elif command -v python3 >/dev/null 2>&1; then
     echo "Starting websockify (python3 -m)..."
     nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    WEBSOCKIFY_PID=\$!
     sleep 3
-    if ps -p \$WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null; then
-        WEBSOCKIFY_STARTED=1
-        echo "websockify started successfully (python3 -m)"
+    if ! (ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null || \
+          netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+          ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+        # Try python -m as fallback
+        if command -v python >/dev/null 2>&1; then
+            echo "Starting websockify (python -m)..."
+            nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+            sleep 3
+        fi
     fi
-fi
-
-# Try python -m websockify as last resort
-if [ \$WEBSOCKIFY_STARTED -eq 0 ] && command -v python >/dev/null 2>&1; then
+elif command -v python >/dev/null 2>&1; then
     echo "Starting websockify (python -m)..."
     nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    WEBSOCKIFY_PID=\$!
     sleep 3
-    if ps -p \$WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python.*websockify.*6080" >/dev/null; then
-        WEBSOCKIFY_STARTED=1
-        echo "websockify started successfully (python -m)"
-    fi
 fi
 
 # Final verification
