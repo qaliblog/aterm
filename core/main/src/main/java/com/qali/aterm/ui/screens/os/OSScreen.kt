@@ -1221,9 +1221,11 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             echo "[3/8] Installing Ubuntu desktop environment..."
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                # Install DBus (required for GNOME/Unity)
+                # Install DBus (required for desktop environments)
                 ${'$'}{INSTALL_CMD} dbus-x11 dbus-user-session || true
-                # Install GNOME Shell (Ubuntu's desktop environment)
+                # Install XFCE first (lightweight, works better in VNC without systemd)
+                ${'$'}{INSTALL_CMD} xfce4 xfce4-terminal xfce4-panel xfce4-settings || true
+                # Install GNOME Shell (Ubuntu's desktop environment) - may require systemd
                 ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal gnome-control-center || true
                 # Install Unity components (Ubuntu's classic desktop)
                 ${'$'}{INSTALL_CMD} unity-session unity-tweak-tool || true
@@ -1778,21 +1780,36 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                 DUNST_PID=${'$'}!
             fi
             
-            # Start GNOME/Unity session if available (Ubuntu's main desktop)
+            # Try XFCE first (lighter, works better in VNC without systemd)
+            if command -v startxfce4 >/dev/null 2>&1; then
+                echo "Starting XFCE session (lightweight Ubuntu-like desktop)..."
+                export XDG_CURRENT_DESKTOP=XFCE
+                exec startxfce4
+            fi
+            
+            # Try GNOME/Unity if XFCE not available (may require systemd)
+            # Note: GNOME requires systemd which may not be available in chroot/VNC
             if command -v gnome-session >/dev/null 2>&1 && [ -n "${'$'}DBUS_SESSION_BUS_ADDRESS" ]; then
                 echo "Starting GNOME session (Ubuntu desktop)..."
                 # Set GNOME to mobile-friendly mode
                 export GNOME_SHELL_SESSION_MODE=ubuntu
                 export XDG_CURRENT_DESKTOP=ubuntu:GNOME
-                # Start GNOME session (this will handle everything)
-                exec gnome-session --session=ubuntu
-            elif command -v unity-session >/dev/null 2>&1 && [ -n "${'$'}DBUS_SESSION_BUS_ADDRESS" ]; then
+                # Disable systemd integration (not available in chroot/VNC)
+                export XDG_RUNTIME_DIR=/tmp/gnome-session-runtime
+                mkdir -p ${'$'}XDG_RUNTIME_DIR
+                chmod 700 ${'$'}XDG_RUNTIME_DIR
+                # Try to start GNOME (may fail without systemd)
+                exec gnome-session --session=ubuntu --disable-acceleration-check 2>&1 || true
+            fi
+            
+            # Try Unity if GNOME didn't work
+            if command -v unity-session >/dev/null 2>&1 && [ -n "${'$'}DBUS_SESSION_BUS_ADDRESS" ]; then
                 echo "Starting Unity session (Ubuntu classic desktop)..."
                 export XDG_CURRENT_DESKTOP=Unity
-                exec unity-session
-            elif command -v startxfce4 >/dev/null 2>&1; then
-                echo "Starting XFCE session (lightweight Ubuntu-like)..."
-                exec startxfce4
+                export XDG_RUNTIME_DIR=/tmp/unity-session-runtime
+                mkdir -p ${'$'}XDG_RUNTIME_DIR
+                chmod 700 ${'$'}XDG_RUNTIME_DIR
+                exec unity-session 2>&1 || true
             fi
             
             # Fallback to lightweight window manager if GNOME/Unity not available
