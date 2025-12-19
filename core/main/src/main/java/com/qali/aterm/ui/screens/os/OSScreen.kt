@@ -1011,7 +1011,9 @@ if command -v websockify >/dev/null 2>&1 || python3 -m websockify --help >/dev/n
             fi
         fi
     fi
-    # Close the main if statement for websockify availability check
+    # Close the nested if for direct websockify command check (line 981)
+    fi
+    # Close the main if statement for websockify availability check (line 979)
 fi
 
 # Try alternative methods if direct websockify command not available
