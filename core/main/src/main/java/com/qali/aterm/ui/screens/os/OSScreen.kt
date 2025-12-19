@@ -1052,7 +1052,7 @@ else
     nohup bash -c "cd /tmp && python3 -m websockify 6080 localhost:5901" >/tmp/websockify_final.log 2>&1 &
     sleep 3
 fi
-""".trimIndent() + "\n"
+""".trimIndent()
             
             // Write script to /tmp inside Linux environment
             // Use base64 encoding to avoid newline/special character issues
@@ -1209,36 +1209,82 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo ""
             
             echo "[2/8] Installing X server and display manager..."
-            if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} xorg-server xf86-video-fbdev xf86-input-libinput || true
-            elif [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} xorg xinit xserver-xorg-core xserver-xorg-input-libinput || true
-            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
-                ${'$'}{INSTALL_CMD} xorg-server xorg-xinit xf86-input-libinput || true
-            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
-                ${'$'}{INSTALL_CMD} xorg-x11-server-Xorg xorg-x11-xinit xorg-x11-drv-libinput || true
+            # Check if X server is already installed
+            if command -v Xorg >/dev/null 2>&1 || command -v X >/dev/null 2>&1; then
+                echo "✓ X server already installed, skipping..."
             else
-                ${'$'}{INSTALL_CMD} xorg xinit || true
+                if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
+                    ${'$'}{INSTALL_CMD} xorg-server xf86-video-fbdev xf86-input-libinput || true
+                elif [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                    ${'$'}{INSTALL_CMD} xorg xinit xserver-xorg-core xserver-xorg-input-libinput || true
+                elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
+                    ${'$'}{INSTALL_CMD} xorg-server xorg-xinit xf86-input-libinput || true
+                elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                    ${'$'}{INSTALL_CMD} xorg-x11-server-Xorg xorg-x11-xinit xorg-x11-drv-libinput || true
+                else
+                    ${'$'}{INSTALL_CMD} xorg xinit || true
+                fi
+                echo "✓ X server installed"
             fi
-            echo "✓ X server installed"
             echo ""
             
             echo "[3/8] Installing Ubuntu desktop environment..."
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                # Install DBus (required for desktop environments)
-                ${'$'}{INSTALL_CMD} dbus-x11 dbus-user-session || true
-                # Install XFCE first (lightweight, works better in VNC without systemd)
-                ${'$'}{INSTALL_CMD} xfce4 xfce4-terminal xfce4-panel xfce4-settings || true
-                # Install GNOME Shell (Ubuntu's desktop environment) - may require systemd
-                ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal gnome-control-center || true
-                # Install Unity components (Ubuntu's classic desktop)
-                ${'$'}{INSTALL_CMD} unity-session unity-tweak-tool || true
-                # Install GTK and Ubuntu themes
-                ${'$'}{INSTALL_CMD} gtk2-engines-pixbuf gtk2-engines-murrine adwaita-icon-theme || true
-                # Install Yaru theme (Ubuntu's default theme)
-                ${'$'}{INSTALL_CMD} yaru-theme-gtk yaru-theme-icon yaru-theme-sound || true
-                # Install compositor for effects
-                ${'$'}{INSTALL_CMD} mutter || true
+                # Install DBus (required for desktop environments) - check if already installed
+                if command -v dbus-launch >/dev/null 2>&1; then
+                    echo "  ✓ DBus already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} dbus-x11 dbus-user-session || true
+                    echo "  ✓ DBus installed"
+                fi
+                
+                # Install XFCE first (lightweight, works better in VNC without systemd) - check if installed
+                if command -v startxfce4 >/dev/null 2>&1; then
+                    echo "  ✓ XFCE already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} xfce4 xfce4-terminal xfce4-panel xfce4-settings || true
+                    echo "  ✓ XFCE installed"
+                fi
+                
+                # Install GNOME Shell (Ubuntu's desktop environment) - may require systemd - check if installed
+                if command -v gnome-session >/dev/null 2>&1; then
+                    echo "  ✓ GNOME already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal gnome-control-center || true
+                    echo "  ✓ GNOME installed"
+                fi
+                
+                # Install Unity components (Ubuntu's classic desktop) - check if installed
+                if command -v unity-session >/dev/null 2>&1; then
+                    echo "  ✓ Unity already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} unity-session unity-tweak-tool || true
+                    echo "  ✓ Unity installed"
+                fi
+                
+                # Install GTK and Ubuntu themes - check if installed
+                if [ -d /usr/share/themes/Adwaita ] || [ -d /usr/share/icons/Adwaita ]; then
+                    echo "  ✓ GTK themes already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} gtk2-engines-pixbuf gtk2-engines-murrine adwaita-icon-theme || true
+                    echo "  ✓ GTK themes installed"
+                fi
+                
+                # Install Yaru theme (Ubuntu's default theme) - check if installed
+                if [ -d /usr/share/themes/Yaru ] || [ -d /usr/share/icons/Yaru ]; then
+                    echo "  ✓ Yaru theme already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} yaru-theme-gtk yaru-theme-icon yaru-theme-sound || true
+                    echo "  ✓ Yaru theme installed"
+                fi
+                
+                # Install compositor for effects - check if installed
+                if command -v mutter >/dev/null 2>&1 || command -v picom >/dev/null 2>&1; then
+                    echo "  ✓ Compositor already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} mutter || ${'$'}{INSTALL_CMD} picom || true
+                    echo "  ✓ Compositor installed"
+                fi
             elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
                 ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal || true
                 ${'$'}{INSTALL_CMD} adwaita-icon-theme || true
@@ -1257,50 +1303,84 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             echo "[4/8] Installing Ubuntu indicators and system components..."
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                # Install Unity/Ubuntu indicators and applets
-                ${'$'}{INSTALL_CMD} indicator-applet indicator-application indicator-session indicator-power || true
-                # Install GNOME extensions for mobile-friendly UI
-                ${'$'}{INSTALL_CMD} gnome-shell-extensions gnome-tweaks || true
-                # Install notification daemon
-                ${'$'}{INSTALL_CMD} notify-osd || ${'$'}{INSTALL_CMD} dunst || true
+                # Install Unity/Ubuntu indicators and applets - check if installed
+                if command -v indicator-application >/dev/null 2>&1; then
+                    echo "  ✓ Ubuntu indicators already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} indicator-applet indicator-application indicator-session indicator-power || true
+                    echo "  ✓ Ubuntu indicators installed"
+                fi
+                # Install GNOME extensions for mobile-friendly UI - check if installed
+                if command -v gnome-tweaks >/dev/null 2>&1; then
+                    echo "  ✓ GNOME extensions already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} gnome-shell-extensions gnome-tweaks || true
+                    echo "  ✓ GNOME extensions installed"
+                fi
+                # Install notification daemon - check if installed
+                if command -v notify-osd >/dev/null 2>&1 || command -v dunst >/dev/null 2>&1; then
+                    echo "  ✓ Notification daemon already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} notify-osd || ${'$'}{INSTALL_CMD} dunst || true
+                    echo "  ✓ Notification daemon installed"
+                fi
             else
-                ${'$'}{INSTALL_CMD} dunst || true
+                if command -v dunst >/dev/null 2>&1; then
+                    echo "  ✓ Notification daemon already installed, skipping..."
+                else
+                    ${'$'}{INSTALL_CMD} dunst || true
+                    echo "  ✓ Notification daemon installed"
+                fi
             fi
             echo "✓ System components installed"
             echo ""
             
             echo "[5/8] Installing web browsers..."
-            # Install Chromium
-            if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} chromium-browser chromium-chromedriver 2>/dev/null || \
-                ${'$'}{INSTALL_CMD} chromium chromium-driver 2>/dev/null || \
-                echo "  Note: Chromium not available in repositories, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-headless 2>/dev/null || \
-                echo "  Note: Chromium not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-driver 2>/dev/null || \
-                echo "  Note: Chromium not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} chromium chromium-chromedriver 2>/dev/null || \
-                echo "  Note: Chromium not available, skipping..."
+            # Install Chromium - check if installed
+            if command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1; then
+                echo "  ✓ Chromium already installed, skipping..."
+            else
+                if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                    ${'$'}{INSTALL_CMD} chromium-browser chromium-chromedriver 2>/dev/null || \
+                    ${'$'}{INSTALL_CMD} chromium chromium-driver 2>/dev/null || \
+                    echo "  Note: Chromium not available in repositories, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                    ${'$'}{INSTALL_CMD} chromium chromium-headless 2>/dev/null || \
+                    echo "  Note: Chromium not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
+                    ${'$'}{INSTALL_CMD} chromium chromium-driver 2>/dev/null || \
+                    echo "  Note: Chromium not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
+                    ${'$'}{INSTALL_CMD} chromium chromium-chromedriver 2>/dev/null || \
+                    echo "  Note: Chromium not available, skipping..."
+                fi
+                if command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1; then
+                    echo "  ✓ Chromium installed"
+                fi
             fi
             
-            # Install Firefox
-            if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
-                ${'$'}{INSTALL_CMD} firefox-esr 2>/dev/null || \
-                echo "  Note: Firefox not available in repositories, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
-                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
-                echo "  Note: Firefox not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
-                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
-                ${'$'}{INSTALL_CMD} firefox-developer-edition 2>/dev/null || \
-                echo "  Note: Firefox not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
-                echo "  Note: Firefox not available, skipping..."
+            # Install Firefox - check if installed
+            if command -v firefox >/dev/null 2>&1; then
+                echo "  ✓ Firefox already installed, skipping..."
+            else
+                if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                    ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                    ${'$'}{INSTALL_CMD} firefox-esr 2>/dev/null || \
+                    echo "  Note: Firefox not available in repositories, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                    ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                    echo "  Note: Firefox not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
+                    ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                    ${'$'}{INSTALL_CMD} firefox-developer-edition 2>/dev/null || \
+                    echo "  Note: Firefox not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
+                    ${'$'}{INSTALL_CMD} firefox 2>/dev/null || \
+                    echo "  Note: Firefox not available, skipping..."
+                fi
+                if command -v firefox >/dev/null 2>&1; then
+                    echo "  ✓ Firefox installed"
+                fi
             fi
             
             # Install Google Chrome (via direct download for better compatibility)
@@ -1322,24 +1402,34 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo ""
             
             echo "[6/8] Installing Selenium and dependencies..."
-            # Install Python and pip if not available
+            # Install Python and pip if not available - check if installed
             if ! command -v python3 >/dev/null 2>&1; then
                 if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
                     ${'$'}{INSTALL_CMD} python3 py3-pip || true
                 else
                     ${'$'}{INSTALL_CMD} python3 python3-pip || ${'$'}{INSTALL_CMD} python3 python-pip || true
                 fi
+                echo "  ✓ Python3 installed"
+            else
+                echo "  ✓ Python3 already installed, skipping..."
             fi
             
-            # Install Selenium
-            if command -v pip3 >/dev/null 2>&1; then
-                pip3 install --quiet --upgrade pip setuptools wheel 2>/dev/null || true
-                pip3 install --quiet selenium webdriver-manager 2>/dev/null || true
-                pip3 install --quiet selenium-wire undetected-chromedriver 2>/dev/null || true
-            elif command -v pip >/dev/null 2>&1; then
-                pip install --quiet --upgrade pip setuptools wheel 2>/dev/null || true
-                pip install --quiet selenium webdriver-manager 2>/dev/null || true
-                pip install --quiet selenium-wire undetected-chromedriver 2>/dev/null || true
+            # Install Selenium - check if installed
+            if python3 -c "import selenium" 2>/dev/null; then
+                echo "  ✓ Selenium already installed, skipping..."
+            else
+                if command -v pip3 >/dev/null 2>&1; then
+                    pip3 install --quiet --upgrade pip setuptools wheel 2>/dev/null || true
+                    pip3 install --quiet selenium webdriver-manager 2>/dev/null || true
+                    pip3 install --quiet selenium-wire undetected-chromedriver 2>/dev/null || true
+                elif command -v pip >/dev/null 2>&1; then
+                    pip install --quiet --upgrade pip setuptools wheel 2>/dev/null || true
+                    pip install --quiet selenium webdriver-manager 2>/dev/null || true
+                    pip install --quiet selenium-wire undetected-chromedriver 2>/dev/null || true
+                fi
+                if python3 -c "import selenium" 2>/dev/null; then
+                    echo "  ✓ Selenium installed"
+                fi
             fi
             
             # Install Node.js and npm for Selenium WebDriver (if not available)
@@ -1364,52 +1454,91 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo ""
             
             echo "[7/8] Installing essential mobile applications..."
-            # File manager
-            ${'$'}{INSTALL_CMD} pcmanfm || ${'$'}{INSTALL_CMD} thunar || ${'$'}{INSTALL_CMD} nautilus || true
+            # File manager - check if installed
+            if command -v pcmanfm >/dev/null 2>&1 || command -v thunar >/dev/null 2>&1 || command -v nautilus >/dev/null 2>&1; then
+                echo "  ✓ File manager already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} pcmanfm || ${'$'}{INSTALL_CMD} thunar || ${'$'}{INSTALL_CMD} nautilus || true
+                echo "  ✓ File manager installed"
+            fi
             
-            # Terminal
-            ${'$'}{INSTALL_CMD} lxterminal || ${'$'}{INSTALL_CMD} xterm || ${'$'}{INSTALL_CMD} gnome-terminal || true
+            # Terminal - check if installed
+            if command -v lxterminal >/dev/null 2>&1 || command -v xterm >/dev/null 2>&1 || command -v gnome-terminal >/dev/null 2>&1; then
+                echo "  ✓ Terminal already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} lxterminal || ${'$'}{INSTALL_CMD} xterm || ${'$'}{INSTALL_CMD} gnome-terminal || true
+                echo "  ✓ Terminal installed"
+            fi
             
-            # Text editor
-            ${'$'}{INSTALL_CMD} mousepad || ${'$'}{INSTALL_CMD} leafpad || ${'$'}{INSTALL_CMD} gedit || true
+            # Text editor - check if installed
+            if command -v mousepad >/dev/null 2>&1 || command -v leafpad >/dev/null 2>&1 || command -v gedit >/dev/null 2>&1; then
+                echo "  ✓ Text editor already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} mousepad || ${'$'}{INSTALL_CMD} leafpad || ${'$'}{INSTALL_CMD} gedit || true
+                echo "  ✓ Text editor installed"
+            fi
             
-            # Image viewer
-            ${'$'}{INSTALL_CMD} feh || ${'$'}{INSTALL_CMD} viewnior || ${'$'}{INSTALL_CMD} eog || true
+            # Image viewer - check if installed
+            if command -v feh >/dev/null 2>&1 || command -v viewnior >/dev/null 2>&1 || command -v eog >/dev/null 2>&1; then
+                echo "  ✓ Image viewer already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} feh || ${'$'}{INSTALL_CMD} viewnior || ${'$'}{INSTALL_CMD} eog || true
+                echo "  ✓ Image viewer installed"
+            fi
             
-            # Network tools
-            ${'$'}{INSTALL_CMD} network-manager || ${'$'}{INSTALL_CMD} wicd || true
+            # Additional Ubuntu Touch-like apps - check if installed
+            if command -v rofi >/dev/null 2>&1 || command -v dmenu >/dev/null 2>&1; then
+                echo "  ✓ App launcher already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} rofi dmenu || true
+                echo "  ✓ App launcher installed"
+            fi
             
-            # Additional Ubuntu Touch-like apps
-            ${'$'}{INSTALL_CMD} rofi dmenu || true  # App launcher
-            ${'$'}{INSTALL_CMD} dunst || true  # Notifications
-            ${'$'}{INSTALL_CMD} xdotool || true  # For gestures
-            ${'$'}{INSTALL_CMD} imagemagick || true  # For wallpaper generation
+            if command -v xdotool >/dev/null 2>&1; then
+                echo "  ✓ Gesture tools already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} xdotool || true
+                echo "  ✓ Gesture tools installed"
+            fi
+            
+            if command -v convert >/dev/null 2>&1; then
+                echo "  ✓ ImageMagick already installed, skipping..."
+            else
+                ${'$'}{INSTALL_CMD} imagemagick || true
+                echo "  ✓ ImageMagick installed"
+            fi
             
             echo "✓ Applications installed"
             echo ""
             
             echo "[8/8] Installing VNC server for GUI display..."
-            # Install VNC server for remote desktop access
-            if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
-                ${'$'}{INSTALL_CMD} tigervnc-standalone-server tigervnc-common 2>/dev/null || \
-                ${'$'}{INSTALL_CMD} tightvncserver 2>/dev/null || \
-                echo "  Note: VNC server not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
-                ${'$'}{INSTALL_CMD} tigervnc-server 2>/dev/null || \
-                echo "  Note: VNC server not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
-                ${'$'}{INSTALL_CMD} tigervnc 2>/dev/null || \
-                echo "  Note: VNC server not available, skipping..."
-            elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} tigervnc 2>/dev/null || \
-                echo "  Note: VNC server not available, skipping..."
+            # Install VNC server for remote desktop access - check if installed
+            if command -v vncserver >/dev/null 2>&1 || command -v Xtigervnc >/dev/null 2>&1; then
+                echo "  ✓ VNC server already installed, skipping..."
+            else
+                if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                    ${'$'}{INSTALL_CMD} tigervnc-standalone-server tigervnc-common 2>/dev/null || \
+                    ${'$'}{INSTALL_CMD} tightvncserver 2>/dev/null || \
+                    echo "  Note: VNC server not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                    ${'$'}{INSTALL_CMD} tigervnc-server 2>/dev/null || \
+                    echo "  Note: VNC server not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
+                    ${'$'}{INSTALL_CMD} tigervnc 2>/dev/null || \
+                    echo "  Note: VNC server not available, skipping..."
+                elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
+                    ${'$'}{INSTALL_CMD} tigervnc 2>/dev/null || \
+                    echo "  Note: VNC server not available, skipping..."
+                fi
+                if command -v vncserver >/dev/null 2>&1 || command -v Xtigervnc >/dev/null 2>&1; then
+                    echo "  ✓ VNC server installed"
+                fi
             fi
-            echo "✓ VNC server installed"
             echo ""
             
             echo "[9/9] Configuring Ubuntu desktop environment (mobile-optimized)..."
             
-            # Create config directories
+            # Create config directories (idempotent - mkdir -p won't fail if exists)
             mkdir -p ~/.config/openbox
             mkdir -p ~/.config/tint2
             mkdir -p ~/.config/aterm-touch
@@ -1420,9 +1549,13 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             mkdir -p ~/.local/bin
             mkdir -p ~/.local/share/themes
             mkdir -p ~/.local/share/icons
+            echo "  ✓ Configuration directories created"
             
-            # Configure GTK for mobile-friendly Ubuntu experience
-            cat > ~/.config/gtk-3.0/settings.ini << 'GTK3_EOF'
+            # Configure GTK for mobile-friendly Ubuntu experience - check if already configured
+            if [ -f ~/.config/gtk-3.0/settings.ini ] && grep -q "Yaru" ~/.config/gtk-3.0/settings.ini 2>/dev/null; then
+                echo "  ✓ GTK3 settings already configured, skipping..."
+            else
+                cat > ~/.config/gtk-3.0/settings.ini << 'GTK3_EOF'
             [Settings]
             gtk-theme-name=Yaru-dark
             gtk-icon-theme-name=Yaru
@@ -1441,8 +1574,13 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             gtk-application-prefer-dark-theme=1
             gtk-touchscreen-mode=1
             GTK3_EOF
+                echo "  ✓ GTK3 settings configured"
+            fi
             
-            cat > ~/.config/gtk-4.0/settings.ini << 'GTK4_EOF'
+            if [ -f ~/.config/gtk-4.0/settings.ini ] && grep -q "Yaru" ~/.config/gtk-4.0/settings.ini 2>/dev/null; then
+                echo "  ✓ GTK4 settings already configured, skipping..."
+            else
+                cat > ~/.config/gtk-4.0/settings.ini << 'GTK4_EOF'
             [Settings]
             gtk-theme-name=Yaru-dark
             gtk-icon-theme-name=Yaru
@@ -1451,23 +1589,34 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             gtk-application-prefer-dark-theme=1
             gtk-touchscreen-mode=1
             GTK4_EOF
-            
-            # Configure GNOME settings for mobile
-            if command -v gsettings >/dev/null 2>&1; then
-                # Set Yaru theme
-                gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true
-                gsettings set org.gnome.desktop.interface icon-theme 'Yaru' 2>/dev/null || true
-                gsettings set org.gnome.desktop.interface cursor-theme 'Yaru' 2>/dev/null || true
-                # Mobile-friendly settings
-                gsettings set org.gnome.desktop.interface cursor-size 32 2>/dev/null || true
-                gsettings set org.gnome.desktop.interface text-scaling-factor 1.5 2>/dev/null || true
-                gsettings set org.gnome.desktop.interface scaling-factor 2 2>/dev/null || true
-                # Touch-friendly
-                gsettings set org.gnome.desktop.peripherals.touchscreen orientation-lock true 2>/dev/null || true
+                echo "  ✓ GTK4 settings configured"
             fi
             
-            # Create mobile-optimized Openbox configuration
-            cat > ~/.config/openbox/rc.xml << 'OPENBOX_EOF'
+            # Configure GNOME settings for mobile - check if already configured
+            if command -v gsettings >/dev/null 2>&1; then
+                CURRENT_THEME=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo "")
+                if [ "$CURRENT_THEME" = "'Yaru-dark'" ] || [ "$CURRENT_THEME" = "'Yaru'" ]; then
+                    echo "  ✓ GNOME settings already configured, skipping..."
+                else
+                    # Set Yaru theme
+                    gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true
+                    gsettings set org.gnome.desktop.interface icon-theme 'Yaru' 2>/dev/null || true
+                    gsettings set org.gnome.desktop.interface cursor-theme 'Yaru' 2>/dev/null || true
+                    # Mobile-friendly settings
+                    gsettings set org.gnome.desktop.interface cursor-size 32 2>/dev/null || true
+                    gsettings set org.gnome.desktop.interface text-scaling-factor 1.5 2>/dev/null || true
+                    gsettings set org.gnome.desktop.interface scaling-factor 2 2>/dev/null || true
+                    # Touch-friendly
+                    gsettings set org.gnome.desktop.peripherals.touchscreen orientation-lock true 2>/dev/null || true
+                    echo "  ✓ GNOME settings configured"
+                fi
+            fi
+            
+            # Create mobile-optimized Openbox configuration - check if already exists
+            if [ -f ~/.config/openbox/rc.xml ]; then
+                echo "  ✓ Openbox configuration already exists, skipping..."
+            else
+                cat > ~/.config/openbox/rc.xml << 'OPENBOX_EOF'
             <?xml version="1.0" encoding="UTF-8"?>
             <openbox_config xmlns="http://openbox.org/3.4/rc">
                 <theme><name>Clearlooks</name></theme>
@@ -1568,9 +1717,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                 </dock>
             </openbox_config>
             OPENBOX_EOF
+                echo "  ✓ Openbox configuration created"
+            fi
             
-            # Create mobile-optimized tint2 panel (Ubuntu Touch style - Premium)
-            cat > ~/.config/tint2/tint2rc << 'TINT2_EOF'
+            # Create mobile-optimized tint2 panel (Ubuntu Touch style - Premium) - check if exists
+            if [ -f ~/.config/tint2/tint2rc ]; then
+                echo "  ✓ Tint2 configuration already exists, skipping..."
+            else
+                cat > ~/.config/tint2/tint2rc << 'TINT2_EOF'
             # aTerm Touch Panel Configuration
             # Premium Ubuntu Touch inspired design
             
@@ -1680,9 +1834,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             launcher_icon_size = 40
             launcher_item_app = ~/.local/bin/aterm-launcher
             TINT2_EOF
+                echo "  ✓ Tint2 configuration created"
+            fi
             
-            # Create gesture configuration script
-            cat > ~/.config/aterm-touch/gestures.sh << 'GESTURES_EOF'
+            # Create gesture configuration script - check if exists
+            if [ -f ~/.config/aterm-touch/gestures.sh ]; then
+                echo "  ✓ Gesture configuration already exists, skipping..."
+            else
+                cat > ~/.config/aterm-touch/gestures.sh << 'GESTURES_EOF'
             #!/bin/bash
             # aTerm Touch Gesture Support
             # Ubuntu Touch inspired gesture navigation
@@ -1706,13 +1865,15 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                 libinput-gestures-setup autostart
             fi
             GESTURES_EOF
-            chmod +x ~/.config/aterm-touch/gestures.sh
+                chmod +x ~/.config/aterm-touch/gestures.sh
+                echo "  ✓ Gesture configuration created"
+            fi
             
-            # Create launcher script directory first
-            mkdir -p ~/.local/bin
-            
-            # Create launcher script (Ubuntu Touch style app drawer - Premium)
-            cat > ~/.local/bin/aterm-launcher << 'LAUNCHER_EOF'
+            # Create launcher script (Ubuntu Touch style app drawer - Premium) - check if exists
+            if [ -f ~/.local/bin/aterm-launcher ] && [ -x ~/.local/bin/aterm-launcher ]; then
+                echo "  ✓ Launcher script already exists, skipping..."
+            else
+                cat > ~/.local/bin/aterm-launcher << 'LAUNCHER_EOF'
             #!/bin/bash
             # aTerm Touch App Launcher
             # Premium Ubuntu Touch inspired application launcher
@@ -1741,10 +1902,15 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                     dmenu -l 12 -fn "sans-16"
             fi
             LAUNCHER_EOF
-            chmod +x ~/.local/bin/aterm-launcher
+                chmod +x ~/.local/bin/aterm-launcher
+                echo "  ✓ Launcher script created"
+            fi
             
-            # Create startup script (Ubuntu Desktop - Mobile Optimized)
-            cat > ~/.xinitrc << 'XINIT_EOF'
+            # Create startup script (Ubuntu Desktop - Mobile Optimized) - check if exists
+            if [ -f ~/.xinitrc ] && [ -x ~/.xinitrc ]; then
+                echo "  ✓ .xinitrc already exists, skipping..."
+            else
+                cat > ~/.xinitrc << 'XINIT_EOF'
             #!/bin/sh
             # aTerm Touch Desktop Startup Script
             # Ubuntu Desktop Environment - Mobile Optimized
@@ -1845,11 +2011,15 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             # Cleanup on exit (this won't run if exec succeeds, but good to have)
             kill ${'$'}DUNST_PID 2>/dev/null || true
             XINIT_EOF
-            chmod +x ~/.xinitrc
+                chmod +x ~/.xinitrc
+                echo "  ✓ .xinitrc created and made executable"
+            fi
             
-            # Create notification daemon config (Ubuntu Touch style)
-            mkdir -p ~/.config/dunst
-            cat > ~/.config/dunst/dunstrc << 'DUNST_EOF'
+            # Create notification daemon config (Ubuntu Touch style) - check if exists
+            if [ -f ~/.config/dunst/dunstrc ]; then
+                echo "  ✓ Dunst configuration already exists, skipping..."
+            else
+                cat > ~/.config/dunst/dunstrc << 'DUNST_EOF'
             [global]
             font = Sans 12
             markup = full
@@ -1903,9 +2073,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             frame_color = "#FF0000"
             timeout = 0
             DUNST_EOF
+                echo "  ✓ Dunst configuration created"
+            fi
             
-            # Create desktop entries for browsers
-            cat > ~/.local/share/applications/chromium.desktop << 'CHROMIUM_EOF'
+            # Create desktop entries for browsers - check if exists
+            if [ -f ~/.local/share/applications/chromium.desktop ]; then
+                echo "  ✓ Browser desktop entries already exist, skipping..."
+            else
+                cat > ~/.local/share/applications/chromium.desktop << 'CHROMIUM_EOF'
             [Desktop Entry]
             Version=1.0
             Type=Application
@@ -1917,8 +2092,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             Categories=Network;WebBrowser;
             MimeType=text/html;text/xml;application/xhtml+xml;
             CHROMIUM_EOF
-            
-            cat > ~/.local/share/applications/firefox.desktop << 'FIREFOX_EOF'
+                
+                cat > ~/.local/share/applications/firefox.desktop << 'FIREFOX_EOF'
             [Desktop Entry]
             Version=1.0
             Type=Application
@@ -1930,12 +2105,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             Categories=Network;WebBrowser;
             MimeType=text/html;text/xml;application/xhtml+xml;
             FIREFOX_EOF
+                echo "  ✓ Browser desktop entries created"
+            fi
             
-            # Ensure selenium-setup directory exists
-            mkdir -p ~/.local/bin
-            
-            # Create Selenium helper script
-            cat > ~/.local/bin/selenium-setup << 'SELENIUM_EOF'
+            # Create Selenium helper script - check if exists
+            if [ -f ~/.local/bin/selenium-setup ] && [ -x ~/.local/bin/selenium-setup ]; then
+                echo "  ✓ Selenium setup script already exists, skipping..."
+            else
+                cat > ~/.local/bin/selenium-setup << 'SELENIUM_EOF'
             #!/bin/bash
             # Selenium Setup and Test Script for aTerm Touch
             
@@ -2045,10 +2222,15 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "✓ Selenium setup complete!"
             echo "Run 'python3 ~/selenium_test.py' to test Selenium"
             SELENIUM_EOF
-            chmod +x ~/.local/bin/selenium-setup
+                chmod +x ~/.local/bin/selenium-setup
+                echo "  ✓ Selenium setup script created"
+            fi
             
-            # Create desktop entry for aTerm Touch
-            cat > ~/.local/share/applications/aterm-touch.desktop << 'DESKTOP_EOF'
+            # Create desktop entry for aTerm Touch - check if exists
+            if [ -f ~/.local/share/applications/aterm-touch.desktop ]; then
+                echo "  ✓ aTerm Touch desktop entry already exists, skipping..."
+            else
+                cat > ~/.local/share/applications/aterm-touch.desktop << 'DESKTOP_EOF'
             [Desktop Entry]
             Version=1.0
             Type=Application
@@ -2059,9 +2241,9 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             Terminal=false
             Categories=System;
             DESKTOP_EOF
-            
-            # Create Selenium desktop entry
-            cat > ~/.local/share/applications/selenium-test.desktop << 'SELENIUM_DESKTOP_EOF'
+                
+                # Create Selenium desktop entry
+                cat > ~/.local/share/applications/selenium-test.desktop << 'SELENIUM_DESKTOP_EOF'
             [Desktop Entry]
             Version=1.0
             Type=Application
@@ -2072,6 +2254,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             Terminal=true
             Categories=Development;
             SELENIUM_DESKTOP_EOF
+                echo "  ✓ Desktop entries created"
+            fi
             
             echo "✓ Configuration complete"
             
