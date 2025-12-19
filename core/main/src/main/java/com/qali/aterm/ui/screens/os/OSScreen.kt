@@ -949,37 +949,69 @@ sleep 3
 
 # Install and start websockify for WebSocket VNC access
 if ! command -v websockify >/dev/null 2>&1; then
+    echo "Installing websockify..."
     if command -v pip3 >/dev/null 2>&1; then
-        pip3 install --quiet websockify 2>/dev/null || true
+        pip3 install --quiet websockify 2>&1 || pip3 install websockify 2>&1 || true
     elif command -v pip >/dev/null 2>&1; then
-        pip install --quiet websockify 2>/dev/null || true
+        pip install --quiet websockify 2>&1 || pip install websockify 2>&1 || true
     fi
 fi
 
 # Kill existing websockify on port 6080
 pkill -f "websockify.*6080" 2>/dev/null || true
-sleep 1
+pkill -f "python.*websockify.*6080" 2>/dev/null || true
+sleep 2
 
 # Start websockify to proxy VNC over WebSocket
+WEBSOCKIFY_STARTED=0
+# Try direct command first
 if command -v websockify >/dev/null 2>&1; then
-    # Start websockify in background - use python -m websockify if direct command fails
-    (nohup websockify 6080 localhost:5901 >/tmp/websockify.log 2>&1 &) || \
-    (nohup python3 -m websockify 6080 localhost:5901 >/tmp/websockify.log 2>&1 &) || \
-    (nohup python -m websockify 6080 localhost:5901 >/tmp/websockify.log 2>&1 &) || true
-    sleep 4
-    # Verify websockify started using multiple methods
-    if ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null || \
-       netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
-       ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
-        echo "websockify started successfully"
-    else
-        echo "websockify may have failed, checking log..."
-        cat /tmp/websockify.log 2>/dev/null | head -10 || true
-        # Try to start with python module directly
-        echo "Attempting to start websockify with python module..."
-        nohup python3 -m websockify 6080 localhost:5901 >/tmp/websockify2.log 2>&1 &
-        sleep 2
+    echo "Starting websockify (direct command)..."
+    nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+    WEBSOCKIFY_PID=$!
+    sleep 3
+    if ps -p $WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null; then
+        WEBSOCKIFY_STARTED=1
+        echo "websockify started successfully (direct)"
     fi
+fi
+
+# Try python3 -m websockify if direct command didn't work
+if [ $WEBSOCKIFY_STARTED -eq 0 ] && command -v python3 >/dev/null 2>&1; then
+    echo "Starting websockify (python3 -m)..."
+    nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+    WEBSOCKIFY_PID=$!
+    sleep 3
+    if ps -p $WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null; then
+        WEBSOCKIFY_STARTED=1
+        echo "websockify started successfully (python3 -m)"
+    fi
+fi
+
+# Try python -m websockify as last resort
+if [ $WEBSOCKIFY_STARTED -eq 0 ] && command -v python >/dev/null 2>&1; then
+    echo "Starting websockify (python -m)..."
+    nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+    WEBSOCKIFY_PID=$!
+    sleep 3
+    if ps -p $WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python.*websockify.*6080" >/dev/null; then
+        WEBSOCKIFY_STARTED=1
+        echo "websockify started successfully (python -m)"
+    fi
+fi
+
+# Final verification
+sleep 2
+if ps aux 2>/dev/null | grep -v grep | grep -E "websockify.*6080|python.*websockify.*6080" >/dev/null || \
+   netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+   ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+    echo "websockify verified running on port 6080"
+else
+    echo "websockify failed to start, checking logs..."
+    cat /tmp/websockify.log 2>/dev/null | tail -20 || echo "No log file found"
+    echo "Attempting one more time with explicit python3..."
+    nohup bash -c "cd /tmp && python3 -m websockify 6080 localhost:5901" >/tmp/websockify_final.log 2>&1 &
+    sleep 3
 fi
 """.trimIndent()
             
@@ -1011,7 +1043,7 @@ fi
             
             // Check websockify
             session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
-            delay(1000)
+            delay(2000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
             val recentLines = output.split("\n").takeLast(40).joinToString("\n")
@@ -1022,7 +1054,26 @@ fi
                             "VNC_RUNNING" in recentLines ||
                             "New Xtigervnc server" in recentOutput
             
-            if (vncStarted) {
+            // Check websockify status
+            val websockifyRunning = "WEBSOCKIFY_RUNNING" in recentLines
+            
+            // If VNC is running but websockify is not, try to start it
+            if (vncStarted && !websockifyRunning) {
+                onStatusUpdate(InstallationStatus.Installing(), "VNC is running. Starting websockify...")
+                session.write("bash -c 'pkill -f \"websockify.*6080\" 2>/dev/null || true; sleep 1; (nohup bash -c \"python3 -m websockify 6080 localhost:5901\" >/tmp/websockify_retry.log 2>&1 &) || (nohup bash -c \"python -m websockify 6080 localhost:5901\" >/tmp/websockify_retry.log 2>&1 &) || true; sleep 3; (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+                delay(3000)
+                val retryOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                val retryLines = retryOutput.split("\n").takeLast(10).joinToString("\n")
+                val websockifyNowRunning = "WEBSOCKIFY_RUNNING" in retryLines
+                
+                if (vncStarted) {
+                    if (websockifyNowRunning) {
+                        onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer."), "")
+                    } else {
+                        onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! Note: websockify may not be running. Check /tmp/websockify_retry.log for details."), "")
+                    }
+                }
+            } else if (vncStarted) {
                 onStatusUpdate(InstallationStatus.Success("Desktop environment is starting on VNC display :1! The GUI should be accessible via VNC viewer at localhost:5901 (password: aterm)."), "")
             } else {
                 // Even if detection fails, VNC might still be running (hostname warnings are non-fatal)
