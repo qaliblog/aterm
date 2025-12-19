@@ -993,49 +993,49 @@ sleep 1
 PORT_PID=""
 if command -v ss >/dev/null 2>&1; then
     # Try different ss output formats (Alpine vs Ubuntu)
-    PORT_PID=\$(ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | head -1 || echo "")
+    PORT_PID=${'$'}(ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | head -1 || echo "")
     # Alternative format: users:(("process",pid=123,fd=3))
-    if [ -z "\$PORT_PID" ]; then
-        PORT_PID=\$(ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | head -1 | sed 's/pid=//' || echo "")
+    if [ -z "${'$'}PORT_PID" ]; then
+        PORT_PID=${'$'}(ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | head -1 | sed 's/pid=//' || echo "")
     fi
 fi
 
 # Fallback to netstat if ss didn't work
-if [ -z "\$PORT_PID" ] && command -v netstat >/dev/null 2>&1; then
+if [ -z "${'$'}PORT_PID" ] && command -v netstat >/dev/null 2>&1; then
     # netstat format varies: on Alpine might be "123/python" or just "123"
-    PORT_PID=\$(netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print \$7}' | cut -d/ -f1 | grep -E "^[0-9]+\$" | head -1 || echo "")
+    PORT_PID=${'$'}(netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | head -1 || echo "")
 fi
 
 # Fallback to lsof if available (usually on Ubuntu, not Alpine)
-if [ -z "\$PORT_PID" ] && command -v lsof >/dev/null 2>&1; then
-    PORT_PID=\$(lsof -ti:6080 2>/dev/null | head -1 || echo "")
+if [ -z "${'$'}PORT_PID" ] && command -v lsof >/dev/null 2>&1; then
+    PORT_PID=${'$'}(lsof -ti:6080 2>/dev/null | head -1 || echo "")
 fi
 
 # Kill the process if found
-if [ -n "\$PORT_PID" ] && [ "\$PORT_PID" != "" ]; then
-    echo "Found process \$PORT_PID using port 6080, killing it..."
-    kill -9 "\$PORT_PID" 2>/dev/null || true
+if [ -n "${'$'}PORT_PID" ] && [ "${'$'}PORT_PID" != "" ]; then
+    echo "Found process ${'$'}PORT_PID using port 6080, killing it..."
+    kill -9 "${'$'}PORT_PID" 2>/dev/null || true
     sleep 2
 fi
 
 # Also try to find and kill all PIDs using port 6080 (handle multiple processes)
 if command -v ss >/dev/null 2>&1; then
     ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read pid; do
-        [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
     done
     # Alternative format extraction
     ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | sed 's/pid=//' | while read pid; do
-        [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
     done
 fi
 if command -v netstat >/dev/null 2>&1; then
-    netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print \$7}' | cut -d/ -f1 | grep -E "^[0-9]+\$" | while read pid; do
-        [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+    netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | while read pid; do
+        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
     done
 fi
 if command -v lsof >/dev/null 2>&1; then
     lsof -ti:6080 2>/dev/null | while read pid; do
-        [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
     done
 fi
 
@@ -1050,21 +1050,21 @@ if (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) || (ss -ln 2>/dev/null | 
     # Try one more aggressive cleanup (using while loop for Alpine compatibility)
     if command -v ss >/dev/null 2>&1; then
         ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read pid; do
-            [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
         done
         # Alternative format
         ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | sed 's/pid=//' | while read pid; do
-            [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
         done
     fi
     if command -v netstat >/dev/null 2>&1; then
-        netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print \$7}' | cut -d/ -f1 | grep -E "^[0-9]+\$" | while read pid; do
-            [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+        netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | while read pid; do
+            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
         done
     fi
     if command -v lsof >/dev/null 2>&1; then
         lsof -ti:6080 2>/dev/null | while read pid; do
-            [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
         done
     fi
     sleep 2
@@ -1155,21 +1155,21 @@ else
         # Kill all processes using port 6080 (using while loop for Alpine compatibility)
         if command -v ss >/dev/null 2>&1; then
             ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read pid; do
-                [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
             done
             # Alternative format
             ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | sed 's/pid=//' | while read pid; do
-                [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
             done
         fi
         if command -v netstat >/dev/null 2>&1; then
-            netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print \$7}' | cut -d/ -f1 | grep -E "^[0-9]+\$" | while read pid; do
-                [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+            netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | while read pid; do
+                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
             done
         fi
         if command -v lsof >/dev/null 2>&1; then
             lsof -ti:6080 2>/dev/null | while read pid; do
-                [ -n "\$pid" ] && [ "\$pid" != "" ] && kill -9 "\$pid" 2>/dev/null || true
+                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
             done
         fi
         pkill -9 -f "websockify" 2>/dev/null || true
