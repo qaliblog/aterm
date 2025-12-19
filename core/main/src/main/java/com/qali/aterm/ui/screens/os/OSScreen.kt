@@ -1594,8 +1594,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             # Configure GNOME settings for mobile - check if already configured
             if command -v gsettings >/dev/null 2>&1; then
-                CURRENT_THEME=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo "")
-                if [ "$CURRENT_THEME" = "'Yaru-dark'" ] || [ "$CURRENT_THEME" = "'Yaru'" ]; then
+                CURRENT_THEME=${'$'}(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo "")
+                if [ "${'$'}CURRENT_THEME" = "'Yaru-dark'" ] || [ "${'$'}CURRENT_THEME" = "'Yaru'" ]; then
                     echo "  ✓ GNOME settings already configured, skipping..."
                 else
                     # Set Yaru theme
