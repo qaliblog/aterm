@@ -832,8 +832,13 @@ hostname localhost 2>/dev/null || true
 grep -q "127.0.0.1.*localhost" /etc/hosts 2>/dev/null || echo "127.0.0.1 localhost" >> /etc/hosts 2>/dev/null || true
 grep -q "::1.*localhost" /etc/hosts 2>/dev/null || echo "::1 localhost" >> /etc/hosts 2>/dev/null || true
 
-command -v vncserver >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
-vncserver -kill :1 2>/dev/null || true
+command -v vncserver >/dev/null 2>&1 || command -v Xtigervnc >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq tigervnc-standalone-server tigervnc-common 2>/dev/null || yum install -y -q tigervnc-server 2>/dev/null || pacman -S --noconfirm tigervnc 2>/dev/null || apk add -q tigervnc 2>/dev/null || true)
+# Kill existing VNC server on display :1
+if command -v vncserver >/dev/null 2>&1; then
+    vncserver -kill :1 2>/dev/null || true
+elif command -v Xtigervnc >/dev/null 2>&1; then
+    pkill -f "Xtigervnc.*:1" 2>/dev/null || true
+fi
 mkdir -p ~/.vnc
 echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
 cat > ~/.vnc/xstartup << 'VNC_EOF'
@@ -895,7 +900,15 @@ chmod +x ~/.vnc/xstartup
 export DISPLAY=:1
 export HOSTNAME=localhost
 # Start VNC server - redirect stderr to filter hostname warnings, but allow it to continue
-(vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
+# Use the correct command based on what's available
+if command -v vncserver >/dev/null 2>&1; then
+    (vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
+elif command -v Xtigervnc >/dev/null 2>&1; then
+    # Xtigervnc uses different syntax
+    (Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
+else
+    echo "Error: No VNC server found (vncserver or Xtigervnc)"
+fi
 sleep 3
 
 # Verify VNC started and check if desktop environment will start
