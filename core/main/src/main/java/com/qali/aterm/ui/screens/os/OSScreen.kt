@@ -1070,11 +1070,15 @@ fi
             }
             
             // Decode the base64 file
-            session.write("bash -c 'base64 -d /tmp/vnc_setup.sh.b64 > /tmp/vnc_setup.sh && rm -f /tmp/vnc_setup.sh.b64'\n")
+            session.write("bash -c 'base64 -d /tmp/vnc_setup.sh.b64 > /tmp/vnc_setup.sh 2>&1 && rm -f /tmp/vnc_setup.sh.b64'\n")
             delay(500)
             
-            // Verify the script was written correctly and check syntax
-            session.write("bash -c 'if [ -f /tmp/vnc_setup.sh ] && [ -s /tmp/vnc_setup.sh ]; then bash -n /tmp/vnc_setup.sh 2>&1 && echo SCRIPT_SYNTAX_OK || echo SCRIPT_SYNTAX_ERROR; else echo SCRIPT_WRITE_FAILED; fi'\n")
+            // Verify the script was written correctly - check it ends with 'fi' and newline
+            session.write("bash -c 'if [ -f /tmp/vnc_setup.sh ] && [ -s /tmp/vnc_setup.sh ]; then tail -1 /tmp/vnc_setup.sh | grep -q \"^fi$\" && echo SCRIPT_ENDS_CORRECTLY || echo SCRIPT_ENDS_INCORRECTLY; else echo SCRIPT_WRITE_FAILED; fi'\n")
+            delay(200)
+            
+            // Check syntax
+            session.write("bash -c 'if [ -f /tmp/vnc_setup.sh ]; then bash -n /tmp/vnc_setup.sh 2>&1 && echo SCRIPT_SYNTAX_OK || (echo SCRIPT_SYNTAX_ERROR; tail -5 /tmp/vnc_setup.sh); else echo SCRIPT_WRITE_FAILED; fi'\n")
             delay(300)
             session.write("bash -c 'chmod +x /tmp/vnc_setup.sh'\n")
             delay(200)
