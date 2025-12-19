@@ -968,33 +968,33 @@ WEBSOCKIFY_STARTED=0
 if command -v websockify >/dev/null 2>&1; then
     echo "Starting websockify (direct command)..."
     nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    WEBSOCKIFY_PID=$!
+    WEBSOCKIFY_PID=\$!
     sleep 3
-    if ps -p $WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null; then
+    if ps -p \$WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null; then
         WEBSOCKIFY_STARTED=1
         echo "websockify started successfully (direct)"
     fi
 fi
 
 # Try python3 -m websockify if direct command didn't work
-if [ $WEBSOCKIFY_STARTED -eq 0 ] && command -v python3 >/dev/null 2>&1; then
+if [ \$WEBSOCKIFY_STARTED -eq 0 ] && command -v python3 >/dev/null 2>&1; then
     echo "Starting websockify (python3 -m)..."
     nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    WEBSOCKIFY_PID=$!
+    WEBSOCKIFY_PID=\$!
     sleep 3
-    if ps -p $WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null; then
+    if ps -p \$WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null; then
         WEBSOCKIFY_STARTED=1
         echo "websockify started successfully (python3 -m)"
     fi
 fi
 
 # Try python -m websockify as last resort
-if [ $WEBSOCKIFY_STARTED -eq 0 ] && command -v python >/dev/null 2>&1; then
+if [ \$WEBSOCKIFY_STARTED -eq 0 ] && command -v python >/dev/null 2>&1; then
     echo "Starting websockify (python -m)..."
     nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    WEBSOCKIFY_PID=$!
+    WEBSOCKIFY_PID=\$!
     sleep 3
-    if ps -p $WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python.*websockify.*6080" >/dev/null; then
+    if ps -p \$WEBSOCKIFY_PID >/dev/null 2>&1 || ps aux 2>/dev/null | grep -v grep | grep "python.*websockify.*6080" >/dev/null; then
         WEBSOCKIFY_STARTED=1
         echo "websockify started successfully (python -m)"
     fi
