@@ -74,6 +74,31 @@ fun OSScreen(
         installScript = "install-aterm-touch.sh"
     )
     
+    // Function to check VNC status
+    fun checkVNCStatus() {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val session = mainActivity.sessionBinder?.getSession(sessionId)
+                    if (session != null) {
+                        // Check if VNC is running
+                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || ls ~/.vnc/*:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                        delay(1500)
+                        val vncOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                        val vncLines = vncOutput.split("\n").takeLast(15).joinToString("\n")
+                        if ("VNC_RUNNING" in vncLines || "New Xtigervnc server" in vncLines || "on port 5901" in vncLines) {
+                            vncRunning = true
+                        } else {
+                            vncRunning = false
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore errors
+                }
+            }
+        }
+    }
+    
     // Detect Linux distribution and check installation status
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -107,18 +132,23 @@ fun OSScreen(
                         }
                     }
                     if (foundInstalled) {
-                        // Check if VNC is already running using alternative method
-                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || test -f ~/.vnc/localhost:1.pid) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
-                        delay(1500)
-                        val vncOutput = session.emulator?.screen?.getTranscriptText() ?: ""
-                        val vncLines = vncOutput.split("\n").takeLast(15).joinToString("\n")
-                        if ("VNC_RUNNING" in vncLines || "New Xtigervnc server" in vncLines || "on port 5901" in vncLines) {
-                            vncRunning = true
-                        }
+                        // Check if VNC is already running
+                        checkVNCStatus()
                     }
                 }
             } catch (e: Exception) {
                 // Ignore errors
+            }
+        }
+    }
+    
+    // Periodically check VNC status when not running (to detect when it starts)
+    LaunchedEffect(vncRunning, isStartingVNC) {
+        if (!vncRunning && !isStartingVNC) {
+            // Check every 3 seconds if VNC is not running
+            while (!vncRunning && !isStartingVNC) {
+                delay(3000)
+                checkVNCStatus()
             }
         }
     }
@@ -140,25 +170,27 @@ fun OSScreen(
                                 sessionId = sessionId,
                                 onStatusUpdate = { status, _ ->
                                     if (status is InstallationStatus.Success) {
-                                        // Verify VNC is actually running
-                                        val session = mainActivity.sessionBinder?.getSession(sessionId)
-                                        if (session != null) {
-                                            scope.launch {
-                                                withContext(Dispatchers.IO) {
-                                                    delay(2000)
-                                                    session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
-                                                    delay(1500)
-                                                    val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
-                                                    val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
-                                                    if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
-                                                        vncRunning = true
+                                        // Check if message indicates VNC started
+                                        if ("VNC" in status.message || "display :1" in status.message || "port 5901" in status.message) {
+                                            // Verify VNC is actually running
+                                            val session = mainActivity.sessionBinder?.getSession(sessionId)
+                                            if (session != null) {
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        delay(3000) // Give VNC more time to fully start
+                                                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || ls ~/.vnc/*:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                                                        delay(2000)
+                                                        val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                                                        val vncCheckLines = vncCheckOutput.split("\n").takeLast(20).joinToString("\n")
+                                                        if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines || "on port 5901" in vncCheckLines) {
+                                                            vncRunning = true
+                                                        }
                                                     }
                                                 }
+                                            } else {
+                                                // Fallback: if message mentions VNC, assume it's running
+                                                vncRunning = true
                                             }
-                                        }
-                                        // Also set if message contains VNC (fallback)
-                                        if ("VNC" in status.message && "display :1" in status.message) {
-                                            vncRunning = true
                                         }
                                     }
                                     isStartingVNC = false
@@ -217,25 +249,27 @@ fun OSScreen(
                                 sessionId = sessionId,
                                 onStatusUpdate = { status, _ ->
                                     if (status is InstallationStatus.Success) {
-                                        // Verify VNC is actually running
-                                        val session = mainActivity.sessionBinder?.getSession(sessionId)
-                                        if (session != null) {
-                                            scope.launch {
-                                                withContext(Dispatchers.IO) {
-                                                    delay(2000)
-                                                    session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
-                                                    delay(1500)
-                                                    val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
-                                                    val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
-                                                    if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
-                                                        vncRunning = true
+                                        // Check if message indicates VNC started
+                                        if ("VNC" in status.message || "display :1" in status.message || "port 5901" in status.message) {
+                                            // Verify VNC is actually running
+                                            val session = mainActivity.sessionBinder?.getSession(sessionId)
+                                            if (session != null) {
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        delay(3000) // Give VNC more time to fully start
+                                                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || ls ~/.vnc/*:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                                                        delay(2000)
+                                                        val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                                                        val vncCheckLines = vncCheckOutput.split("\n").takeLast(20).joinToString("\n")
+                                                        if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines || "on port 5901" in vncCheckLines) {
+                                                            vncRunning = true
+                                                        }
                                                     }
                                                 }
+                                            } else {
+                                                // Fallback: if message mentions VNC, assume it's running
+                                                vncRunning = true
                                             }
-                                        }
-                                        // Also set if message contains VNC (fallback)
-                                        if ("VNC" in status.message && "display :1" in status.message) {
-                                            vncRunning = true
                                         }
                                     }
                                     isStartingVNC = false
