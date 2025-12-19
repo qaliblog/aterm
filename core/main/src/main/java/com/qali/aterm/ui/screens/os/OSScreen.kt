@@ -952,37 +952,54 @@ if ! command -v websockify >/dev/null 2>&1 && ! python3 -m websockify --help >/d
     echo "Installing websockify..."
     if command -v pip3 >/dev/null 2>&1; then
         echo "Attempting installation with pip3..."
-        pip3 install --user --quiet websockify 2>&1 || pip3 install --user websockify 2>&1 || \
-        pip3 install --quiet websockify 2>&1 || pip3 install websockify 2>&1 || true
-        sleep 2
-        # Verify installation
-        if python3 -m websockify --help >/dev/null 2>&1 || command -v websockify >/dev/null 2>&1; then
+        # Try installation methods and capture output
+        pip3 install --user websockify >/tmp/websockify_install.log 2>&1 || \
+        pip3 install websockify >/tmp/websockify_install.log 2>&1 || true
+        sleep 3
+        # Check if installation succeeded
+        if python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
             echo "websockify installed successfully (pip3)"
+        elif command -v websockify >/dev/null 2>&1; then
+            echo "websockify installed successfully (pip3, direct command)"
         else
+            echo "pip3 installation failed, checking log..."
+            cat /tmp/websockify_install.log 2>/dev/null | tail -5 || true
             # Try with pip if pip3 didn't work
             if command -v pip >/dev/null 2>&1; then
                 echo "Attempting installation with pip..."
-                pip install --user --quiet websockify 2>&1 || pip install --user websockify 2>&1 || \
-                pip install --quiet websockify 2>&1 || pip install websockify 2>&1 || true
-                sleep 2
-                # Verify installation
-                if python3 -m websockify --help >/dev/null 2>&1 || python -m websockify --help >/dev/null 2>&1 || command -v websockify >/dev/null 2>&1; then
+                pip install --user websockify >/tmp/websockify_install.log 2>&1 || \
+                pip install websockify >/tmp/websockify_install.log 2>&1 || true
+                sleep 3
+                # Check if installation succeeded
+                if python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
                     echo "websockify installed successfully (pip)"
+                elif python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+                    echo "websockify installed successfully (pip, python -m)"
+                elif command -v websockify >/dev/null 2>&1; then
+                    echo "websockify installed successfully (pip, direct command)"
                 else
-                    echo "Warning: websockify installation may have failed"
+                    echo "pip installation also failed, checking log..."
+                    cat /tmp/websockify_install.log 2>/dev/null | tail -5 || true
+                    echo "Warning: websockify installation failed. Will try to use python3 -m anyway."
                 fi
             fi
         fi
     elif command -v pip >/dev/null 2>&1; then
         echo "Attempting installation with pip..."
-        pip install --user --quiet websockify 2>&1 || pip install --user websockify 2>&1 || \
-        pip install --quiet websockify 2>&1 || pip install websockify 2>&1 || true
-        sleep 2
-        # Verify installation
-        if python3 -m websockify --help >/dev/null 2>&1 || python -m websockify --help >/dev/null 2>&1 || command -v websockify >/dev/null 2>&1; then
+        pip install --user websockify >/tmp/websockify_install.log 2>&1 || \
+        pip install websockify >/tmp/websockify_install.log 2>&1 || true
+        sleep 3
+        # Check if installation succeeded
+        if python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
             echo "websockify installed successfully (pip)"
+        elif python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+            echo "websockify installed successfully (pip, python -m)"
+        elif command -v websockify >/dev/null 2>&1; then
+            echo "websockify installed successfully (pip, direct command)"
         else
-            echo "Warning: websockify installation may have failed"
+            echo "pip installation failed, checking log..."
+            cat /tmp/websockify_install.log 2>/dev/null | tail -5 || true
+            echo "Warning: websockify installation failed. Will try to use python3 -m anyway."
         fi
     fi
 fi
