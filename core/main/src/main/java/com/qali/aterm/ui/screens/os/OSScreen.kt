@@ -1048,7 +1048,7 @@ else
     nohup bash -c "cd /tmp && python3 -m websockify 6080 localhost:5901" >/tmp/websockify_final.log 2>&1 &
     sleep 3
 fi
-""".trimIndent()
+""".trimIndent() + "\n"
             
             // Write script to /tmp inside Linux environment
             // Use base64 encoding to avoid newline/special character issues
@@ -1217,6 +1217,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             
             echo "[3/8] Installing Ubuntu desktop environment..."
             if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                # Install DBus (required for GNOME/Unity)
+                ${'$'}{INSTALL_CMD} dbus-x11 dbus-user-session || true
                 # Install GNOME Shell (Ubuntu's desktop environment)
                 ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal gnome-control-center || true
                 # Install Unity components (Ubuntu's classic desktop)
@@ -1753,6 +1755,17 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             export LIBGL_ALWAYS_SOFTWARE=0
             export __GLX_VENDOR_LIBRARY_NAME=nvidia 2>/dev/null || true
             
+            # Start DBus session bus (required for GNOME/Unity)
+            if command -v dbus-launch >/dev/null 2>&1; then
+                eval $(dbus-launch --sh-syntax)
+                export DBUS_SESSION_BUS_ADDRESS
+                export DBUS_SESSION_BUS_PID
+                echo "DBus session bus started"
+            else
+                echo "Warning: dbus-launch not found. GNOME/Unity may not work properly."
+                echo "Install dbus-x11 package to enable full desktop environment support."
+            fi
+            
             # Start notification daemon (Ubuntu style)
             if command -v notify-osd >/dev/null 2>&1; then
                 notify-osd &
@@ -1762,14 +1775,14 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             fi
             
             # Start GNOME/Unity session if available (Ubuntu's main desktop)
-            if command -v gnome-session >/dev/null 2>&1; then
+            if command -v gnome-session >/dev/null 2>&1 && [ -n "${'$'}DBUS_SESSION_BUS_ADDRESS" ]; then
                 echo "Starting GNOME session (Ubuntu desktop)..."
                 # Set GNOME to mobile-friendly mode
                 export GNOME_SHELL_SESSION_MODE=ubuntu
                 export XDG_CURRENT_DESKTOP=ubuntu:GNOME
                 # Start GNOME session (this will handle everything)
                 exec gnome-session --session=ubuntu
-            elif command -v unity-session >/dev/null 2>&1; then
+            elif command -v unity-session >/dev/null 2>&1 && [ -n "${'$'}DBUS_SESSION_BUS_ADDRESS" ]; then
                 echo "Starting Unity session (Ubuntu classic desktop)..."
                 export XDG_CURRENT_DESKTOP=Unity
                 exec unity-session
