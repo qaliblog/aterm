@@ -397,9 +397,12 @@ fun VNCViewer(
                             <div id="vnc_content" style="flex: 1; position: relative;">
                                 <iframe id="vnc_frame" style="display: none;"></iframe>
                                 <div id="fallback" class="fallback">
-                                    <p style="margin-bottom: 10px;">VNC Server: localhost:5901</p>
-                                    <p style="margin-bottom: 10px;">Password: aterm</p>
-                                    <p style="color: #888; font-size: 11px;">Setting up VNC connection...</p>
+                                    <p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Server Information</p>
+                                    <p style="margin-bottom: 8px;">Server: localhost:5901</p>
+                                    <p style="margin-bottom: 8px;">Password: aterm</p>
+                                    <p style="margin-bottom: 8px; color: #FFA500;">WebSocket Proxy: localhost:6080</p>
+                                    <p id="connection_status" style="color: #888; font-size: 11px;">Connecting to VNC server...</p>
+                                    <p style="color: #666; font-size: 10px; margin-top: 10px;">If websockify is not running, the WebView cannot connect.<br/>Use a VNC viewer app to connect directly to localhost:5901</p>
                                 </div>
                             </div>
                         </div>
@@ -447,6 +450,12 @@ fun VNCViewer(
                                         statusBar.textContent = 'Connecting to VNC server...';
                                         statusBar.className = 'status-connecting';
                                         
+                                        // Update fallback status
+                                        const statusEl = document.getElementById('connection_status');
+                                        if (statusEl) {
+                                            statusEl.textContent = 'Attempting to connect via websockify (port 6080)...';
+                                        }
+                                        
                                         try {
                                             // Connect via websockify
                                             // Try both localhost and 127.0.0.1 for compatibility
@@ -458,6 +467,7 @@ fun VNCViewer(
                                             
                                             ws.onopen = function() {
                                                 statusBar.textContent = 'Connected, authenticating...';
+                                                if (statusEl) statusEl.textContent = 'WebSocket connected, authenticating...';
                                             };
                                             
                                             ws.onmessage = function(event) {
@@ -485,18 +495,37 @@ fun VNCViewer(
                                             };
                                             
                                             ws.onerror = function() {
-                                                statusBar.textContent = 'Connection error. Ensure VNC server is running on :1';
+                                                statusBar.textContent = 'Connection error. websockify may not be running on port 6080';
                                                 statusBar.className = 'status-error';
+                                                if (statusEl) {
+                                                    statusEl.textContent = 'WebSocket connection failed. websockify may not be running.';
+                                                    statusEl.style.color = '#FF6B6B';
+                                                }
+                                                // Show fallback message
+                                                fallback.style.display = 'flex';
                                             };
                                             
-                                            ws.onclose = function() {
+                                            ws.onclose = function(event) {
                                                 connected = false;
                                                 handshakeDone = false;
                                                 statusBar.textContent = 'Disconnected';
                                                 statusBar.className = '';
+                                                if (statusEl) {
+                                                    statusEl.textContent = 'WebSocket closed. Code: ' + event.code;
+                                                    statusEl.style.color = '#FF6B6B';
+                                                }
                                                 
-                                                // Try reconnect
-                                                setTimeout(connectVNC, 3000);
+                                                // Only try reconnect if it was a normal close (not an error)
+                                                if (event.code !== 1006) {
+                                                    setTimeout(connectVNC, 3000);
+                                                } else {
+                                                    // Connection refused or websockify not running
+                                                    fallback.style.display = 'flex';
+                                                    if (statusEl) {
+                                                        statusEl.textContent = 'websockify is not running on port 6080. Please start it manually or use a VNC viewer app.';
+                                                        statusEl.style.color = '#FFA500';
+                                                    }
+                                                }
                                             };
                                             
                                         } catch(e) {
@@ -1091,8 +1120,15 @@ fi
             val base64Script = android.util.Base64.encodeToString(scriptBytes, android.util.Base64.NO_WRAP)
             
             // Decode and write using bash to ensure proper newlines
-            session.write("bash -c 'echo \"$base64Script\" | base64 -d > /tmp/vnc_setup.sh'\n")
+            // Break out of single quotes to insert the actual base64 string value
+            // Escape single quotes in the base64 string and use proper string concatenation
+            val escapedBase64 = base64Script.replace("'", "'\"'\"'")
+            val command = "bash -c 'echo \"${escapedBase64}\" | base64 -d > /tmp/vnc_setup.sh'\n"
+            session.write(command)
             delay(500)
+            // Verify the script was written correctly
+            session.write("bash -c 'if [ -f /tmp/vnc_setup.sh ] && [ -s /tmp/vnc_setup.sh ]; then echo SCRIPT_WRITTEN_OK; else echo SCRIPT_WRITE_FAILED; fi'\n")
+            delay(300)
             session.write("bash -c 'chmod +x /tmp/vnc_setup.sh'\n")
             delay(200)
             session.write("bash /tmp/vnc_setup.sh 2>&1\n")
