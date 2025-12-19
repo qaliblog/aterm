@@ -963,11 +963,58 @@ mkdir -p ~/.vnc
 echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
 cat > ~/.vnc/xstartup << 'VNC_EOF'
 #!/bin/sh
-[ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
+# VNC Startup Script for aTerm Touch Desktop Environment
+
+# Unset problematic environment variables
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+# Set display
+export DISPLAY=:1
+
+# Load X resources if available
 [ -r ${'$'}HOME/.Xresources ] && xrdb ${'$'}HOME/.Xresources
-xsetroot -solid grey
+
+# Set a solid background color
+xsetroot -solid '#1A1A1A' 2>/dev/null || xsetroot -solid grey
+
+# Start VNC config daemon
 vncconfig -iconic &
-exec /bin/sh ~/.xinitrc
+
+# Change to home directory
+cd ~
+
+# Start the desktop environment
+# Check if .xinitrc exists and is executable (desktop environment should be installed)
+if [ -f ~/.xinitrc ] && [ -x ~/.xinitrc ]; then
+    # Desktop environment is installed, start it
+    echo "Starting aTerm Touch desktop environment..."
+    exec /bin/sh ~/.xinitrc
+else
+    # Fallback: desktop environment not installed
+    echo "Desktop environment not installed. Please install from Settings."
+    # Start a basic window manager and terminal so user can see the message
+    if command -v openbox >/dev/null 2>&1; then
+        openbox &
+        sleep 1
+        if command -v xterm >/dev/null 2>&1; then
+            xterm -geometry 80x24+100+100 -e "echo 'aTerm Touch desktop environment is not installed.'; echo 'Please install it from Settings > Desktop Environment'; sleep 10" &
+        fi
+        # Keep openbox running
+        wait
+    elif command -v twm >/dev/null 2>&1; then
+        twm &
+        if command -v xterm >/dev/null 2>&1; then
+            xterm -e "echo 'Desktop environment not installed'; sleep 10" &
+        fi
+        wait
+    else
+        # Last resort: just show a message
+        if command -v xterm >/dev/null 2>&1; then
+            xterm -hold -e "echo 'Desktop environment not installed. Please install from Settings.'"
+        fi
+    fi
+fi
 VNC_EOF
 chmod +x ~/.vnc/xstartup
 export DISPLAY=:1
@@ -975,6 +1022,20 @@ export HOSTNAME=localhost
 # Start VNC server - redirect stderr to filter hostname warnings, but allow it to continue
 (vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
 sleep 3
+
+# Verify VNC started and check if desktop environment will start
+if [ -f ~/.vnc/localhost:1.pid ] || ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc.*:1" >/dev/null; then
+    echo "VNC server started successfully on display :1"
+    # Check if .xinitrc exists (desktop environment should be installed)
+    if [ -f ~/.xinitrc ] && [ -x ~/.xinitrc ]; then
+        echo "Desktop environment configuration found (.xinitrc exists)"
+    else
+        echo "Warning: .xinitrc not found. Desktop environment may not start properly."
+        echo "Please install the desktop environment from Settings first."
+    fi
+else
+    echo "Warning: VNC server may not have started properly"
+fi
 
 # Install and start websockify for WebSocket VNC access
 if ! command -v websockify >/dev/null 2>&1 && ! python3 -m websockify --help >/dev/null 2>&1; then
@@ -1119,15 +1180,26 @@ fi
             val scriptBytes = vncSetupScript.toByteArray(Charsets.UTF_8)
             val base64Script = android.util.Base64.encodeToString(scriptBytes, android.util.Base64.NO_WRAP)
             
-            // Decode and write using bash to ensure proper newlines
-            // Break out of single quotes to insert the actual base64 string value
-            // Escape single quotes in the base64 string and use proper string concatenation
-            val escapedBase64 = base64Script.replace("'", "'\"'\"'")
-            val command = "bash -c 'echo \"${escapedBase64}\" | base64 -d > /tmp/vnc_setup.sh'\n"
-            session.write(command)
+            // Write script using a more reliable method - use printf to avoid shell expansion issues
+            // Write base64 in chunks if needed to avoid command line length limits
+            val chunkSize = 1000
+            session.write("bash -c 'rm -f /tmp/vnc_setup.sh.b64'\n")
+            delay(200)
+            
+            // Write base64 in chunks
+            for (i in base64Script.indices step chunkSize) {
+                val chunk = base64Script.substring(i, minOf(i + chunkSize, base64Script.length))
+                val escapedChunk = chunk.replace("'", "'\"'\"'").replace("\\", "\\\\").replace("\"", "\\\"")
+                session.write("bash -c 'printf \"%s\" \"${escapedChunk}\" >> /tmp/vnc_setup.sh.b64'\n")
+                delay(100)
+            }
+            
+            // Decode the base64 file
+            session.write("bash -c 'base64 -d /tmp/vnc_setup.sh.b64 > /tmp/vnc_setup.sh && rm -f /tmp/vnc_setup.sh.b64'\n")
             delay(500)
-            // Verify the script was written correctly
-            session.write("bash -c 'if [ -f /tmp/vnc_setup.sh ] && [ -s /tmp/vnc_setup.sh ]; then echo SCRIPT_WRITTEN_OK; else echo SCRIPT_WRITE_FAILED; fi'\n")
+            
+            // Verify the script was written correctly and check syntax
+            session.write("bash -c 'if [ -f /tmp/vnc_setup.sh ] && [ -s /tmp/vnc_setup.sh ]; then bash -n /tmp/vnc_setup.sh 2>&1 && echo SCRIPT_SYNTAX_OK || echo SCRIPT_SYNTAX_ERROR; else echo SCRIPT_WRITE_FAILED; fi'\n")
             delay(300)
             session.write("bash -c 'chmod +x /tmp/vnc_setup.sh'\n")
             delay(200)
@@ -1431,7 +1503,9 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             mkdir -p ~/.config/openbox
             mkdir -p ~/.config/tint2
             mkdir -p ~/.config/aterm-touch
+            mkdir -p ~/.config/dunst
             mkdir -p ~/.local/share/applications
+            mkdir -p ~/.local/bin
             
             # Create mobile-optimized Openbox configuration
             cat > ~/.config/openbox/rc.xml << 'OPENBOX_EOF'
@@ -1733,20 +1807,46 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             fi
             
             # Start compositor for smooth animations (Ubuntu Touch style)
+            # This provides transparency, shadows, and smooth animations
             if command -v picom >/dev/null 2>&1; then
-                picom --backend glx --vsync --animations --animation-window-mass 0.5 --animation-stiffness 200 --animation-dampening 25 --shadow --shadow-radius 12 --shadow-opacity 0.3 &
+                # Kill any existing picom instances
+                pkill picom 2>/dev/null || true
+                sleep 0.2
+                # Start picom with Ubuntu Touch style settings
+                picom --backend glx --vsync --animations --animation-window-mass 0.5 --animation-stiffness 200 --animation-dampening 25 --shadow --shadow-radius 12 --shadow-opacity 0.3 --detect-rounded-corners --detect-client-opacity &
                 PICOM_PID=${'$'}!
+                sleep 0.2
+                echo "Picom compositor started (PID: ${'$'}PICOM_PID)"
             elif command -v compton >/dev/null 2>&1; then
-                compton --backend glx --vsync opengl-swc --shadow --shadow-radius 12 &
+                pkill compton 2>/dev/null || true
+                sleep 0.2
+                compton --backend glx --vsync opengl-swc --shadow --shadow-radius 12 --detect-rounded-corners &
                 PICOM_PID=${'$'}!
+                sleep 0.2
+                echo "Compton compositor started (PID: ${'$'}PICOM_PID)"
+            else
+                echo "Warning: No compositor found (picom/compton). Desktop will work but without transparency/animations."
             fi
             
-            # Start panel (Ubuntu Touch style)
-            tint2 &
-            TINT2_PID=${'$'}!
+            # Start panel (Ubuntu Touch style) - must start before window manager
+            if command -v tint2 >/dev/null 2>&1; then
+                # Kill any existing tint2 instances
+                pkill tint2 2>/dev/null || true
+                sleep 0.2
+                # Start tint2 panel
+                tint2 -c ~/.config/tint2/tint2rc &
+                TINT2_PID=${'$'}!
+                sleep 0.3
+                echo "Tint2 panel started (PID: ${'$'}TINT2_PID)"
+            else
+                echo "Warning: tint2 not found, panel will not start"
+                echo "Install tint2 to get the Ubuntu Touch style panel"
+            fi
             
-            # Start gesture support
-            ~/.config/aterm-touch/gestures.sh &
+            # Start gesture support (if available)
+            if [ -f ~/.config/aterm-touch/gestures.sh ] && [ -x ~/.config/aterm-touch/gestures.sh ]; then
+                ~/.config/aterm-touch/gestures.sh &
+            fi
             
             # Set wallpaper (Ubuntu Touch style gradient or image)
             if command -v feh >/dev/null 2>&1; then
@@ -1764,12 +1864,39 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             fi
             
             # Wait a moment for everything to start
-            sleep 0.5
+            sleep 1
             
-            # Start window manager
-            exec openbox-session
+            # Ensure we're in the right directory
+            cd ~
             
-            # Cleanup on exit
+            # Start window manager - use exec to replace shell process
+            # This is the last command and will keep the session alive
+            if command -v openbox >/dev/null 2>&1; then
+                # Start Openbox - this will block and keep the session alive
+                # The panel, compositor, etc. are already running in the background
+                if command -v openbox-session >/dev/null 2>&1; then
+                    # openbox-session handles autostart properly
+                    exec openbox-session
+                else
+                    # Fallback: start openbox directly
+                    exec openbox
+                fi
+            else
+                # Fallback to basic window manager
+                echo "Warning: Openbox not found, using fallback window manager"
+                if command -v twm >/dev/null 2>&1; then
+                    exec twm
+                else
+                    echo "Error: No window manager found!"
+                    # Keep a terminal open so user can see the error
+                    if command -v xterm >/dev/null 2>&1; then
+                        xterm -e "echo 'Desktop environment failed to start. Please install openbox.'; sleep 10"
+                    fi
+                    exit 1
+                fi
+            fi
+            
+            # Cleanup on exit (this won't run if exec succeeds, but good to have)
             kill ${'$'}PICOM_PID ${'$'}TINT2_PID ${'$'}DUNST_PID 2>/dev/null || true
             XINIT_EOF
             chmod +x ~/.xinitrc
@@ -2001,7 +2128,36 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             SELENIUM_DESKTOP_EOF
             
             echo "✓ Configuration complete"
+            
+            # Verify configuration files were created
             echo ""
+            echo "Verifying installation..."
+            if [ -f ~/.xinitrc ] && [ -x ~/.xinitrc ]; then
+                echo "✓ .xinitrc created and executable"
+            else
+                echo "✗ .xinitrc missing or not executable"
+            fi
+            if [ -f ~/.config/openbox/rc.xml ]; then
+                echo "✓ Openbox configuration created"
+            else
+                echo "✗ Openbox configuration missing"
+            fi
+            if [ -f ~/.config/tint2/tint2rc ]; then
+                echo "✓ Tint2 panel configuration created"
+            else
+                echo "✗ Tint2 panel configuration missing"
+            fi
+            if command -v openbox >/dev/null 2>&1; then
+                echo "✓ Openbox window manager installed"
+            else
+                echo "✗ Openbox window manager not found"
+            fi
+            if command -v tint2 >/dev/null 2>&1; then
+                echo "✓ Tint2 panel installed"
+            else
+                echo "✗ Tint2 panel not found"
+            fi
+            
             echo ""
             echo "=========================================="
             echo "  Installation Complete!"
@@ -2011,6 +2167,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo ""
             echo "To start the desktop environment, run:"
             echo "  startx"
+            echo ""
+            echo "Or use the 'Start Desktop' button in the OS tab."
             echo ""
             echo "Installed Browsers:"
             echo "  • Chromium (with ChromeDriver)"
