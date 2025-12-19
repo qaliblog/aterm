@@ -326,8 +326,7 @@ fun VNCViewer(
                     }
                 }
                 
-                // Load noVNC HTML page - using iframe to load noVNC from CDN
-                // This is simpler and more reliable than implementing VNC protocol from scratch
+                // Use noVNC library from CDN - proper VNC implementation
                 val htmlContent = """
                     <!DOCTYPE html>
                     <html>
@@ -335,6 +334,9 @@ fun VNCViewer(
                         <meta charset="UTF-8">
                         <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
                         <title>aTerm Touch VNC</title>
+                        <!-- noVNC library from CDN -->
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.css">
+                        <script src="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.min.js"></script>
                         <style>
                             * {
                                 margin: 0;
@@ -346,7 +348,7 @@ fun VNCViewer(
                                 padding: 0;
                                 overflow: hidden;
                                 background: #1A1A1A;
-                                font-family: sans-serif;
+                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                             }
                             #noVNC_container {
                                 width: 100%;
@@ -363,21 +365,35 @@ fun VNCViewer(
                                 text-align: center;
                                 flex-shrink: 0;
                                 border-bottom: 1px solid #3D3D3D;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                gap: 8px;
                             }
-                            #vnc_frame {
+                            .status-indicator {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 50%;
+                                background: #FFA500;
+                                animation: pulse 2s infinite;
+                            }
+                            .status-indicator.connected {
+                                background: #00AA00;
+                                animation: none;
+                            }
+                            .status-indicator.error {
+                                background: #CC0000;
+                                animation: none;
+                            }
+                            @keyframes pulse {
+                                0%, 100% { opacity: 1; }
+                                50% { opacity: 0.5; }
+                            }
+                            #noVNC_screen {
                                 flex: 1;
                                 width: 100%;
-                                border: none;
                                 background: #1A1A1A;
-                            }
-                            .status-connected {
-                                background: #00AA00 !important;
-                            }
-                            .status-connecting {
-                                background: #FFA500 !important;
-                            }
-                            .status-error {
-                                background: #CC0000 !important;
+                                position: relative;
                             }
                             .fallback {
                                 display: flex;
@@ -393,247 +409,106 @@ fun VNCViewer(
                     </head>
                     <body>
                         <div id="noVNC_container">
-                            <div id="noVNC_status_bar">Connecting to VNC server...</div>
-                            <div id="vnc_content" style="flex: 1; position: relative;">
-                                <iframe id="vnc_frame" style="display: none;"></iframe>
-                                <div id="fallback" class="fallback">
-                                    <p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Server Information</p>
-                                    <p style="margin-bottom: 8px;">Server: localhost:5901</p>
-                                    <p style="margin-bottom: 8px;">Password: aterm</p>
-                                    <p style="margin-bottom: 8px; color: #FFA500;">WebSocket Proxy: localhost:6080</p>
-                                    <p id="connection_status" style="color: #888; font-size: 11px;">Connecting to VNC server...</p>
-                                    <p style="color: #666; font-size: 10px; margin-top: 10px;">If websockify is not running, the WebView cannot connect.<br/>Use a VNC viewer app to connect directly to localhost:5901</p>
-                                </div>
+                            <div id="noVNC_status_bar">
+                                <span class="status-indicator" id="status_indicator"></span>
+                                <span id="status_text">Connecting to VNC server...</span>
                             </div>
+                            <div id="noVNC_screen"></div>
                         </div>
                         <script>
                             (function() {
                                 const statusBar = document.getElementById('noVNC_status_bar');
-                                const vncFrame = document.getElementById('vnc_frame');
-                                const fallback = document.getElementById('fallback');
+                                const statusText = document.getElementById('status_text');
+                                const statusIndicator = document.getElementById('status_indicator');
+                                const screen = document.getElementById('noVNC_screen');
                                 
-                                // Try to use noVNC via CDN
-                                function loadNoVNC() {
-                                    statusBar.textContent = 'Loading VNC client...';
-                                    statusBar.className = 'status-connecting';
-                                    
-                                    // Create a simple VNC client using canvas and WebSocket
-                                    // Since websockify handles the VNC protocol, we just need to connect
-                                    const canvas = document.createElement('canvas');
-                                    canvas.id = 'vnc_canvas';
-                                    canvas.style.width = '100%';
-                                    canvas.style.height = '100%';
-                                    canvas.style.display = 'block';
-                                    
-                                    const ctx = canvas.getContext('2d');
-                                    fallback.style.display = 'none';
-                                    vncFrame.style.display = 'none';
-                                    
-                                    const container = document.getElementById('vnc_content');
-                                    container.appendChild(canvas);
-                                    
-                                    // Set canvas size
-                                    function resizeCanvas() {
-                                        const rect = container.getBoundingClientRect();
-                                        canvas.width = rect.width;
-                                        canvas.height = rect.height;
-                                    }
-                                    resizeCanvas();
-                                    window.addEventListener('resize', resizeCanvas);
-                                    
-                                    let ws = null;
-                                    let connected = false;
-                                    let vncWidth = 0, vncHeight = 0;
-                                    let imageBuffer = null;
-                                    
-                                    function connectVNC() {
-                                        statusBar.textContent = 'Connecting to VNC server...';
-                                        statusBar.className = 'status-connecting';
+                                let rfb = null;
+                                
+                                function connectVNC() {
+                                    try {
+                                        statusText.textContent = 'Connecting to VNC server...';
+                                        statusIndicator.className = 'status-indicator';
                                         
-                                        // Update fallback status
-                                        const statusEl = document.getElementById('connection_status');
-                                        if (statusEl) {
-                                            statusEl.textContent = 'Attempting to connect via websockify (port 6080)...';
-                                        }
+                                        // Use noVNC library to connect via websockify
+                                        const wsUrl = 'ws://127.0.0.1:6080/websockify';
                                         
-                                        try {
-                                            // Connect via websockify
-                                            // Try both localhost and 127.0.0.1 for compatibility
-                                            const wsUrl = 'ws://127.0.0.1:6080/websockify';
-                                            ws = new WebSocket(wsUrl);
-                                            ws.binaryType = 'arraybuffer';
-                                            
-                                            let handshakeDone = false;
-                                            
-                                            ws.onopen = function() {
-                                                statusBar.textContent = 'Connected, authenticating...';
-                                                if (statusEl) statusEl.textContent = 'WebSocket connected, authenticating...';
-                                            };
-                                            
-                                            ws.onmessage = function(event) {
-                                                if (!handshakeDone) {
-                                                    // VNC handshake - websockify handles this, but we need to handle ServerInit
-                                                    const data = new Uint8Array(event.data);
-                                                    if (data.length >= 24 && data[0] === 0) {
-                                                        // ServerInit
-                                                        vncWidth = (data[4] << 8) | data[5];
-                                                        vncHeight = (data[6] << 8) | data[7];
-                                                        handshakeDone = true;
-                                                        connected = true;
-                                                        
-                                                        resizeCanvas();
-                                                        statusBar.textContent = 'Connected (' + vncWidth + 'x' + vncHeight + ')';
-                                                        statusBar.className = 'status-connected';
-                                                        
-                                                        // Request framebuffer update
-                                                        requestUpdate();
-                                                    }
-                                                } else {
-                                                    // Handle framebuffer updates
-                                                    handleUpdate(event.data);
-                                                }
-                                            };
-                                            
-                                            ws.onerror = function() {
-                                                statusBar.textContent = 'Connection error. websockify may not be running on port 6080';
-                                                statusBar.className = 'status-error';
-                                                if (statusEl) {
-                                                    statusEl.textContent = 'WebSocket connection failed. websockify may not be running.';
-                                                    statusEl.style.color = '#FF6B6B';
-                                                }
-                                                // Show fallback message
-                                                fallback.style.display = 'flex';
-                                            };
-                                            
-                                            ws.onclose = function(event) {
-                                                connected = false;
-                                                handshakeDone = false;
-                                                statusBar.textContent = 'Disconnected';
-                                                statusBar.className = '';
-                                                if (statusEl) {
-                                                    statusEl.textContent = 'WebSocket closed. Code: ' + event.code;
-                                                    statusEl.style.color = '#FF6B6B';
-                                                }
-                                                
-                                                // Only try reconnect if it was a normal close (not an error)
-                                                if (event.code !== 1006) {
-                                                    setTimeout(connectVNC, 3000);
-                                                } else {
-                                                    // Connection refused or websockify not running
-                                                    fallback.style.display = 'flex';
-                                                    if (statusEl) {
-                                                        statusEl.textContent = 'websockify is not running on port 6080. Please start it manually or use a VNC viewer app.';
-                                                        statusEl.style.color = '#FFA500';
-                                                    }
-                                                }
-                                            };
-                                            
-                                        } catch(e) {
-                                            statusBar.textContent = 'Error: ' + e.message;
-                                            statusBar.className = 'status-error';
-                                        }
-                                    }
-                                    
-                                    function requestUpdate() {
-                                        if (ws && ws.readyState === WebSocket.OPEN && connected) {
-                                            const msg = new ArrayBuffer(10);
-                                            const view = new DataView(msg);
-                                            view.setUint8(0, 3); // FramebufferUpdateRequest
-                                            view.setUint8(1, 0); // incremental
-                                            view.setUint16(2, 0, false); // x
-                                            view.setUint16(4, 0, false); // y
-                                            view.setUint16(6, vncWidth, false);
-                                            view.setUint16(8, vncHeight, false);
-                                            ws.send(msg);
-                                        }
-                                    }
-                                    
-                                    function handleUpdate(data) {
-                                        if (!(data instanceof ArrayBuffer)) return;
+                                        // Create RFB connection using noVNC library
+                                        rfb = new RFB(screen, wsUrl, {
+                                            credentials: {
+                                                password: 'aterm'
+                                            },
+                                            scaleViewport: true,
+                                            resizeSession: true,
+                                            dragViewport: false,
+                                            focusOnClick: true,
+                                            clipViewport: false
+                                        });
                                         
-                                        const view = new DataView(data);
-                                        const msgType = view.getUint8(0);
+                                        // Handle connection events
+                                        rfb.addEventListener('connect', function() {
+                                            statusText.textContent = 'Connected to VNC server';
+                                            statusIndicator.className = 'status-indicator connected';
+                                        });
                                         
-                                        if (msgType === 0) { // FramebufferUpdate
-                                            const numRects = view.getUint16(2, false);
-                                            let offset = 4;
-                                            
-                                            for (let i = 0; i < numRects; i++) {
-                                                const x = view.getUint16(offset, false);
-                                                const y = view.getUint16(offset + 2, false);
-                                                const w = view.getUint16(offset + 4, false);
-                                                const h = view.getUint16(offset + 6, false);
-                                                const encoding = view.getInt32(offset + 8, false);
-                                                offset += 12;
-                                                
-                                                if (encoding === 0) { // Raw
-                                                    const imageData = ctx.createImageData(w, h);
-                                                    const pixels = new Uint8Array(data, offset, w * h * 3);
-                                                    
-                                                    for (let j = 0; j < w * h; j++) {
-                                                        imageData.data[j * 4] = pixels[j * 3];
-                                                        imageData.data[j * 4 + 1] = pixels[j * 3 + 1];
-                                                        imageData.data[j * 4 + 2] = pixels[j * 3 + 2];
-                                                        imageData.data[j * 4 + 3] = 255;
-                                                    }
-                                                    
-                                                    ctx.putImageData(imageData, x, y);
-                                                    offset += w * h * 3;
-                                                }
+                                        rfb.addEventListener('disconnect', function(e) {
+                                            if (e.detail.clean) {
+                                                statusText.textContent = 'Disconnected from VNC server';
+                                            } else {
+                                                statusText.textContent = 'Connection lost. Reconnecting...';
+                                                statusIndicator.className = 'status-indicator';
+                                                // Try to reconnect after a delay
+                                                setTimeout(connectVNC, 3000);
                                             }
-                                            
-                                            // Request next update
-                                            setTimeout(requestUpdate, 33);
-                                        }
-                                    }
-                                    
-                                    // Input handling
-                                    canvas.addEventListener('mousedown', sendPointer);
-                                    canvas.addEventListener('mouseup', sendPointer);
-                                    canvas.addEventListener('mousemove', sendPointer);
-                                    canvas.addEventListener('touchstart', sendTouch);
-                                    canvas.addEventListener('touchend', sendTouch);
-                                    canvas.addEventListener('touchmove', sendTouch);
-                                    
-                                    function sendPointer(e) {
-                                        if (!ws || !connected) return;
-                                        const rect = canvas.getBoundingClientRect();
-                                        const x = Math.floor((e.clientX - rect.left) * (vncWidth / rect.width));
-                                        const y = Math.floor((e.clientY - rect.top) * (vncHeight / rect.height));
-                                        const btn = e.buttons || (e.type === 'mousedown' ? 1 : 0);
+                                            statusIndicator.className = 'status-indicator error';
+                                        });
                                         
-                                        const msg = new ArrayBuffer(6);
-                                        const view = new DataView(msg);
-                                        view.setUint8(0, 5);
-                                        view.setUint8(1, btn);
-                                        view.setUint16(2, Math.max(0, Math.min(x, vncWidth - 1)), false);
-                                        view.setUint16(4, Math.max(0, Math.min(y, vncHeight - 1)), false);
-                                        ws.send(msg);
-                                    }
-                                    
-                                    function sendTouch(e) {
-                                        e.preventDefault();
-                                        if (!ws || !connected || e.touches.length === 0) return;
-                                        const touch = e.touches[0] || e.changedTouches[0];
-                                        const rect = canvas.getBoundingClientRect();
-                                        const x = Math.floor((touch.clientX - rect.left) * (vncWidth / rect.width));
-                                        const y = Math.floor((touch.clientY - rect.top) * (vncHeight / rect.height));
-                                        const btn = e.type === 'touchstart' || e.type === 'touchmove' ? 1 : 0;
+                                        rfb.addEventListener('credentialsrequired', function() {
+                                            statusText.textContent = 'Authentication required...';
+                                            // Password is already set in credentials
+                                        });
                                         
-                                        const msg = new ArrayBuffer(6);
-                                        const view = new DataView(msg);
-                                        view.setUint8(0, 5);
-                                        view.setUint8(1, btn);
-                                        view.setUint16(2, Math.max(0, Math.min(x, vncWidth - 1)), false);
-                                        view.setUint16(4, Math.max(0, Math.min(y, vncHeight - 1)), false);
-                                        ws.send(msg);
+                                        rfb.addEventListener('securityfailure', function(e) {
+                                            statusText.textContent = 'Authentication failed. Check password.';
+                                            statusIndicator.className = 'status-indicator error';
+                                        });
+                                        
+                                        // Handle resize
+                                        rfb.addEventListener('resize', function(e) {
+                                            statusText.textContent = 'Connected (' + e.detail.width + 'x' + e.detail.height + ')';
+                                        });
+                                        
+                                    } catch(e) {
+                                        statusText.textContent = 'Error: ' + e.message;
+                                        statusIndicator.className = 'status-indicator error';
+                                        console.error('VNC connection error:', e);
+                                        
+                                        // Show fallback message
+                                        screen.innerHTML = '<div class="fallback"><p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Server Information</p><p style="margin-bottom: 8px;">Server: localhost:5901</p><p style="margin-bottom: 8px;">Password: aterm</p><p style="margin-bottom: 8px; color: #FFA500;">WebSocket Proxy: localhost:6080</p><p style="color: #888; font-size: 11px;">If websockify is not running, the VNC viewer cannot connect.<br/>Please start websockify or use a VNC viewer app to connect directly to localhost:5901</p></div>';
                                     }
-                                    
-                                    connectVNC();
                                 }
                                 
-                                // Start loading
-                                loadNoVNC();
+                                // Start connection when page loads
+                                if (typeof RFB !== 'undefined') {
+                                    connectVNC();
+                                } else {
+                                    statusText.textContent = 'Loading VNC library...';
+                                    // Wait for library to load
+                                    setTimeout(function() {
+                                        if (typeof RFB !== 'undefined') {
+                                            connectVNC();
+                                        } else {
+                                            statusText.textContent = 'Failed to load VNC library';
+                                            statusIndicator.className = 'status-indicator error';
+                                        }
+                                    }, 1000);
+                                }
+                                
+                                // Handle window resize
+                                window.addEventListener('resize', function() {
+                                    if (rfb) {
+                                        rfb.sendResize(screen.offsetWidth, screen.offsetHeight);
+                                    }
+                                });
                             })();
                         </script>
                     </body>
@@ -1340,23 +1215,46 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "✓ X server installed"
             echo ""
             
-            echo "[3/8] Installing window manager and compositor..."
-            if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} openbox obconf compton || true
+            echo "[3/8] Installing Ubuntu desktop environment..."
+            if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                # Install GNOME Shell (Ubuntu's desktop environment)
+                ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal gnome-control-center || true
+                # Install Unity components (Ubuntu's classic desktop)
+                ${'$'}{INSTALL_CMD} unity-session unity-tweak-tool || true
+                # Install GTK and Ubuntu themes
+                ${'$'}{INSTALL_CMD} gtk2-engines-pixbuf gtk2-engines-murrine adwaita-icon-theme || true
+                # Install Yaru theme (Ubuntu's default theme)
+                ${'$'}{INSTALL_CMD} yaru-theme-gtk yaru-theme-icon yaru-theme-sound || true
+                # Install compositor for effects
+                ${'$'}{INSTALL_CMD} mutter || true
+            elif [ "${'$'}{DISTRO_TYPE}" = "rhel" ]; then
+                ${'$'}{INSTALL_CMD} gnome-session gnome-shell gnome-terminal || true
+                ${'$'}{INSTALL_CMD} adwaita-icon-theme || true
+            elif [ "${'$'}{DISTRO_TYPE}" = "arch" ]; then
+                ${'$'}{INSTALL_CMD} gnome gnome-terminal || true
+                ${'$'}{INSTALL_CMD} adwaita-icon-theme || true
+            elif [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
+                # Alpine doesn't have full GNOME, use lightweight alternative
+                ${'$'}{INSTALL_CMD} xfce4 xfce4-terminal || true
             else
+                # Fallback to lightweight window manager
                 ${'$'}{INSTALL_CMD} openbox obconf || true
-                ${'$'}{INSTALL_CMD} picom || ${'$'}{INSTALL_CMD} compton || true
             fi
-            echo "✓ Window manager installed"
+            echo "✓ Desktop environment installed"
             echo ""
             
-            echo "[4/8] Installing mobile-optimized panel and launcher..."
-            if [ "${'$'}{DISTRO_TYPE}" = "alpine" ]; then
-                ${'$'}{INSTALL_CMD} tint2 lxpanel || true
+            echo "[4/8] Installing Ubuntu indicators and system components..."
+            if [ "${'$'}{DISTRO_TYPE}" = "debian" ]; then
+                # Install Unity/Ubuntu indicators and applets
+                ${'$'}{INSTALL_CMD} indicator-applet indicator-application indicator-session indicator-power || true
+                # Install GNOME extensions for mobile-friendly UI
+                ${'$'}{INSTALL_CMD} gnome-shell-extensions gnome-tweaks || true
+                # Install notification daemon
+                ${'$'}{INSTALL_CMD} notify-osd || ${'$'}{INSTALL_CMD} dunst || true
             else
-                ${'$'}{INSTALL_CMD} tint2 lxpanel lxmenu-data || true
+                ${'$'}{INSTALL_CMD} dunst || true
             fi
-            echo "✓ Panel installed"
+            echo "✓ System components installed"
             echo ""
             
             echo "[5/8] Installing web browsers..."
@@ -1784,120 +1682,81 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             LAUNCHER_EOF
             chmod +x ~/.local/bin/aterm-launcher
             
-            # Create startup script (Premium Ubuntu Touch experience)
+            # Create startup script (Ubuntu Desktop - Mobile Optimized)
             cat > ~/.xinitrc << 'XINIT_EOF'
             #!/bin/sh
             # aTerm Touch Desktop Startup Script
-            # Premium Ubuntu Touch Experience
+            # Ubuntu Desktop Environment - Mobile Optimized
             
-            # Set DPI for mobile screens (Ubuntu Touch optimized)
+            # Set DPI and scaling for mobile screens (Ubuntu optimized)
             export QT_AUTO_SCREEN_SCALE_FACTOR=1.5
+            export QT_SCALE_FACTOR=1.5
             export GDK_SCALE=1.5
             export GDK_DPI_SCALE=0.75
             export XCURSOR_SIZE=32
+            export XCURSOR_THEME=Yaru
+            
+            # Enable touch-friendly settings
+            export GTK_TOUCH_MODE=1
+            export GNOME_SHELL_SESSION_MODE=ubuntu
             
             # Enable hardware acceleration if available
             export LIBGL_ALWAYS_SOFTWARE=0
             export __GLX_VENDOR_LIBRARY_NAME=nvidia 2>/dev/null || true
             
-            # Start notification daemon (Ubuntu Touch style)
-            if command -v dunst >/dev/null 2>&1; then
+            # Start notification daemon (Ubuntu style)
+            if command -v notify-osd >/dev/null 2>&1; then
+                notify-osd &
+            elif command -v dunst >/dev/null 2>&1; then
                 dunst -config ~/.config/dunst/dunstrc &
                 DUNST_PID=${'$'}!
             fi
             
-            # Start compositor for smooth animations (Ubuntu Touch style)
-            # This provides transparency, shadows, and smooth animations
-            if command -v picom >/dev/null 2>&1; then
-                # Kill any existing picom instances
-                pkill picom 2>/dev/null || true
-                sleep 0.2
-                # Start picom with Ubuntu Touch style settings
-                picom --backend glx --vsync --animations --animation-window-mass 0.5 --animation-stiffness 200 --animation-dampening 25 --shadow --shadow-radius 12 --shadow-opacity 0.3 --detect-rounded-corners --detect-client-opacity &
-                PICOM_PID=${'$'}!
-                sleep 0.2
-                echo "Picom compositor started (PID: ${'$'}PICOM_PID)"
-            elif command -v compton >/dev/null 2>&1; then
-                pkill compton 2>/dev/null || true
-                sleep 0.2
-                compton --backend glx --vsync opengl-swc --shadow --shadow-radius 12 --detect-rounded-corners &
-                PICOM_PID=${'$'}!
-                sleep 0.2
-                echo "Compton compositor started (PID: ${'$'}PICOM_PID)"
-            else
-                echo "Warning: No compositor found (picom/compton). Desktop will work but without transparency/animations."
+            # Start GNOME/Unity session if available (Ubuntu's main desktop)
+            if command -v gnome-session >/dev/null 2>&1; then
+                echo "Starting GNOME session (Ubuntu desktop)..."
+                # Set GNOME to mobile-friendly mode
+                export GNOME_SHELL_SESSION_MODE=ubuntu
+                export XDG_CURRENT_DESKTOP=ubuntu:GNOME
+                # Start GNOME session (this will handle everything)
+                exec gnome-session --session=ubuntu
+            elif command -v unity-session >/dev/null 2>&1; then
+                echo "Starting Unity session (Ubuntu classic desktop)..."
+                export XDG_CURRENT_DESKTOP=Unity
+                exec unity-session
+            elif command -v startxfce4 >/dev/null 2>&1; then
+                echo "Starting XFCE session (lightweight Ubuntu-like)..."
+                exec startxfce4
             fi
             
-            # Start panel (Ubuntu Touch style) - must start before window manager
-            if command -v tint2 >/dev/null 2>&1; then
-                # Kill any existing tint2 instances
-                pkill tint2 2>/dev/null || true
-                sleep 0.2
-                # Start tint2 panel
-                tint2 -c ~/.config/tint2/tint2rc &
-                TINT2_PID=${'$'}!
-                sleep 0.3
-                echo "Tint2 panel started (PID: ${'$'}TINT2_PID)"
-            else
-                echo "Warning: tint2 not found, panel will not start"
-                echo "Install tint2 to get the Ubuntu Touch style panel"
-            fi
-            
-            # Start gesture support (if available)
-            if [ -f ~/.config/aterm-touch/gestures.sh ] && [ -x ~/.config/aterm-touch/gestures.sh ]; then
-                ~/.config/aterm-touch/gestures.sh &
-            fi
-            
-            # Set wallpaper (Ubuntu Touch style gradient or image)
-            if command -v feh >/dev/null 2>&1; then
-                # Try to find a nice wallpaper
-                if [ -f /usr/share/backgrounds/default.png ]; then
-                    feh --bg-scale /usr/share/backgrounds/default.png
-                elif [ -f /usr/share/pixmaps/backgrounds/default.png ]; then
-                    feh --bg-scale /usr/share/pixmaps/backgrounds/default.png
-                else
-                    # Create a simple gradient background
-                    if command -v convert >/dev/null 2>&1; then
-                        convert -size 1920x1080 gradient:#1A1A1A-#2D2D2D /tmp/aterm-bg.png 2>/dev/null && feh --bg-scale /tmp/aterm-bg.png || true
-                    fi
-                fi
-            fi
-            
-            # Wait a moment for everything to start
-            sleep 1
-            
-            # Ensure we're in the right directory
-            cd ~
-            
-            # Start window manager - use exec to replace shell process
-            # This is the last command and will keep the session alive
+            # Fallback to lightweight window manager if GNOME/Unity not available
             if command -v openbox >/dev/null 2>&1; then
-                # Start Openbox - this will block and keep the session alive
-                # The panel, compositor, etc. are already running in the background
-                if command -v openbox-session >/dev/null 2>&1; then
-                    # openbox-session handles autostart properly
-                    exec openbox-session
-                else
-                    # Fallback: start openbox directly
-                    exec openbox
+                echo "Starting Openbox (fallback window manager)..."
+                # Start compositor for effects
+                if command -v picom >/dev/null 2>&1; then
+                    pkill picom 2>/dev/null || true
+                    sleep 0.2
+                    picom --backend glx --vsync --animations --shadow --shadow-radius 12 --shadow-opacity 0.3 &
                 fi
+                # Start panel
+                if command -v tint2 >/dev/null 2>&1; then
+                    pkill tint2 2>/dev/null || true
+                    sleep 0.2
+                    tint2 -c ~/.config/tint2/tint2rc 2>/dev/null &
+                fi
+                sleep 1
+                exec openbox-session || exec openbox
             else
-                # Fallback to basic window manager
-                echo "Warning: Openbox not found, using fallback window manager"
-                if command -v twm >/dev/null 2>&1; then
-                    exec twm
-                else
-                    echo "Error: No window manager found!"
-                    # Keep a terminal open so user can see the error
-                    if command -v xterm >/dev/null 2>&1; then
-                        xterm -e "echo 'Desktop environment failed to start. Please install openbox.'; sleep 10"
-                    fi
-                    exit 1
+                echo "Error: No desktop environment found!"
+                echo "Please install GNOME, Unity, or at least Openbox."
+                if command -v xterm >/dev/null 2>&1; then
+                    xterm -hold -e "echo 'Desktop environment not installed. Please install from Settings.'"
                 fi
+                exit 1
             fi
             
             # Cleanup on exit (this won't run if exec succeeds, but good to have)
-            kill ${'$'}PICOM_PID ${'$'}TINT2_PID ${'$'}DUNST_PID 2>/dev/null || true
+            kill ${'$'}DUNST_PID 2>/dev/null || true
             XINIT_EOF
             chmod +x ~/.xinitrc
             
