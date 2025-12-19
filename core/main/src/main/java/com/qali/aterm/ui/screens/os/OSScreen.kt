@@ -1395,15 +1395,64 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             echo "✓ VNC server installed"
             echo ""
             
-            echo "[9/9] Configuring aTerm Touch desktop environment..."
+            echo "[9/9] Configuring Ubuntu desktop environment (mobile-optimized)..."
             
             # Create config directories
             mkdir -p ~/.config/openbox
             mkdir -p ~/.config/tint2
             mkdir -p ~/.config/aterm-touch
             mkdir -p ~/.config/dunst
+            mkdir -p ~/.config/gtk-3.0
+            mkdir -p ~/.config/gtk-4.0
             mkdir -p ~/.local/share/applications
             mkdir -p ~/.local/bin
+            mkdir -p ~/.local/share/themes
+            mkdir -p ~/.local/share/icons
+            
+            # Configure GTK for mobile-friendly Ubuntu experience
+            cat > ~/.config/gtk-3.0/settings.ini << 'GTK3_EOF'
+            [Settings]
+            gtk-theme-name=Yaru-dark
+            gtk-icon-theme-name=Yaru
+            gtk-cursor-theme-name=Yaru
+            gtk-cursor-theme-size=32
+            gtk-toolbar-style=GTK_TOOLBAR_BOTH
+            gtk-toolbar-icon-size=GTK_ICON_SIZE_LARGE_TOOLBAR
+            gtk-button-images=1
+            gtk-menu-images=1
+            gtk-enable-event-sounds=1
+            gtk-enable-input-feedback-sounds=1
+            gtk-xft-antialias=1
+            gtk-xft-hinting=1
+            gtk-xft-hintstyle=hintfull
+            gtk-xft-rgba=rgb
+            gtk-application-prefer-dark-theme=1
+            gtk-touchscreen-mode=1
+            GTK3_EOF
+            
+            cat > ~/.config/gtk-4.0/settings.ini << 'GTK4_EOF'
+            [Settings]
+            gtk-theme-name=Yaru-dark
+            gtk-icon-theme-name=Yaru
+            gtk-cursor-theme-name=Yaru
+            gtk-cursor-theme-size=32
+            gtk-application-prefer-dark-theme=1
+            gtk-touchscreen-mode=1
+            GTK4_EOF
+            
+            # Configure GNOME settings for mobile
+            if command -v gsettings >/dev/null 2>&1; then
+                # Set Yaru theme
+                gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true
+                gsettings set org.gnome.desktop.interface icon-theme 'Yaru' 2>/dev/null || true
+                gsettings set org.gnome.desktop.interface cursor-theme 'Yaru' 2>/dev/null || true
+                # Mobile-friendly settings
+                gsettings set org.gnome.desktop.interface cursor-size 32 2>/dev/null || true
+                gsettings set org.gnome.desktop.interface text-scaling-factor 1.5 2>/dev/null || true
+                gsettings set org.gnome.desktop.interface scaling-factor 2 2>/dev/null || true
+                # Touch-friendly
+                gsettings set org.gnome.desktop.peripherals.touchscreen orientation-lock true 2>/dev/null || true
+            fi
             
             # Create mobile-optimized Openbox configuration
             cat > ~/.config/openbox/rc.xml << 'OPENBOX_EOF'
