@@ -143,14 +143,16 @@ fun OSScreen(
                                         // Verify VNC is actually running
                                         val session = mainActivity.sessionBinder?.getSession(sessionId)
                                         if (session != null) {
-                                            withContext(Dispatchers.IO) {
-                                                delay(2000)
-                                                session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
-                                                delay(1500)
-                                                val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
-                                                val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
-                                                if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
-                                                    vncRunning = true
+                                            scope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    delay(2000)
+                                                    session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                                                    delay(1500)
+                                                    val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                                                    val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
+                                                    if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
+                                                        vncRunning = true
+                                                    }
                                                 }
                                             }
                                         }
@@ -218,14 +220,16 @@ fun OSScreen(
                                         // Verify VNC is actually running
                                         val session = mainActivity.sessionBinder?.getSession(sessionId)
                                         if (session != null) {
-                                            withContext(Dispatchers.IO) {
-                                                delay(2000)
-                                                session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
-                                                delay(1500)
-                                                val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
-                                                val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
-                                                if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
-                                                    vncRunning = true
+                                            scope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    delay(2000)
+                                                    session.write("bash -c 'ls ~/.vnc/*:1.pid 2>/dev/null | head -1 && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                                                    delay(1500)
+                                                    val vncCheckOutput = session.emulator?.screen?.getTranscriptText() ?: ""
+                                                    val vncCheckLines = vncCheckOutput.split("\n").takeLast(10).joinToString("\n")
+                                                    if ("VNC_RUNNING" in vncCheckLines || "New Xtigervnc server" in vncCheckLines) {
+                                                        vncRunning = true
+                                                    }
                                                 }
                                             }
                                         }
