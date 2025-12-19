@@ -1073,8 +1073,8 @@ fi
                 delay(100)
             }
             
-            // Decode the base64 file
-            session.write("bash -c 'base64 -d /tmp/vnc_setup.sh.b64 > /tmp/vnc_setup.sh 2>&1 && rm -f /tmp/vnc_setup.sh.b64'\n")
+            // Decode the base64 file and ensure it ends with newline
+            session.write("bash -c 'base64 -d /tmp/vnc_setup.sh.b64 > /tmp/vnc_setup.sh 2>&1 && echo >> /tmp/vnc_setup.sh && rm -f /tmp/vnc_setup.sh.b64'\n")
             delay(500)
             
             // Verify the script was written correctly - check it ends with 'fi' and newline
@@ -1906,11 +1906,9 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
                 echo "  ✓ Launcher script created"
             fi
             
-            # Create startup script (Ubuntu Desktop - Mobile Optimized) - check if exists
-            if [ -f ~/.xinitrc ] && [ -x ~/.xinitrc ]; then
-                echo "  ✓ .xinitrc already exists, skipping..."
-            else
-                cat > ~/.xinitrc << 'XINIT_EOF'
+            # Create startup script (Ubuntu Desktop - Mobile Optimized)
+            # Always recreate to ensure XFCE is prioritized
+            cat > ~/.xinitrc << 'XINIT_EOF'
             #!/bin/sh
             # aTerm Touch Desktop Startup Script
             # Ubuntu Desktop Environment - Mobile Optimized
@@ -2011,9 +2009,8 @@ fun generateInstallScript(desktopEnvironment: DesktopEnvironment): String {
             # Cleanup on exit (this won't run if exec succeeds, but good to have)
             kill ${'$'}DUNST_PID 2>/dev/null || true
             XINIT_EOF
-                chmod +x ~/.xinitrc
-                echo "  ✓ .xinitrc created and made executable"
-            fi
+            chmod +x ~/.xinitrc
+            echo "  ✓ .xinitrc created/updated and made executable"
             
             # Create notification daemon config (Ubuntu Touch style) - check if exists
             if [ -f ~/.config/dunst/dunstrc ]; then
