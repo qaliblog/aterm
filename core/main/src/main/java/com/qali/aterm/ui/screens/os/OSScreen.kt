@@ -156,8 +156,11 @@ fun OSScreen(
     // If VNC is running, show only the viewer
     if (vncRunning) {
         Box(modifier = Modifier.fillMaxSize()) {
-            VNCViewer(
-                modifier = Modifier.fillMaxSize()
+            // Use native VNC viewer instead of WebView (no CDN dependency)
+            NativeVNCViewer(
+                modifier = Modifier.fillMaxSize(),
+                sessionId = sessionId,
+                mainActivity = mainActivity
             )
             // Floating action button to start/restart VNC
             FloatingActionButton(
