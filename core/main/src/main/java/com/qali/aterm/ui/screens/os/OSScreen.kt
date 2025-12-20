@@ -948,7 +948,17 @@ if [ -f /tmp/vnc_start.log ]; then
 fi
 
 # Verify VNC started and check if desktop environment will start
-if [ -f ~/.vnc/localhost:1.pid ] || ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc.*:1" >/dev/null; then
+# Check multiple ways: PID file, process name, and port listening
+VNC_VERIFIED=0
+if [ -f ~/.vnc/localhost:1.pid ] || [ -f ~/.vnc/*:1.pid ] 2>/dev/null; then
+    VNC_VERIFIED=1
+elif ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc.*:1|[X]vnc" >/dev/null; then
+    VNC_VERIFIED=1
+elif netstat -ln 2>/dev/null | grep ":5901" >/dev/null || ss -ln 2>/dev/null | grep ":5901" >/dev/null; then
+    VNC_VERIFIED=1
+fi
+
+if [ ${'$'}VNC_VERIFIED -eq 1 ]; then
     echo "VNC server started successfully on display :1"
     # Check if .xinitrc exists (desktop environment should be installed)
     if [ -f ~/.xinitrc ] && [ -x ~/.xinitrc ]; then
@@ -959,6 +969,10 @@ if [ -f ~/.vnc/localhost:1.pid ] || ps aux 2>/dev/null | grep -v grep | grep -E 
     fi
 else
     echo "Warning: VNC server may not have started properly"
+    echo "Checking VNC status..."
+    echo "PID files: $(ls ~/.vnc/*:1.pid ~/.vnc/localhost:1.pid 2>/dev/null | head -1 || echo 'none')"
+    echo "Processes: $(ps aux 2>/dev/null | grep -v grep | grep -E '[X]tigervnc|[X]vnc' | head -1 || echo 'none')"
+    echo "Port 5901: $(netstat -ln 2>/dev/null | grep ':5901' || ss -ln 2>/dev/null | grep ':5901' || echo 'not listening')"
 fi
 
 # Install and start websockify for WebSocket VNC access
