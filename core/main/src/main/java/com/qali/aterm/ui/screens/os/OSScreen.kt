@@ -81,8 +81,8 @@ fun OSScreen(
                 try {
                     val session = mainActivity.sessionBinder?.getSession(sessionId)
                     if (session != null) {
-                        // Check if VNC is running
-                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || ls ~/.vnc/*:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
+                        // Check if VNC is running - include Xvnc process detection
+                        session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1|[X]vnc\" >/dev/null || ls ~/.vnc/*:1.pid ~/.vnc/localhost:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
                         delay(1500)
                         val vncOutput = session.emulator?.screen?.getTranscriptText() ?: ""
                         val vncLines = vncOutput.split("\n").takeLast(15).joinToString("\n")
@@ -423,10 +423,25 @@ fun VNCViewer(
                                 const screen = document.getElementById('noVNC_screen');
                                 
                                 let rfb = null;
+                                let reconnectAttempts = 0;
+                                const MAX_RECONNECT_ATTEMPTS = 50; // Keep retrying indefinitely (50 * 5s = ~4 minutes)
+                                let reconnectTimer = null;
                                 
                                 function connectVNC() {
                                     try {
-                                        statusText.textContent = 'Connecting to VNC server...';
+                                        // Clear any existing connection
+                                        if (rfb) {
+                                            try {
+                                                rfb.disconnect();
+                                            } catch(e) {
+                                                // Ignore disconnect errors
+                                            }
+                                            rfb = null;
+                                        }
+                                        
+                                        statusText.textContent = reconnectAttempts > 0 ? 
+                                            'Reconnecting to VNC server... (attempt ' + reconnectAttempts + ')' : 
+                                            'Connecting to VNC server...';
                                         statusIndicator.className = 'status-indicator';
                                         
                                         // Use noVNC library to connect via websockify
@@ -448,18 +463,23 @@ fun VNCViewer(
                                         rfb.addEventListener('connect', function() {
                                             statusText.textContent = 'Connected to VNC server';
                                             statusIndicator.className = 'status-indicator connected';
+                                            reconnectAttempts = 0; // Reset on successful connection
+                                            if (reconnectTimer) {
+                                                clearTimeout(reconnectTimer);
+                                                reconnectTimer = null;
+                                            }
                                         });
                                         
                                         rfb.addEventListener('disconnect', function(e) {
                                             if (e.detail.clean) {
                                                 statusText.textContent = 'Disconnected from VNC server';
+                                                statusIndicator.className = 'status-indicator';
                                             } else {
                                                 statusText.textContent = 'Connection lost. Reconnecting...';
                                                 statusIndicator.className = 'status-indicator';
                                                 // Try to reconnect after a delay
-                                                setTimeout(connectVNC, 3000);
+                                                scheduleReconnect();
                                             }
-                                            statusIndicator.className = 'status-indicator error';
                                         });
                                         
                                         rfb.addEventListener('credentialsrequired', function() {
@@ -468,8 +488,10 @@ fun VNCViewer(
                                         });
                                         
                                         rfb.addEventListener('securityfailure', function(e) {
-                                            statusText.textContent = 'Authentication failed. Check password.';
-                                            statusIndicator.className = 'status-indicator error';
+                                            statusText.textContent = 'Authentication failed. Retrying...';
+                                            statusIndicator.className = 'status-indicator';
+                                            // Retry on auth failure too
+                                            scheduleReconnect();
                                         });
                                         
                                         // Handle resize
@@ -478,12 +500,32 @@ fun VNCViewer(
                                         });
                                         
                                     } catch(e) {
-                                        statusText.textContent = 'Error: ' + e.message;
-                                        statusIndicator.className = 'status-indicator error';
+                                        statusText.textContent = 'Connection error: ' + e.message + '. Retrying...';
+                                        statusIndicator.className = 'status-indicator';
                                         console.error('VNC connection error:', e);
                                         
-                                        // Show fallback message
-                                        screen.innerHTML = '<div class="fallback"><p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Server Information</p><p style="margin-bottom: 8px;">Server: localhost:5901</p><p style="margin-bottom: 8px;">Password: aterm</p><p style="margin-bottom: 8px; color: #FFA500;">WebSocket Proxy: localhost:6080</p><p style="color: #888; font-size: 11px;">If websockify is not running, the VNC viewer cannot connect.<br/>Please start websockify or use a VNC viewer app to connect directly to localhost:5901</p></div>';
+                                        // Retry on any error
+                                        scheduleReconnect();
+                                    }
+                                }
+                                
+                                function scheduleReconnect() {
+                                    if (reconnectTimer) {
+                                        clearTimeout(reconnectTimer);
+                                    }
+                                    
+                                    reconnectAttempts++;
+                                    if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+                                        reconnectTimer = setTimeout(function() {
+                                            connectVNC();
+                                        }, 5000); // Retry every 5 seconds
+                                    } else {
+                                        // After many attempts, show fallback but keep trying
+                                        statusText.textContent = 'Unable to connect. Still retrying...';
+                                        reconnectTimer = setTimeout(function() {
+                                            reconnectAttempts = 0; // Reset counter and keep trying
+                                            connectVNC();
+                                        }, 10000); // Retry every 10 seconds after many failures
                                     }
                                 }
                                 
@@ -492,15 +534,28 @@ fun VNCViewer(
                                     connectVNC();
                                 } else {
                                     statusText.textContent = 'Loading VNC library...';
-                                    // Wait for library to load
-                                    setTimeout(function() {
+                                    // Wait for library to load with retries
+                                    let loadAttempts = 0;
+                                    const maxLoadAttempts = 10;
+                                    function tryLoadLibrary() {
                                         if (typeof RFB !== 'undefined') {
                                             connectVNC();
                                         } else {
-                                            statusText.textContent = 'Failed to load VNC library';
-                                            statusIndicator.className = 'status-indicator error';
+                                            loadAttempts++;
+                                            if (loadAttempts < maxLoadAttempts) {
+                                                setTimeout(tryLoadLibrary, 1000);
+                                            } else {
+                                                statusText.textContent = 'Failed to load VNC library. Retrying...';
+                                                statusIndicator.className = 'status-indicator';
+                                                // Keep trying to load
+                                                setTimeout(function() {
+                                                    loadAttempts = 0;
+                                                    tryLoadLibrary();
+                                                }, 5000);
+                                            }
                                         }
-                                    }, 1000);
+                                    }
+                                    setTimeout(tryLoadLibrary, 1000);
                                 }
                                 
                                 // Handle window resize
@@ -836,9 +891,20 @@ command -v vncserver >/dev/null 2>&1 || command -v Xtigervnc >/dev/null 2>&1 || 
 # Kill existing VNC server on display :1
 if command -v vncserver >/dev/null 2>&1; then
     vncserver -kill :1 2>/dev/null || true
-elif command -v Xtigervnc >/dev/null 2>&1; then
-    pkill -f "Xtigervnc.*:1" 2>/dev/null || true
 fi
+# Kill any Xvnc/Xtigervnc processes on display :1 (try all methods)
+pkill -f "Xtigervnc.*:1" 2>/dev/null || true
+pkill -f "Xvnc.*:1" 2>/dev/null || true
+# Also try killing by PID file if it exists
+if [ -f ~/.vnc/localhost:1.pid ] 2>/dev/null; then
+    kill $(cat ~/.vnc/localhost:1.pid) 2>/dev/null || true
+    rm -f ~/.vnc/localhost:1.pid 2>/dev/null || true
+fi
+if [ -f ~/.vnc/*:1.pid ] 2>/dev/null; then
+    kill $(cat ~/.vnc/*:1.pid) 2>/dev/null || true
+    rm -f ~/.vnc/*:1.pid 2>/dev/null || true
+fi
+sleep 1
 mkdir -p ~/.vnc
 echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
 # Create VNC config file for TigerVNC (if supported)
