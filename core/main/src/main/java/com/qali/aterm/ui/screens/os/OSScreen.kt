@@ -998,10 +998,11 @@ pkill -9 -f "python.*websockify" 2>/dev/null || true
 sleep 1
 
 # Find and kill all processes using port 6080 (with improved PID extraction)
+# Extract only the first sequence of digits (the actual PID)
 if command -v ss >/dev/null 2>&1; then
     ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
-        # Extract only numeric PID, remove any non-numeric characters
-        pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+        # Extract only the first sequence of digits (stop at first non-digit)
+        pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
         if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
             echo "Killing process ${'$'}pid using port 6080..."
             kill -9 "${'$'}pid" 2>/dev/null || true
@@ -1010,8 +1011,8 @@ if command -v ss >/dev/null 2>&1; then
 fi
 if command -v netstat >/dev/null 2>&1; then
     netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
-        # Extract only numeric PID
-        pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+        # Extract only the first sequence of digits
+        pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
         if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
             echo "Killing process ${'$'}pid using port 6080..."
             kill -9 "${'$'}pid" 2>/dev/null || true
@@ -1020,8 +1021,8 @@ if command -v netstat >/dev/null 2>&1; then
 fi
 if command -v lsof >/dev/null 2>&1; then
     lsof -ti:6080 2>/dev/null | while read raw_pid; do
-        # Extract only numeric PID
-        pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+        # Extract only the first sequence of digits (lsof should already give just numbers, but be safe)
+        pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
         if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
             echo "Killing process ${'$'}pid using port 6080..."
             kill -9 "${'$'}pid" 2>/dev/null || true
@@ -1144,7 +1145,8 @@ else
         # Find and kill all processes using port 6080 with improved PID extraction
         if command -v ss >/dev/null 2>&1; then
             ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
-                pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+                # Extract only the first sequence of digits
+                pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
                 if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
                     kill -9 "${'$'}pid" 2>/dev/null || true
                 fi
@@ -1152,7 +1154,8 @@ else
         fi
         if command -v netstat >/dev/null 2>&1; then
             netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
-                pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+                # Extract only the first sequence of digits
+                pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
                 if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
                     kill -9 "${'$'}pid" 2>/dev/null || true
                 fi
@@ -1160,7 +1163,8 @@ else
         fi
         if command -v lsof >/dev/null 2>&1; then
             lsof -ti:6080 2>/dev/null | while read raw_pid; do
-                pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+                # Extract only the first sequence of digits
+                pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
                 if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
                     kill -9 "${'$'}pid" 2>/dev/null || true
                 fi
