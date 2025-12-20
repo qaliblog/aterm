@@ -841,6 +841,12 @@ elif command -v Xtigervnc >/dev/null 2>&1; then
 fi
 mkdir -p ~/.vnc
 echo 'aterm' | vncpasswd -f > ~/.vnc/passwd 2>/dev/null && chmod 600 ~/.vnc/passwd || true
+# Create VNC config file for TigerVNC (if supported)
+cat > ~/.vnc/config << 'VNC_CONFIG_EOF'
+geometry=1920x1080
+depth=24
+localhost=no
+VNC_CONFIG_EOF
 cat > ~/.vnc/xstartup << 'VNC_EOF'
 #!/bin/sh
 # VNC Startup Script for aTerm Touch Desktop Environment
@@ -899,17 +905,43 @@ VNC_EOF
 chmod +x ~/.vnc/xstartup
 export DISPLAY=:1
 export HOSTNAME=localhost
-# Start VNC server - redirect stderr to filter hostname warnings, but allow it to continue
+# Start VNC server - use proper syntax and error handling
 # Use the correct command based on what's available
+echo "Starting VNC server..."
 if command -v vncserver >/dev/null 2>&1; then
-    (vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
+    # Start vncserver - try simplest syntax first (some wrappers only accept display)
+    # The config file should handle geometry/depth settings
+    if vncserver :1 >/tmp/vnc_start.log 2>&1; then
+        echo "VNC server started successfully"
+    elif vncserver 1 >/tmp/vnc_start.log 2>&1; then
+        echo "VNC server started successfully (display 1)"
+    elif vncserver :1 -geometry 1920x1080 -depth 24 -localhost no >/tmp/vnc_start.log 2>&1; then
+        echo "VNC server started with full options"
+    else
+        # Try background start if foreground failed
+        vncserver :1 >/tmp/vnc_start.log 2>&1 &
+        sleep 2
+        echo "VNC server start attempted (background)"
+    fi
 elif command -v Xtigervnc >/dev/null 2>&1; then
-    # Xtigervnc uses different syntax
-    (Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | grep -v "hostname\|Could not acquire" &) || true
+    # Xtigervnc uses different syntax - start in background
+    Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no >/tmp/vnc_start.log 2>&1 &
+    sleep 2
+    echo "Xtigervnc start attempted"
+elif command -v Xvnc >/dev/null 2>&1; then
+    # Some systems have Xvnc directly
+    Xvnc :1 -geometry 1920x1080 -depth 24 -localhost no >/tmp/vnc_start.log 2>&1 &
+    sleep 2
+    echo "Xvnc start attempted"
 else
-    echo "Error: No VNC server found (vncserver or Xtigervnc)"
+    echo "Error: No VNC server found (vncserver, Xtigervnc, or Xvnc)"
 fi
 sleep 3
+# Show VNC startup log for debugging
+if [ -f /tmp/vnc_start.log ]; then
+    echo "VNC startup log:"
+    tail -10 /tmp/vnc_start.log 2>/dev/null || true
+fi
 
 # Verify VNC started and check if desktop environment will start
 if [ -f ~/.vnc/localhost:1.pid ] || ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc.*:1" >/dev/null; then
