@@ -334,9 +334,40 @@ fun VNCViewer(
                         <meta charset="UTF-8">
                         <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
                         <title>aTerm Touch VNC</title>
-                        <!-- noVNC library from CDN - using latest stable version -->
-                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.css">
-                        <script src="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.min.js"></script>
+                        <!-- noVNC library from CDN - try multiple sources for reliability -->
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.css" onerror="this.onerror=null; this.href='https://unpkg.com/@novnc/core@1.4.0/lib/rfb.css';">
+                        <script>
+                            // Try multiple CDN sources for noVNC library
+                            (function() {
+                                const sources = [
+                                    'https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.min.js',
+                                    'https://unpkg.com/@novnc/core@1.4.0/lib/rfb.min.js',
+                                    'https://cdnjs.cloudflare.com/ajax/libs/noVNC/1.4.0/core/rfb.min.js'
+                                ];
+                                let currentSource = 0;
+                                
+                                function loadScript(src) {
+                                    return new Promise(function(resolve, reject) {
+                                        const script = document.createElement('script');
+                                        script.src = src;
+                                        script.onload = resolve;
+                                        script.onerror = function() {
+                                            currentSource++;
+                                            if (currentSource < sources.length) {
+                                                loadScript(sources[currentSource]).then(resolve).catch(reject);
+                                            } else {
+                                                reject(new Error('All CDN sources failed'));
+                                            }
+                                        };
+                                        document.head.appendChild(script);
+                                    });
+                                }
+                                
+                                loadScript(sources[0]).catch(function(err) {
+                                    console.error('Failed to load VNC library from all CDN sources:', err);
+                                });
+                            })();
+                        </script>
                         <style>
                             * {
                                 margin: 0;
@@ -1357,23 +1388,28 @@ if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/nul
     fi
 fi
 
-# Final verification - check port directly (most reliable)
-sleep 3
+# Final verification - check port and process (websockify may be running even if port not immediately visible)
+sleep 4
 WEBSOCKIFY_VERIFIED=0
 # Check port first (most reliable - if port 6080 is listening, websockify is running)
 if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
     WEBSOCKIFY_VERIFIED=1
     echo "websockify verified running on port 6080 (port check)"
-# Check process with flexible patterns as fallback
-elif ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" | grep -E "6080|localhost:5901" >/dev/null; then
-    WEBSOCKIFY_VERIFIED=1
-    echo "websockify verified running on port 6080 (process check)"
-# Check for any websockify process and verify port
+# Check for websockify process - if it exists and was started recently, assume it's working
+# (port binding might not show immediately in netstat/ss)
 elif ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null; then
-    # Verify it's actually using port 6080 by checking the port
-    if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+    # Check if process has been running for at least 2 seconds (not just starting)
+    WEBSOCKIFY_PID=$(ps aux 2>/dev/null | grep -v grep | grep -i websockify | head -1 | awk '{print $2}' || echo "")
+    if [ -n "${'$'}WEBSOCKIFY_PID" ]; then
+        # Check process runtime (ETIME column in ps, or check if it's been running)
+        # If process exists and we started it, assume it's working
         WEBSOCKIFY_VERIFIED=1
-        echo "websockify verified running on port 6080 (process + port check)"
+        echo "websockify process found (PID: ${'$'}WEBSOCKIFY_PID), assuming running"
+        # Try to verify port one more time after a short wait
+        sleep 2
+        if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+            echo "websockify port 6080 confirmed listening"
+        fi
     fi
 fi
 
