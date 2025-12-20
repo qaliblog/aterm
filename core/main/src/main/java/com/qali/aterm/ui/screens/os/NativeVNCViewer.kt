@@ -132,9 +132,9 @@ fun NativeVNCViewer(
                                 val value = ByteBuffer.wrap(data, dataIndex, 4)
                                     .order(if (pixelFormat.bigEndian) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN)
                                     .int
-                                val r = (((value shr pixelFormat.redShift) and pixelFormat.redMax.toLong()) * 255 / pixelFormat.redMax).toInt()
-                                val g = (((value shr pixelFormat.greenShift) and pixelFormat.greenMax.toLong()) * 255 / pixelFormat.greenMax).toInt()
-                                val b = (((value shr pixelFormat.blueShift) and pixelFormat.blueMax.toLong()) * 255 / pixelFormat.blueMax).toInt()
+                                val r = (((value.toLong() shr pixelFormat.redShift) and pixelFormat.redMax.toLong()) * 255 / pixelFormat.redMax).toInt()
+                                val g = (((value.toLong() shr pixelFormat.greenShift) and pixelFormat.greenMax.toLong()) * 255 / pixelFormat.greenMax).toInt()
+                                val b = (((value.toLong() shr pixelFormat.blueShift) and pixelFormat.blueMax.toLong()) * 255 / pixelFormat.blueMax).toInt()
                                 (0xFF shl 24) or (r shl 16) or (g shl 8) or b
                             }
                             else -> 0xFF000000.toInt() // Default to black
