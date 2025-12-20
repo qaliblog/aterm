@@ -530,33 +530,80 @@ fun VNCViewer(
                                 }
                                 
                                 // Start connection when page loads
-                                if (typeof RFB !== 'undefined') {
-                                    connectVNC();
-                                } else {
-                                    statusText.textContent = 'Loading VNC library...';
-                                    // Wait for library to load with retries
-                                    let loadAttempts = 0;
-                                    const maxLoadAttempts = 10;
-                                    function tryLoadLibrary() {
-                                        if (typeof RFB !== 'undefined') {
-                                            connectVNC();
-                                        } else {
-                                            loadAttempts++;
-                                            if (loadAttempts < maxLoadAttempts) {
-                                                setTimeout(tryLoadLibrary, 1000);
+                                let libraryLoadTimeout = null;
+                                const LIBRARY_LOAD_TIMEOUT = 10000; // 10 seconds timeout
+                                
+                                function startVNCConnection() {
+                                    if (typeof RFB !== 'undefined') {
+                                        if (libraryLoadTimeout) {
+                                            clearTimeout(libraryLoadTimeout);
+                                            libraryLoadTimeout = null;
+                                        }
+                                        connectVNC();
+                                    } else {
+                                        statusText.textContent = 'Loading VNC library...';
+                                        statusIndicator.className = 'status-indicator';
+                                        
+                                        // Set timeout for library loading
+                                        libraryLoadTimeout = setTimeout(function() {
+                                            statusText.textContent = 'VNC library load timeout. Check internet connection or CDN access.';
+                                            statusIndicator.className = 'status-indicator error';
+                                            console.error('VNC library failed to load within timeout');
+                                            
+                                            // Show fallback message with connection info
+                                            screen.innerHTML = '<div class="fallback"><p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Connection Information</p><p style="margin-bottom: 8px;">VNC Server: localhost:5901</p><p style="margin-bottom: 8px;">Password: aterm</p><p style="margin-bottom: 8px; color: #FFA500;">WebSocket Proxy: localhost:6080</p><p style="color: #888; font-size: 11px;">The VNC viewer library failed to load. This may be due to:</p><ul style="color: #888; font-size: 11px; text-align: left; margin: 10px 0;"><li>No internet connection (library loads from CDN)</li><li>CDN access blocked</li><li>Network timeout</li></ul><p style="color: #888; font-size: 11px;">You can use a VNC viewer app to connect directly to localhost:5901</p></div>';
+                                        }, LIBRARY_LOAD_TIMEOUT);
+                                        
+                                        // Wait for library to load with retries
+                                        let loadAttempts = 0;
+                                        const maxLoadAttempts = 15;
+                                        function tryLoadLibrary() {
+                                            if (typeof RFB !== 'undefined') {
+                                                if (libraryLoadTimeout) {
+                                                    clearTimeout(libraryLoadTimeout);
+                                                    libraryLoadTimeout = null;
+                                                }
+                                                connectVNC();
                                             } else {
-                                                statusText.textContent = 'Failed to load VNC library. Retrying...';
-                                                statusIndicator.className = 'status-indicator';
-                                                // Keep trying to load
-                                                setTimeout(function() {
-                                                    loadAttempts = 0;
-                                                    tryLoadLibrary();
-                                                }, 5000);
+                                                loadAttempts++;
+                                                if (loadAttempts < maxLoadAttempts) {
+                                                    setTimeout(tryLoadLibrary, 1000);
+                                                } else {
+                                                    // After max attempts, check if script tag loaded
+                                                    const scriptTags = document.getElementsByTagName('script');
+                                                    let scriptLoaded = false;
+                                                    for (let i = 0; i < scriptTags.length; i++) {
+                                                        if (scriptTags[i].src && scriptTags[i].src.includes('novnc')) {
+                                                            scriptLoaded = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                    
+                                                    if (!scriptLoaded) {
+                                                        statusText.textContent = 'Failed to load VNC library from CDN. Retrying...';
+                                                        statusIndicator.className = 'status-indicator';
+                                                        // Keep trying to load
+                                                        setTimeout(function() {
+                                                            loadAttempts = 0;
+                                                            tryLoadLibrary();
+                                                        }, 5000);
+                                                    } else {
+                                                        // Script tag exists but RFB not defined - might be loading
+                                                        statusText.textContent = 'VNC library loading... Please wait.';
+                                                        setTimeout(function() {
+                                                            loadAttempts = 0;
+                                                            tryLoadLibrary();
+                                                        }, 2000);
+                                                    }
+                                                }
                                             }
                                         }
+                                        setTimeout(tryLoadLibrary, 500);
                                     }
-                                    setTimeout(tryLoadLibrary, 1000);
                                 }
+                                
+                                // Start connection
+                                startVNCConnection();
                                 
                                 // Handle window resize
                                 window.addEventListener('resize', function() {
