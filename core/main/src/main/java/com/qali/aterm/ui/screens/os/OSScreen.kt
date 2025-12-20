@@ -1594,8 +1594,8 @@ fi
             delay(1500)
             
             // Check websockify - improved detection matching the setup script
-            // Check port first (most reliable), then process, then log files
-            session.write("bash -c 'WEBSOCKIFY_VERIFIED=0; if netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null; then WEBSOCKIFY_VERIFIED=1; elif ps aux 2>/dev/null | grep -v grep | grep -iE \"websockify|python.*websockify\" >/dev/null; then for log in /tmp/websockify.log /tmp/websockify_retry.log /tmp/websockify_final.log; do if [ -f \"${'$'}log\" ] && grep -qE \"proxying|WebSocket server|Listening on|websockify.*6080\" \"${'$'}log\" 2>/dev/null; then WEBSOCKIFY_VERIFIED=1; break; fi; done; if [ ${'$'}WEBSOCKIFY_VERIFIED -eq 0 ]; then PROC_CMD=$(ps aux 2>/dev/null | grep -v grep | grep -iE \"websockify|python.*websockify\" | head -1 | awk \"{print \\\"\\\"}\" || echo \"\"); if echo \"${'$'}PROC_CMD\" | grep -qi websockify; then WEBSOCKIFY_VERIFIED=1; fi; fi; fi; if [ ${'$'}WEBSOCKIFY_VERIFIED -eq 1 ]; then echo WEBSOCKIFY_RUNNING; else echo WEBSOCKIFY_NOT_RUNNING; fi'\n")
+            // Check port first (most reliable), then process with websockify in command, then log files
+            session.write("bash -c 'if netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null; then echo WEBSOCKIFY_RUNNING; elif ps aux 2>/dev/null | grep -v grep | grep -i websockify | grep -q \"6080\"; then echo WEBSOCKIFY_RUNNING; elif ps aux 2>/dev/null | grep -v grep | grep -iE \"python.*websockify|websockify\" >/dev/null; then for log in /tmp/websockify.log /tmp/websockify_retry.log /tmp/websockify_final.log; do if [ -f \"${'$'}log\" ] && grep -qE \"proxying|WebSocket|Listening|6080\" \"${'$'}log\" 2>/dev/null; then echo WEBSOCKIFY_RUNNING; exit 0; fi; done; echo WEBSOCKIFY_NOT_RUNNING; else echo WEBSOCKIFY_NOT_RUNNING; fi'\n")
             delay(2500)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
