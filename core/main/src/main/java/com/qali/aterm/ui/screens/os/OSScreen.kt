@@ -1388,27 +1388,34 @@ if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/nul
     fi
 fi
 
-# Final verification - check port and process (websockify may be running even if port not immediately visible)
+# Final verification - check port, process, and log file
 sleep 4
 WEBSOCKIFY_VERIFIED=0
 # Check port first (most reliable - if port 6080 is listening, websockify is running)
 if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
     WEBSOCKIFY_VERIFIED=1
     echo "websockify verified running on port 6080 (port check)"
-# Check for websockify process - if it exists and was started recently, assume it's working
-# (port binding might not show immediately in netstat/ss)
+# Check websockify log file for success indicators
+elif grep -q "proxying from.*6080.*localhost:5901\|WebSocket server.*6080\|Listening on.*6080" /tmp/websockify.log /tmp/websockify_retry.log /tmp/websockify_final.log 2>/dev/null; then
+    WEBSOCKIFY_VERIFIED=1
+    echo "websockify verified running (log file check - shows proxying active)"
+# Check for websockify process - if it exists, assume it's working
+# (port binding might not show immediately in netstat/ss, especially in restricted environments)
 elif ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null; then
-    # Check if process has been running for at least 2 seconds (not just starting)
     WEBSOCKIFY_PID=$(ps aux 2>/dev/null | grep -v grep | grep -i websockify | head -1 | awk '{print $2}' || echo "")
     if [ -n "${'$'}WEBSOCKIFY_PID" ]; then
-        # Check process runtime (ETIME column in ps, or check if it's been running)
-        # If process exists and we started it, assume it's working
-        WEBSOCKIFY_VERIFIED=1
-        echo "websockify process found (PID: ${'$'}WEBSOCKIFY_PID), assuming running"
-        # Try to verify port one more time after a short wait
-        sleep 2
-        if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
-            echo "websockify port 6080 confirmed listening"
+        # Process exists - check if it's actually a websockify process (not just python)
+        PROC_CMD=$(ps -p "${'$'}WEBSOCKIFY_PID" -o cmd= 2>/dev/null || echo "")
+        if echo "${'$'}PROC_CMD" | grep -qi websockify; then
+            WEBSOCKIFY_VERIFIED=1
+            echo "websockify process found (PID: ${'$'}WEBSOCKIFY_PID), verified running"
+            # Try to verify port one more time after a short wait
+            sleep 2
+            if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+                echo "websockify port 6080 confirmed listening"
+            else
+                echo "Note: websockify process running but port not visible in netstat/ss (may be normal in restricted environments)"
+            fi
         fi
     fi
 fi
@@ -1583,7 +1590,7 @@ fi
             delay(1500)
             
             // Check websockify
-            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || (ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null && grep -q \"proxying from.*6080.*localhost:5901\\|WebSocket server.*6080\\|Listening on.*6080\" /tmp/websockify*.log 2>/dev/null)) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
             delay(2000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
