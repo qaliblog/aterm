@@ -846,8 +846,6 @@ cat > ~/.vnc/config << 'VNC_CONFIG_EOF'
 geometry=1920x1080
 depth=24
 localhost=no
-# Disable shared memory to avoid --shm-helper errors in restricted environments
-shm=off
 VNC_CONFIG_EOF
 cat > ~/.vnc/xstartup << 'VNC_EOF'
 #!/bin/sh
@@ -910,12 +908,22 @@ export HOSTNAME=localhost
 # Start VNC server - use proper syntax and error handling
 # Use the correct command based on what's available
 echo "Starting VNC server..."
-# Set environment to avoid shared memory issues in restricted environments
-export TIGERVNC_SKIP_SHM=1
-if command -v vncserver >/dev/null 2>&1; then
-    # Start vncserver - try simplest syntax first (some wrappers only accept display)
+# Start VNC server - use proper syntax and error handling
+# Prefer Xtigervnc directly to avoid wrapper issues with invalid options
+if command -v Xtigervnc >/dev/null 2>&1; then
+    # Xtigervnc uses different syntax - start in background
+    # Use -SecurityTypes VncAuth for authentication
+    Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
+    sleep 3
+    echo "Xtigervnc start attempted"
+elif command -v Xvnc >/dev/null 2>&1; then
+    # Some systems have Xvnc directly
+    Xvnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
+    sleep 3
+    echo "Xvnc start attempted"
+elif command -v vncserver >/dev/null 2>&1; then
+    # Try vncserver wrapper as fallback - try simplest syntax first
     # The config file should handle geometry/depth settings
-    # Filter out non-fatal shm-helper warnings
     if vncserver :1 >/tmp/vnc_start.log 2>&1; then
         echo "VNC server started successfully"
     elif vncserver 1 >/tmp/vnc_start.log 2>&1; then
@@ -925,28 +933,18 @@ if command -v vncserver >/dev/null 2>&1; then
     else
         # Try background start if foreground failed
         vncserver :1 >/tmp/vnc_start.log 2>&1 &
-        sleep 2
+        sleep 3
         echo "VNC server start attempted (background)"
     fi
-elif command -v Xtigervnc >/dev/null 2>&1; then
-    # Xtigervnc uses different syntax - start in background
-    # Use -SecurityTypes VncAuth to avoid shared memory issues
-    Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
-    sleep 2
-    echo "Xtigervnc start attempted"
-elif command -v Xvnc >/dev/null 2>&1; then
-    # Some systems have Xvnc directly
-    Xvnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
-    sleep 2
-    echo "Xvnc start attempted"
 else
     echo "Error: No VNC server found (vncserver, Xtigervnc, or Xvnc)"
 fi
 sleep 3
-# Show VNC startup log for debugging (filter out non-fatal shm-helper errors)
+# Show VNC startup log for debugging (filter out non-fatal warnings)
 if [ -f /tmp/vnc_start.log ]; then
     echo "VNC startup log (filtered):"
-    grep -v "shm-helper\|expected absolute path" /tmp/vnc_start.log 2>/dev/null | tail -10 || tail -10 /tmp/vnc_start.log 2>/dev/null || true
+    # Filter out non-fatal warnings but show important errors
+    grep -v "shm-helper\|expected absolute path\|hostname\|Could not acquire" /tmp/vnc_start.log 2>/dev/null | tail -15 || tail -15 /tmp/vnc_start.log 2>/dev/null || true
 fi
 
 # Verify VNC started and check if desktop environment will start
