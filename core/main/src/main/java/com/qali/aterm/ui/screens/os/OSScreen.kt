@@ -1310,11 +1310,24 @@ if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/nul
     fi
 fi
 
-# Final verification
-sleep 2
-if ps aux 2>/dev/null | grep -v grep | grep -E "websockify.*6080|python.*websockify.*6080" >/dev/null || \
-   netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
-   ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+# Final verification - check with more flexible patterns and port
+sleep 3
+WEBSOCKIFY_VERIFIED=0
+# Check port first (most reliable)
+if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+    WEBSOCKIFY_VERIFIED=1
+# Check process with flexible patterns
+elif ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" | grep -E "6080|localhost:5901" >/dev/null; then
+    WEBSOCKIFY_VERIFIED=1
+# Check for any websockify process (might be running even if pattern doesn't match exactly)
+elif ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null; then
+    # Verify it's actually using port 6080 by checking the port
+    if netstat -ln 2>/dev/null | grep ":6080" >/dev/null || ss -ln 2>/dev/null | grep ":6080" >/dev/null; then
+        WEBSOCKIFY_VERIFIED=1
+    fi
+fi
+
+if [ ${'$'}WEBSOCKIFY_VERIFIED -eq 1 ]; then
     echo "websockify verified running on port 6080"
 else
     echo "websockify failed to start, checking logs..."
@@ -1484,7 +1497,7 @@ fi
             delay(1500)
             
             // Check websockify
-            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -i websockify | grep -E \"6080|localhost:5901\" >/dev/null || (ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null && (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null))) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
             delay(2000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
@@ -1502,7 +1515,7 @@ fi
             // If VNC is running but websockify is not, try to start it
             if (vncStarted && !websockifyRunning) {
                 onStatusUpdate(InstallationStatus.Installing(), "VNC is running. Starting websockify...")
-                session.write("bash -c 'pkill -f \"websockify.*6080\" 2>/dev/null || true; sleep 1; (nohup bash -c \"python3 -m websockify 6080 localhost:5901\" >/tmp/websockify_retry.log 2>&1 &) || (nohup bash -c \"python -m websockify 6080 localhost:5901\" >/tmp/websockify_retry.log 2>&1 &) || true; sleep 3; (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep \"websockify.*6080\" >/dev/null) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+                session.write("bash -c 'pkill -f \"websockify.*6080\" 2>/dev/null || true; sleep 1; (nohup bash -c \"python3 -m websockify 6080 localhost:5901\" >/tmp/websockify_retry.log 2>&1 &) || (nohup bash -c \"python -m websockify 6080 localhost:5901\" >/tmp/websockify_retry.log 2>&1 &) || true; sleep 3; (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -i websockify | grep -E \"6080|localhost:5901\" >/dev/null || (ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null && (netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null))) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
                 delay(3000)
                 val retryOutput = session.emulator?.screen?.getTranscriptText() ?: ""
                 val retryLines = retryOutput.split("\n").takeLast(10).joinToString("\n")
