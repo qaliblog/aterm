@@ -846,6 +846,8 @@ cat > ~/.vnc/config << 'VNC_CONFIG_EOF'
 geometry=1920x1080
 depth=24
 localhost=no
+# Disable shared memory to avoid --shm-helper errors in restricted environments
+shm=off
 VNC_CONFIG_EOF
 cat > ~/.vnc/xstartup << 'VNC_EOF'
 #!/bin/sh
@@ -908,9 +910,12 @@ export HOSTNAME=localhost
 # Start VNC server - use proper syntax and error handling
 # Use the correct command based on what's available
 echo "Starting VNC server..."
+# Set environment to avoid shared memory issues in restricted environments
+export TIGERVNC_SKIP_SHM=1
 if command -v vncserver >/dev/null 2>&1; then
     # Start vncserver - try simplest syntax first (some wrappers only accept display)
     # The config file should handle geometry/depth settings
+    # Filter out non-fatal shm-helper warnings
     if vncserver :1 >/tmp/vnc_start.log 2>&1; then
         echo "VNC server started successfully"
     elif vncserver 1 >/tmp/vnc_start.log 2>&1; then
@@ -925,22 +930,23 @@ if command -v vncserver >/dev/null 2>&1; then
     fi
 elif command -v Xtigervnc >/dev/null 2>&1; then
     # Xtigervnc uses different syntax - start in background
-    Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no >/tmp/vnc_start.log 2>&1 &
+    # Use -SecurityTypes VncAuth to avoid shared memory issues
+    Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
     sleep 2
     echo "Xtigervnc start attempted"
 elif command -v Xvnc >/dev/null 2>&1; then
     # Some systems have Xvnc directly
-    Xvnc :1 -geometry 1920x1080 -depth 24 -localhost no >/tmp/vnc_start.log 2>&1 &
+    Xvnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
     sleep 2
     echo "Xvnc start attempted"
 else
     echo "Error: No VNC server found (vncserver, Xtigervnc, or Xvnc)"
 fi
 sleep 3
-# Show VNC startup log for debugging
+# Show VNC startup log for debugging (filter out non-fatal shm-helper errors)
 if [ -f /tmp/vnc_start.log ]; then
-    echo "VNC startup log:"
-    tail -10 /tmp/vnc_start.log 2>/dev/null || true
+    echo "VNC startup log (filtered):"
+    grep -v "shm-helper\|expected absolute path" /tmp/vnc_start.log 2>/dev/null | tail -10 || tail -10 /tmp/vnc_start.log 2>/dev/null || true
 fi
 
 # Verify VNC started and check if desktop environment will start
