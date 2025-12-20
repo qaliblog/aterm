@@ -582,7 +582,8 @@ fun VNCViewer(
                                             console.error('VNC library failed to load within timeout');
                                             
                                             // Show fallback message with connection info
-                                            screen.innerHTML = '<div class="fallback"><p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Connection Information</p><p style="margin-bottom: 8px;">VNC Server: localhost:5901</p><p style="margin-bottom: 8px;">Password: aterm</p><p style="margin-bottom: 8px; color: #FFA500;">WebSocket Proxy: localhost:6080</p><p style="color: #888; font-size: 11px;">The VNC viewer library failed to load. This may be due to:</p><ul style="color: #888; font-size: 11px; text-align: left; margin: 10px 0;"><li>No internet connection (library loads from CDN)</li><li>CDN access blocked</li><li>Network timeout</li></ul><p style="color: #888; font-size: 11px;">You can use a VNC viewer app to connect directly to localhost:5901</p></div>';
+                                            const connectionInfo = '<div class="fallback"><p style="margin-bottom: 10px; font-size: 14px; font-weight: bold;">VNC Connection Information</p><p style="margin-bottom: 8px;"><strong>VNC Server:</strong> localhost:5901</p><p style="margin-bottom: 8px;"><strong>Password:</strong> aterm</p><p style="margin-bottom: 8px; color: #FFA500;"><strong>WebSocket Proxy:</strong> localhost:6080</p><p style="color: #888; font-size: 11px; margin-top: 15px;">The VNC viewer library failed to load from CDN. This may be due to:</p><ul style="color: #888; font-size: 11px; text-align: left; margin: 10px 0; padding-left: 20px;"><li>No internet connection</li><li>CDN access blocked</li><li>Network timeout</li></ul><p style="color: #4CAF50; font-size: 12px; margin-top: 15px; font-weight: bold;">Alternative: Use a VNC viewer app</p><p style="color: #888; font-size: 11px;">Install a VNC viewer app (like bVNC, RealVNC, or VNC Viewer) and connect to:</p><p style="color: #2196F3; font-size: 12px; font-family: monospace; background: #1E1E1E; padding: 8px; border-radius: 4px; margin: 10px 0;">localhost:5901</p><p style="color: #888; font-size: 11px;">Password: <strong>aterm</strong></p></div>';
+                                            screen.innerHTML = connectionInfo;
                                         }, LIBRARY_LOAD_TIMEOUT);
                                         
                                         // Wait for library to load with retries
@@ -1590,7 +1591,7 @@ fi
             delay(1500)
             
             // Check websockify
-            session.write("bash -c '(netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null || (ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null && grep -q \"proxying from.*6080.*localhost:5901\\|WebSocket server.*6080\\|Listening on.*6080\" /tmp/websockify*.log 2>/dev/null)) && echo WEBSOCKIFY_RUNNING || echo WEBSOCKIFY_NOT_RUNNING'\n")
+            session.write("bash -c 'if netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null; then echo WEBSOCKIFY_RUNNING; elif ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null; then for log in /tmp/websockify.log /tmp/websockify_retry.log /tmp/websockify_final.log; do if [ -f \"${'$'}log\" ] && grep -qE \"proxying from.*6080.*localhost:5901|WebSocket server.*6080|Listening on.*6080\" \"${'$'}log\" 2>/dev/null; then echo WEBSOCKIFY_RUNNING; exit 0; fi; done; echo WEBSOCKIFY_NOT_RUNNING; else echo WEBSOCKIFY_NOT_RUNNING; fi'\n")
             delay(2000)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
