@@ -989,96 +989,75 @@ pkill -f "python.*websockify.*6080" 2>/dev/null || true
 sleep 1
 
 # Find and kill process using port 6080 (works on both Alpine and Ubuntu)
-# Try ss first (more reliable, available on both)
-PORT_PID=""
+echo "Cleaning up port 6080..."
+# Kill websockify processes first
+pkill -9 -f "websockify.*6080" 2>/dev/null || true
+pkill -9 -f "python.*websockify.*6080" 2>/dev/null || true
+pkill -9 -f "websockify" 2>/dev/null || true
+pkill -9 -f "python.*websockify" 2>/dev/null || true
+sleep 1
+
+# Find and kill all processes using port 6080 (with improved PID extraction)
 if command -v ss >/dev/null 2>&1; then
-    # Try different ss output formats (Alpine vs Ubuntu)
-    PORT_PID=${'$'}(ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | head -1 || echo "")
-    # Alternative format: users:(("process",pid=123,fd=3))
-    if [ -z "${'$'}PORT_PID" ]; then
-        PORT_PID=${'$'}(ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | head -1 | sed 's/pid=//' || echo "")
-    fi
-fi
-
-# Fallback to netstat if ss didn't work
-if [ -z "${'$'}PORT_PID" ] && command -v netstat >/dev/null 2>&1; then
-    # netstat format varies: on Alpine might be "123/python" or just "123"
-    PORT_PID=${'$'}(netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | head -1 || echo "")
-fi
-
-# Fallback to lsof if available (usually on Ubuntu, not Alpine)
-if [ -z "${'$'}PORT_PID" ] && command -v lsof >/dev/null 2>&1; then
-    PORT_PID=${'$'}(lsof -ti:6080 2>/dev/null | head -1 || echo "")
-fi
-
-# Kill the process if found
-if [ -n "${'$'}PORT_PID" ] && [ "${'$'}PORT_PID" != "" ]; then
-    echo "Found process ${'$'}PORT_PID using port 6080, killing it..."
-    kill -9 "${'$'}PORT_PID" 2>/dev/null || true
-    sleep 2
-fi
-
-# Also try to find and kill all PIDs using port 6080 (handle multiple processes)
-if command -v ss >/dev/null 2>&1; then
-    ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read pid; do
-        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
-    done
-    # Alternative format extraction
-    ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | sed 's/pid=//' | while read pid; do
-        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
+    ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
+        # Extract only numeric PID, remove any non-numeric characters
+        pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+            echo "Killing process ${'$'}pid using port 6080..."
+            kill -9 "${'$'}pid" 2>/dev/null || true
+        fi
     done
 fi
 if command -v netstat >/dev/null 2>&1; then
-    netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | while read pid; do
-        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
+    netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
+        # Extract only numeric PID
+        pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+            echo "Killing process ${'$'}pid using port 6080..."
+            kill -9 "${'$'}pid" 2>/dev/null || true
+        fi
     done
 fi
 if command -v lsof >/dev/null 2>&1; then
-    lsof -ti:6080 2>/dev/null | while read pid; do
-        [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
+    lsof -ti:6080 2>/dev/null | while read raw_pid; do
+        # Extract only numeric PID
+        pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+            echo "Killing process ${'$'}pid using port 6080..."
+            kill -9 "${'$'}pid" 2>/dev/null || true
+        fi
     done
 fi
 
-# Double-check: kill any remaining websockify processes
-pkill -9 -f "websockify" 2>/dev/null || true
-pkill -9 -f "python.*websockify" 2>/dev/null || true
-sleep 2
+# Wait for port to be released (up to 5 seconds)
+WAIT_COUNT=0
+while [ ${'$'}WAIT_COUNT -lt 5 ]; do
+    if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+        echo "Port 6080 is now free"
+        break
+    fi
+    sleep 1
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+done
 
-# Verify port is free
+# Final cleanup if port still in use
 if (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) || (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
-    echo "Warning: Port 6080 is still in use after cleanup attempts"
-    # Try one more aggressive cleanup (using while loop for Alpine compatibility)
-    if command -v ss >/dev/null 2>&1; then
-        ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read pid; do
-            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
-        done
-        # Alternative format
-        ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | sed 's/pid=//' | while read pid; do
-            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
-        done
-    fi
-    if command -v netstat >/dev/null 2>&1; then
-        netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | while read pid; do
-            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
-        done
-    fi
-    if command -v lsof >/dev/null 2>&1; then
-        lsof -ti:6080 2>/dev/null | while read pid; do
-            [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
-        done
-    fi
+    echo "Warning: Port 6080 may still be in use, performing final cleanup..."
+    pkill -9 -f "websockify" 2>/dev/null || true
+    pkill -9 -f "python.*websockify" 2>/dev/null || true
     sleep 2
-else
-    echo "Port 6080 is now free"
 fi
+
 
 # Start websockify to proxy VNC over WebSocket
 # Only start if websockify is actually available
-if command -v websockify >/dev/null 2>&1 || python3 -m websockify --help >/dev/null 2>&1 2>/dev/null || python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
-    # Try direct command first
-    if command -v websockify >/dev/null 2>&1; then
-    echo "Starting websockify (direct command)..."
-    nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+# Verify port is free before starting
+if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+    if command -v websockify >/dev/null 2>&1 || python3 -m websockify --help >/dev/null 2>&1 2>/dev/null || python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+        # Try direct command first
+        if command -v websockify >/dev/null 2>&1; then
+        echo "Starting websockify (direct command)..."
+        nohup bash -c "websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
     sleep 3
     if ps aux 2>/dev/null | grep -v grep | grep "websockify.*6080" >/dev/null || \
        netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
@@ -1112,31 +1091,36 @@ if command -v websockify >/dev/null 2>&1 || python3 -m websockify --help >/dev/n
     # Close the nested if for direct websockify command check (line 981)
     fi
     # Close the main if statement for websockify availability check (line 979)
+    fi
+else
+    echo "Warning: Port 6080 is still in use, cannot start websockify yet"
 fi
 
-# Try alternative methods if direct websockify command not available
-if command -v python3 >/dev/null 2>&1 && python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
-    echo "Starting websockify (python3 -m)..."
-    nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    sleep 3
-    if ! (ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null || \
-          netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
-          ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
-        # Try python -m as fallback
-        if command -v python >/dev/null 2>&1 && python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
-            echo "Starting websockify (python -m)..."
-            nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-            sleep 3
+# Try alternative methods if direct websockify command not available (only if port is free)
+if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+    if command -v python3 >/dev/null 2>&1 && python3 -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+        echo "Starting websockify (python3 -m)..."
+        nohup bash -c "python3 -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+        sleep 3
+        if ! (ps aux 2>/dev/null | grep -v grep | grep "python3.*websockify.*6080" >/dev/null || \
+              netstat -ln 2>/dev/null | grep ":6080" >/dev/null || \
+              ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+            # Try python -m as fallback
+            if command -v python >/dev/null 2>&1 && python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+                echo "Starting websockify (python -m)..."
+                nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+                sleep 3
+            fi
         fi
+    elif command -v python >/dev/null 2>&1 && python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
+        echo "Starting websockify (python -m)..."
+        nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
+        sleep 3
+    else
+        echo "websockify is not available. Cannot start websockify proxy."
+        echo "Installation log:"
+        cat /tmp/websockify_install.log 2>/dev/null | tail -10 || echo "No installation log found"
     fi
-elif command -v python >/dev/null 2>&1 && python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
-    echo "Starting websockify (python -m)..."
-    nohup bash -c "python -m websockify 6080 localhost:5901" >/tmp/websockify.log 2>&1 &
-    sleep 3
-else
-    echo "websockify is not available. Cannot start websockify proxy."
-    echo "Installation log:"
-    cat /tmp/websockify_install.log 2>/dev/null | tail -10 || echo "No installation log found"
 fi
 
 # Final verification
@@ -1152,28 +1136,47 @@ else
     # Check if error is "Address in use"
     if grep -q "Address in use\|Address already in use\|Errno 98" /tmp/websockify.log 2>/dev/null; then
         echo "Port 6080 is still in use, performing aggressive cleanup..."
-        # Kill all processes using port 6080 (using while loop for Alpine compatibility)
+        # Kill all websockify processes
+        pkill -9 -f "websockify" 2>/dev/null || true
+        pkill -9 -f "python.*websockify" 2>/dev/null || true
+        sleep 1
+        
+        # Find and kill all processes using port 6080 with improved PID extraction
         if command -v ss >/dev/null 2>&1; then
-            ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read pid; do
-                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
-            done
-            # Alternative format
-            ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | sed 's/pid=//' | while read pid; do
-                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
+            ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
+                pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+                    kill -9 "${'$'}pid" 2>/dev/null || true
+                fi
             done
         fi
         if command -v netstat >/dev/null 2>&1; then
-            netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | grep -E "^[0-9]+${'$'}" | while read pid; do
-                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
+            netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
+                pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+                    kill -9 "${'$'}pid" 2>/dev/null || true
+                fi
             done
         fi
         if command -v lsof >/dev/null 2>&1; then
-            lsof -ti:6080 2>/dev/null | while read pid; do
-                [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && kill -9 "${'$'}pid" 2>/dev/null || true
+            lsof -ti:6080 2>/dev/null | while read raw_pid; do
+                pid=$(echo "${'$'}raw_pid" | tr -d '[:alpha:][:space:][:punct:]' | grep -E "^[0-9]+${'$'}" || echo "")
+                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+                    kill -9 "${'$'}pid" 2>/dev/null || true
+                fi
             done
         fi
-        pkill -9 -f "websockify" 2>/dev/null || true
+        
+        # Wait for port to be released
         sleep 3
+        WAIT_COUNT=0
+        while [ ${'$'}WAIT_COUNT -lt 5 ]; do
+            if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+                break
+            fi
+            sleep 1
+            WAIT_COUNT=$((WAIT_COUNT + 1))
+        done
         
         # Try starting again
         echo "Attempting to start websockify again after cleanup..."
