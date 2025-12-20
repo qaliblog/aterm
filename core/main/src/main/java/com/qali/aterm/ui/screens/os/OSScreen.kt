@@ -1005,17 +1005,24 @@ elif command -v vncserver >/dev/null 2>&1; then
 else
     echo "Error: No VNC server found (vncserver, Xtigervnc, or Xvnc)"
 fi
-sleep 2
+sleep 3
 # Give VNC server more time to fully start and bind to port
-# Check if port is listening with retries
+# Check if port is listening with retries (VNC can take a few seconds to bind)
 VNC_PORT_READY=0
-for i in 1 2 3 4 5; do
+for i in 1 2 3 4 5 6 7 8; do
     if netstat -ln 2>/dev/null | grep ":5901" >/dev/null || ss -ln 2>/dev/null | grep ":5901" >/dev/null; then
         VNC_PORT_READY=1
         break
     fi
     sleep 1
 done
+# Also check if VNC process is running (port might not show immediately but process exists)
+if [ ${'$'}VNC_PORT_READY -eq 0 ]; then
+    if ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc" >/dev/null; then
+        # Process is running, port should be available soon
+        VNC_PORT_READY=1
+    fi
+fi
 
 # Show VNC startup log for debugging (filter out non-fatal warnings)
 if [ -f /tmp/vnc_start.log ]; then
@@ -1110,48 +1117,79 @@ if ! command -v websockify >/dev/null 2>&1 && ! python3 -m websockify --help >/d
 fi
 
 # Find and kill process using port 6080 (works on both Alpine and Ubuntu)
+# Use graceful shutdown first, then force kill only if needed
 echo "Cleaning up port 6080..."
-# Kill websockify processes first
-pkill -9 -f "websockify.*6080" 2>/dev/null || true
-pkill -9 -f "python.*websockify.*6080" 2>/dev/null || true
-pkill -9 -f "websockify" 2>/dev/null || true
-pkill -9 -f "python.*websockify" 2>/dev/null || true
-sleep 1
-
-# Find and kill all processes using port 6080 (with improved PID extraction)
-# Extract only the first sequence of digits (the actual PID)
-# Get current script PID to avoid killing ourselves
+# Get current script PID and shell PID to avoid killing ourselves
 SCRIPT_PID=${'$'}$$
+SHELL_PID=${'$'}PPID
+
+# First, try graceful shutdown (SIGTERM) for websockify processes only
+pkill -TERM -f "websockify.*6080" 2>/dev/null || true
+pkill -TERM -f "python.*websockify.*6080" 2>/dev/null || true
+sleep 2
+
+# Find and kill processes using port 6080 (with safety checks)
+# Only kill websockify/python processes, avoid killing shell/terminal
 if command -v ss >/dev/null 2>&1; then
     ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
-        # Extract only the first sequence of digits (stop at first non-digit)
         pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-        # Validate PID and ensure we don't kill ourselves or init (PID 1)
-        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
-            echo "Killing process ${'$'}pid using port 6080..."
-            kill -9 "${'$'}pid" 2>/dev/null || true
+        # Validate PID and check it's not us or important processes
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && \
+           [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] && [ "${'$'}pid" != "${'$'}SHELL_PID" ] 2>/dev/null; then
+            # Check process name - only kill websockify/python processes
+            proc_name=$(ps -p "${'$'}pid" -o comm= 2>/dev/null | head -1 || echo "")
+            if echo "${'$'}proc_name" | grep -qiE "websockify|python" 2>/dev/null; then
+                # Try graceful shutdown first
+                kill -TERM "${'$'}pid" 2>/dev/null || true
+                sleep 1
+                # Check if still running, then force kill
+                if kill -0 "${'$'}pid" 2>/dev/null; then
+                    echo "Force killing websockify process ${'$'}pid..."
+                    kill -9 "${'$'}pid" 2>/dev/null || true
+                fi
+            fi
         fi
     done
 fi
 if command -v netstat >/dev/null 2>&1; then
     netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
-        # Extract only the first sequence of digits
         pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-        # Validate PID and ensure we don't kill ourselves or init (PID 1)
-        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
-            echo "Killing process ${'$'}pid using port 6080..."
-            kill -9 "${'$'}pid" 2>/dev/null || true
+        # Validate PID and check it's not us or important processes
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && \
+           [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] && [ "${'$'}pid" != "${'$'}SHELL_PID" ] 2>/dev/null; then
+            # Check process name - only kill websockify/python processes
+            proc_name=$(ps -p "${'$'}pid" -o comm= 2>/dev/null | head -1 || echo "")
+            if echo "${'$'}proc_name" | grep -qiE "websockify|python" 2>/dev/null; then
+                # Try graceful shutdown first
+                kill -TERM "${'$'}pid" 2>/dev/null || true
+                sleep 1
+                # Check if still running, then force kill
+                if kill -0 "${'$'}pid" 2>/dev/null; then
+                    echo "Force killing websockify process ${'$'}pid..."
+                    kill -9 "${'$'}pid" 2>/dev/null || true
+                fi
+            fi
         fi
     done
 fi
 if command -v lsof >/dev/null 2>&1; then
     lsof -ti:6080 2>/dev/null | while read raw_pid; do
-        # Extract only the first sequence of digits (lsof should already give just numbers, but be safe)
         pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-        # Validate PID and ensure we don't kill ourselves or init (PID 1)
-        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
-            echo "Killing process ${'$'}pid using port 6080..."
-            kill -9 "${'$'}pid" 2>/dev/null || true
+        # Validate PID and check it's not us or important processes
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && \
+           [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] && [ "${'$'}pid" != "${'$'}SHELL_PID" ] 2>/dev/null; then
+            # Check process name - only kill websockify/python processes
+            proc_name=$(ps -p "${'$'}pid" -o comm= 2>/dev/null | head -1 || echo "")
+            if echo "${'$'}proc_name" | grep -qiE "websockify|python" 2>/dev/null; then
+                # Try graceful shutdown first
+                kill -TERM "${'$'}pid" 2>/dev/null || true
+                sleep 1
+                # Check if still running, then force kill
+                if kill -0 "${'$'}pid" 2>/dev/null; then
+                    echo "Force killing websockify process ${'$'}pid..."
+                    kill -9 "${'$'}pid" 2>/dev/null || true
+                fi
+            fi
         fi
     done
 fi
@@ -1167,12 +1205,27 @@ while [ ${'$'}WAIT_COUNT -lt 5 ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
 done
 
-# Final cleanup if port still in use
+# Additional safety: if port is still in use but by non-websockify process, just warn
+if (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) || (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+    # Check if it's actually a websockify process
+    if ! (ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" >/dev/null); then
+        echo "Note: Port 6080 is in use by another process (not websockify). Skipping websockify startup."
+        # Don't try to start websockify if port is used by something else
+        exit 0
+    fi
+fi
+
+# Final cleanup if port still in use (only websockify processes)
 if (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) || (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
     echo "Warning: Port 6080 may still be in use, performing final cleanup..."
+    # Only kill websockify processes, use TERM first
+    pkill -TERM -f "websockify" 2>/dev/null || true
+    pkill -TERM -f "python.*websockify" 2>/dev/null || true
+    sleep 2
+    # Force kill only if still running
     pkill -9 -f "websockify" 2>/dev/null || true
     pkill -9 -f "python.*websockify" 2>/dev/null || true
-    sleep 2
+    sleep 1
 fi
 
 
