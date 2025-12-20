@@ -982,12 +982,6 @@ if ! command -v websockify >/dev/null 2>&1 && ! python3 -m websockify --help >/d
     fi
 fi
 
-# Kill existing websockify on port 6080 and any process using port 6080
-echo "Cleaning up port 6080..."
-pkill -f "websockify.*6080" 2>/dev/null || true
-pkill -f "python.*websockify.*6080" 2>/dev/null || true
-sleep 1
-
 # Find and kill process using port 6080 (works on both Alpine and Ubuntu)
 echo "Cleaning up port 6080..."
 # Kill websockify processes first
@@ -999,11 +993,14 @@ sleep 1
 
 # Find and kill all processes using port 6080 (with improved PID extraction)
 # Extract only the first sequence of digits (the actual PID)
+# Get current script PID to avoid killing ourselves
+SCRIPT_PID=${'$'}$$
 if command -v ss >/dev/null 2>&1; then
     ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
         # Extract only the first sequence of digits (stop at first non-digit)
         pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+        # Validate PID and ensure we don't kill ourselves or init (PID 1)
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
             echo "Killing process ${'$'}pid using port 6080..."
             kill -9 "${'$'}pid" 2>/dev/null || true
         fi
@@ -1013,7 +1010,8 @@ if command -v netstat >/dev/null 2>&1; then
     netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
         # Extract only the first sequence of digits
         pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+        # Validate PID and ensure we don't kill ourselves or init (PID 1)
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
             echo "Killing process ${'$'}pid using port 6080..."
             kill -9 "${'$'}pid" 2>/dev/null || true
         fi
@@ -1023,7 +1021,8 @@ if command -v lsof >/dev/null 2>&1; then
     lsof -ti:6080 2>/dev/null | while read raw_pid; do
         # Extract only the first sequence of digits (lsof should already give just numbers, but be safe)
         pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+        # Validate PID and ensure we don't kill ourselves or init (PID 1)
+        if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
             echo "Killing process ${'$'}pid using port 6080..."
             kill -9 "${'$'}pid" 2>/dev/null || true
         fi
@@ -1143,11 +1142,13 @@ else
         sleep 1
         
         # Find and kill all processes using port 6080 with improved PID extraction
+        SCRIPT_PID=${'$'}$$
         if command -v ss >/dev/null 2>&1; then
             ss -tlnp 2>/dev/null | grep ":6080" | grep -oE "pid=[0-9]+" | cut -d= -f2 | while read raw_pid; do
                 # Extract only the first sequence of digits
                 pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+                # Validate PID and ensure we don't kill ourselves or init (PID 1)
+                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
                     kill -9 "${'$'}pid" 2>/dev/null || true
                 fi
             done
@@ -1156,7 +1157,8 @@ else
             netstat -tlnp 2>/dev/null | grep ":6080" | awk '{print ${'$'}7}' | cut -d/ -f1 | while read raw_pid; do
                 # Extract only the first sequence of digits
                 pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+                # Validate PID and ensure we don't kill ourselves or init (PID 1)
+                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
                     kill -9 "${'$'}pid" 2>/dev/null || true
                 fi
             done
@@ -1165,7 +1167,8 @@ else
             lsof -ti:6080 2>/dev/null | while read raw_pid; do
                 # Extract only the first sequence of digits
                 pid=$(echo "${'$'}raw_pid" | grep -oE "^[0-9]+" | head -1 || echo "")
-                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 0 ] 2>/dev/null; then
+                # Validate PID and ensure we don't kill ourselves or init (PID 1)
+                if [ -n "${'$'}pid" ] && [ "${'$'}pid" != "" ] && [ "${'$'}pid" -gt 1 ] && [ "${'$'}pid" != "${'$'}SCRIPT_PID" ] 2>/dev/null; then
                     kill -9 "${'$'}pid" 2>/dev/null || true
                 fi
             done
