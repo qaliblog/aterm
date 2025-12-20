@@ -1005,21 +1005,22 @@ elif command -v vncserver >/dev/null 2>&1; then
 else
     echo "Error: No VNC server found (vncserver, Xtigervnc, or Xvnc)"
 fi
-sleep 3
+sleep 4
 # Give VNC server more time to fully start and bind to port
 # Check if port is listening with retries (VNC can take a few seconds to bind)
 VNC_PORT_READY=0
-for i in 1 2 3 4 5 6 7 8; do
-    if netstat -ln 2>/dev/null | grep ":5901" >/dev/null || ss -ln 2>/dev/null | grep ":5901" >/dev/null; then
-        VNC_PORT_READY=1
-        break
-    fi
-    sleep 1
-done
-# Also check if VNC process is running (port might not show immediately but process exists)
-if [ ${'$'}VNC_PORT_READY -eq 0 ]; then
-    if ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc" >/dev/null; then
-        # Process is running, port should be available soon
+# First check if VNC process is running (more reliable than port check)
+if ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc" >/dev/null; then
+    # Process is running, check port with retries
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if netstat -ln 2>/dev/null | grep ":5901" >/dev/null || ss -ln 2>/dev/null | grep ":5901" >/dev/null; then
+            VNC_PORT_READY=1
+            break
+        fi
+        sleep 1
+    done
+    # If process is running but port not visible yet, still consider it ready
+    if [ ${'$'}VNC_PORT_READY -eq 0 ]; then
         VNC_PORT_READY=1
     fi
 fi
@@ -1194,48 +1195,51 @@ if command -v lsof >/dev/null 2>&1; then
     done
 fi
 
-# Wait for port to be released (up to 5 seconds)
+# Wait for port to be released (up to 10 seconds with verification)
 WAIT_COUNT=0
-while [ ${'$'}WAIT_COUNT -lt 5 ]; do
+PORT_FREE=0
+while [ ${'$'}WAIT_COUNT -lt 10 ]; do
     if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
-        echo "Port 6080 is now free"
-        break
+        # Double-check: verify no websockify processes are running
+        if ! (ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" >/dev/null); then
+            echo "Port 6080 is now free"
+            PORT_FREE=1
+            break
+        fi
     fi
     sleep 1
     WAIT_COUNT=$((WAIT_COUNT + 1))
 done
 
-# Additional safety: if port is still in use but by non-websockify process, just warn
-if (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) || (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
-    # Check if it's actually a websockify process
+# If port is still in use, do additional cleanup
+if [ ${'$'}PORT_FREE -eq 0 ]; then
+    # Check if it's a non-websockify process
     if ! (ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" >/dev/null); then
         echo "Note: Port 6080 is in use by another process (not websockify). Skipping websockify startup."
         # Don't try to start websockify if port is used by something else
-        exit 0
-    fi
-fi
-
-# Final cleanup if port still in use (only websockify processes)
-if (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) || (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
-    echo "Warning: Port 6080 may still be in use, performing final cleanup..."
-    # Only kill websockify processes, use TERM first
-    pkill -TERM -f "websockify" 2>/dev/null || true
-    pkill -TERM -f "python.*websockify" 2>/dev/null || true
-    sleep 2
-    # Check if any websockify processes are still running before force kill
-    if ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" >/dev/null; then
-        # Force kill only websockify processes that are still running
-        pkill -9 -f "websockify" 2>/dev/null || true
-        pkill -9 -f "python.*websockify" 2>/dev/null || true
-        sleep 1
+    else
+        echo "Warning: Port 6080 may still be in use, performing final cleanup..."
+        # Only kill websockify processes, use TERM first
+        pkill -TERM -f "websockify" 2>/dev/null || true
+        pkill -TERM -f "python.*websockify" 2>/dev/null || true
+        sleep 3
+        # Check if any websockify processes are still running before force kill
+        if ps aux 2>/dev/null | grep -v grep | grep -E "websockify|python.*websockify" >/dev/null; then
+            # Force kill only websockify processes that are still running
+            pkill -9 -f "websockify" 2>/dev/null || true
+            pkill -9 -f "python.*websockify" 2>/dev/null || true
+            sleep 2
+        fi
+        # Wait a bit more for port to be released
+        sleep 2
     fi
 fi
 
 
 # Start websockify to proxy VNC over WebSocket
 # Only start if websockify is actually available
-# Verify port is free before starting
-if ! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null); then
+# Verify port is free before starting (double-check)
+if [ ${'$'}PORT_FREE -eq 1 ] || (! (netstat -ln 2>/dev/null | grep ":6080" >/dev/null) && ! (ss -ln 2>/dev/null | grep ":6080" >/dev/null)); then
     if command -v websockify >/dev/null 2>&1 || python3 -m websockify --help >/dev/null 2>&1 2>/dev/null || python -m websockify --help >/dev/null 2>&1 2>/dev/null; then
         # Try direct command first
         if command -v websockify >/dev/null 2>&1; then
