@@ -334,7 +334,7 @@ fun VNCViewer(
                         <meta charset="UTF-8">
                         <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
                         <title>aTerm Touch VNC</title>
-                        <!-- noVNC library from CDN -->
+                        <!-- noVNC library from CDN - using latest stable version -->
                         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.css">
                         <script src="https://cdn.jsdelivr.net/npm/@novnc/core@1.4.0/lib/rfb.min.js"></script>
                         <style>
@@ -914,12 +914,12 @@ if command -v Xtigervnc >/dev/null 2>&1; then
     # Xtigervnc uses different syntax - start in background
     # Use -SecurityTypes VncAuth for authentication
     Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
-    sleep 3
+    sleep 4
     echo "Xtigervnc start attempted"
 elif command -v Xvnc >/dev/null 2>&1; then
     # Some systems have Xvnc directly
     Xvnc :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth >/tmp/vnc_start.log 2>&1 &
-    sleep 3
+    sleep 4
     echo "Xvnc start attempted"
 elif command -v vncserver >/dev/null 2>&1; then
     # Try vncserver wrapper as fallback - try simplest syntax first
@@ -939,7 +939,18 @@ elif command -v vncserver >/dev/null 2>&1; then
 else
     echo "Error: No VNC server found (vncserver, Xtigervnc, or Xvnc)"
 fi
-sleep 3
+sleep 2
+# Give VNC server more time to fully start and bind to port
+# Check if port is listening with retries
+VNC_PORT_READY=0
+for i in 1 2 3 4 5; do
+    if netstat -ln 2>/dev/null | grep ":5901" >/dev/null || ss -ln 2>/dev/null | grep ":5901" >/dev/null; then
+        VNC_PORT_READY=1
+        break
+    fi
+    sleep 1
+done
+
 # Show VNC startup log for debugging (filter out non-fatal warnings)
 if [ -f /tmp/vnc_start.log ]; then
     echo "VNC startup log (filtered):"
@@ -950,11 +961,11 @@ fi
 # Verify VNC started and check if desktop environment will start
 # Check multiple ways: PID file, process name, and port listening
 VNC_VERIFIED=0
-if [ -f ~/.vnc/localhost:1.pid ] || [ -f ~/.vnc/*:1.pid ] 2>/dev/null; then
+if [ ${'$'}VNC_PORT_READY -eq 1 ]; then
+    VNC_VERIFIED=1
+elif [ -f ~/.vnc/localhost:1.pid ] || [ -f ~/.vnc/*:1.pid ] 2>/dev/null; then
     VNC_VERIFIED=1
 elif ps aux 2>/dev/null | grep -v grep | grep -E "[X]tigervnc|[X]vnc.*:1|[X]vnc" >/dev/null; then
-    VNC_VERIFIED=1
-elif netstat -ln 2>/dev/null | grep ":5901" >/dev/null || ss -ln 2>/dev/null | grep ":5901" >/dev/null; then
     VNC_VERIFIED=1
 fi
 
