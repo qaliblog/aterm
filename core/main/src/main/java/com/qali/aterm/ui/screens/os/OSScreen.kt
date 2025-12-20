@@ -1593,9 +1593,10 @@ fi
             session.write("bash -c '(netstat -ln 2>/dev/null | grep \":5901\" >/dev/null || ss -ln 2>/dev/null | grep \":5901\" >/dev/null || ps aux 2>/dev/null | grep -v grep | grep -E \"[X]tigervnc|[X]vnc.*:1\" >/dev/null || ls ~/.vnc/*:1.pid 2>/dev/null | head -1) && echo VNC_RUNNING || echo VNC_NOT_RUNNING'\n")
             delay(1500)
             
-            // Check websockify
-            session.write("bash -c 'if netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null; then echo WEBSOCKIFY_RUNNING; elif ps aux 2>/dev/null | grep -v grep | grep -i websockify >/dev/null; then for log in /tmp/websockify.log /tmp/websockify_retry.log /tmp/websockify_final.log; do if [ -f \"${'$'}log\" ] && grep -qE \"proxying from.*6080.*localhost:5901|WebSocket server.*6080|Listening on.*6080\" \"${'$'}log\" 2>/dev/null; then echo WEBSOCKIFY_RUNNING; exit 0; fi; done; echo WEBSOCKIFY_NOT_RUNNING; else echo WEBSOCKIFY_NOT_RUNNING; fi'\n")
-            delay(2000)
+            // Check websockify - improved detection matching the setup script
+            // Check port first (most reliable), then process, then log files
+            session.write("bash -c 'WEBSOCKIFY_VERIFIED=0; if netstat -ln 2>/dev/null | grep \":6080\" >/dev/null || ss -ln 2>/dev/null | grep \":6080\" >/dev/null; then WEBSOCKIFY_VERIFIED=1; elif ps aux 2>/dev/null | grep -v grep | grep -iE \"websockify|python.*websockify\" >/dev/null; then for log in /tmp/websockify.log /tmp/websockify_retry.log /tmp/websockify_final.log; do if [ -f \"${'$'}log\" ] && grep -qE \"proxying|WebSocket server|Listening on|websockify.*6080\" \"${'$'}log\" 2>/dev/null; then WEBSOCKIFY_VERIFIED=1; break; fi; done; if [ ${'$'}WEBSOCKIFY_VERIFIED -eq 0 ]; then PROC_CMD=$(ps aux 2>/dev/null | grep -v grep | grep -iE \"websockify|python.*websockify\" | head -1 | awk \"{print \\\"\\\"}\" || echo \"\"); if echo \"${'$'}PROC_CMD\" | grep -qi websockify; then WEBSOCKIFY_VERIFIED=1; fi; fi; fi; if [ ${'$'}WEBSOCKIFY_VERIFIED -eq 1 ]; then echo WEBSOCKIFY_RUNNING; else echo WEBSOCKIFY_NOT_RUNNING; fi'\n")
+            delay(2500)
             
             val output = session.emulator?.screen?.getTranscriptText() ?: ""
             val recentLines = output.split("\n").takeLast(40).joinToString("\n")
